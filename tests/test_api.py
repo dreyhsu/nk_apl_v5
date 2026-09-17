@@ -1,0 +1,99 @@
+"""HTTP-level checks for operator gates and legacy bypass prevention."""
+
+import sys
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import visionedge_server as web
+
+
+class StationAPITests(unittest.TestCase):
+    def setUp(self):
+        self.station = Mock()
+        self.station.status.return_value = {
+            'state': 'SN_CONFIRM', 'sn': 'TEST-SN', 'cycle_id': 'cycle-1', 'sop': {},
+        }
+        self.station.scan.return_value = {'success': True, 'station': self.station.status()}
+        self.station.confirm_result.return_value = {'success': False, 'error': 'not completed'}
+        self.edge = Mock()
+        self.edge.cfg = SimpleNamespace(stream_enabled=True, live_view_mode='webrtc')
+        self.edge.status.return_value = {'running': False, 'last_frame_at': None}
+        self.scanner = Mock()
+        self.patches = [patch.object(web, 'STATION', self.station), patch.object(web, 'EDGE', self.edge)]
+        for item in self.patches:
+            item.start()
+        self.client = web.app.test_client()
+
+    def tearDown(self):
+        for item in reversed(self.patches):
+            item.stop()
+
+    def test_scan_only_produces_candidate(self):
+        response = self.client.post('/api/apl/scan', json={'sn': 'TEST-SN'})
+        self.assertEqual(response.status_code, 200)
+        self.station.scan.assert_called_once_with('TEST-SN', source='web')
+        self.station.confirm_sn.assert_not_called()
+
+    def test_confirm_sn_requires_fresh_camera(self):
+        for state in ({'running': False, 'last_frame_at': None}, {'running': True, 'last_frame_at': 1}):
+            self.edge.status.return_value = state
+            self.assertEqual(self.client.post('/api/apl/confirm-sn', json={'cycle_id': 'cycle-1'}).status_code, 409)
+        self.station.confirm_sn.assert_not_called()
+
+    def test_pass_cannot_bypass_visual_completion(self):
+        response = self.client.post('/api/apl/confirm-result', json={'cycle_id': 'cycle-1'})
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json['success'])
+        self.scanner.reconnect.assert_not_called()
+
+    def test_terminate_reopens_scanner_after_unlock(self):
+        self.station.terminate.return_value = {
+            'success': True,
+            'station': {'state': 'WAITING_SN', 'sn': '', 'cycle_id': ''},
+        }
+        with patch.object(web, 'SCANNER', self.scanner):
+            response = self.client.post('/api/apl/terminate', json={'cycle_id': 'cycle-1'})
+        self.assertEqual(response.status_code, 200)
+        self.scanner.reconnect.assert_called_once_with()
+
+    def test_successful_upload_reopens_scanner_after_unlock(self):
+        self.station.confirm_result.return_value = {
+            'success': True,
+            'station': {'state': 'WAITING_SN', 'sn': '', 'cycle_id': ''},
+        }
+        with patch.object(web, 'SCANNER', self.scanner):
+            response = self.client.post('/api/apl/confirm-result', json={'cycle_id': 'cycle-1'})
+        self.assertEqual(response.status_code, 200)
+        self.scanner.reconnect.assert_called_once_with()
+
+    def test_legacy_actions_cannot_bypass_station(self):
+        for path in ('/api/edge/sop/finish', '/api/edge/sop/reset', '/api/edge/sop/ack',
+                     '/api/runtime/reload', '/api/stream-sources'):
+            self.assertEqual(self.client.post(path, json={}).status_code, 409, path)
+
+    def test_active_sn_blocks_camera_settings(self):
+        self.assertEqual(self.client.post('/api/edge/config', json={'rotation': 0}).status_code, 409)
+        self.edge.update_config.assert_not_called()
+
+    def test_invalid_json_is_reported(self):
+        for body in ([], None, 'sn'):
+            self.assertEqual(self.client.post('/api/apl/scan', json=body).status_code, 400)
+
+    def test_cross_origin_operator_command_is_blocked(self):
+        response = self.client.post('/api/apl/scan', json={'sn': 'TEST-SN'}, headers={'Origin': 'https://unrelated.invalid'})
+        self.assertEqual(response.status_code, 403)
+        self.station.scan.assert_not_called()
+
+    def test_status_contains_station_and_workflow(self):
+        response = self.client.get('/api/edge/status')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['station']['cycle_id'], 'cycle-1')
+        self.assertEqual(response.json['product_id'], 1)
+        self.assertEqual(response.headers['Cache-Control'].split(',')[0], 'no-store')
+
+
+if __name__ == '__main__':
+    unittest.main()

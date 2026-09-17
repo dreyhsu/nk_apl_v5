@@ -1,0 +1,6 @@
+NK APL VisionEdge development version: 2026.09.14-snapshot-dev.3
+Source of truth: D:\work_project\smartcam\NK_APL\VisionEdge_APL_COVER_CLOSED_CARD_PRESENT_CROOP
+Status: Single-snapshot inspection, SN lock, browser video control, history, and handover documentation completed
+PC validation: 92 maintained regression tests passed
+SmartCam deployment: requires explicit user instruction
+App packaging: not created

@@ -1,0 +1,14 @@
+[Unit]
+Description=VisionEdge AI Camera Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/rootdirs/opt/VisionEdge
+ExecStart=/usr/bin/python3 -u /var/rootdirs/opt/VisionEdge/visionedge_server.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

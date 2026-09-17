@@ -1,0 +1,5 @@
+Flask>=3.0,<4
+flask-cors>=4.0,<7
+waitress>=3.0,<4
+opencv-python-headless>=4.8
+numpy>=1.24

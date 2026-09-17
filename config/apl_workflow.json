@@ -1,0 +1,32 @@
+{
+  "station_id": "NK_APL_50",
+  "station_mode": "local",
+  "inspection_mode": "single_snapshot_cover_card",
+  "reference_size": [1920, 1080],
+  "search_roi": [751, 254, 431, 588],
+  "threshold": 0.8,
+  "min_gap": 0.05,
+  "stable_frames": 2,
+  "method": "TM_CCOEFF_NORMED",
+  "template_root": "../templates",
+  "target_state": "50_COVER_CLOSED_CARD_PRESENT",
+  "snapshot_reject_states": ["50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"],
+  "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED", "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
+  "ng_states": ["30_PRODUCT_LOADED", "30_COVER_CLOSED"],
+  "removal_state": "EMPTY_FIXTURE",
+  "sn_max_length": 128,
+  "dmz": {
+    "mode": "disabled",
+    "base_url": "",
+    "timeout_seconds": 5,
+    "allow_insecure_http": false
+  },
+  "scanner": {
+    "enabled": true,
+    "vendor_id": "0c2e",
+    "product_id": "0901",
+    "name": "Honeywell",
+    "inter_key_timeout": 1.0,
+    "max_length": 128
+  }
+}

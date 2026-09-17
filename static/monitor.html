@@ -1,0 +1,2943 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TM-Inspect 查驗監控台</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg:         #070a0f;
+  --panel:      #0d1219;
+  --panel2:     #111820;
+  --border:     #1e2a38;
+  --border2:    #243040;
+  --pass:       #00e676;
+  --pass-dim:   rgba(0,230,118,.12);
+  --fail:       #ff1744;
+  --fail-dim:   rgba(255,23,68,.12);
+  --warn:       #ffc400;
+  --accent:     #00b0ff;
+  --accent-dim: rgba(0,176,255,.1);
+  --text:       #d0dce8;
+  --text-dim:   #4a6070;
+  --text-mid:   #7a9ab0;
+  --mono:       'IBM Plex Mono', monospace;
+  --sans:       'IBM Plex Sans', sans-serif;
+  --r:          4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text);
+             font-family: var(--sans); font-size: 13px; overflow: hidden; }
+
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg, transparent 0px, transparent 3px,
+    rgba(0,0,0,.08) 3px, rgba(0,0,0,.08) 4px
+  );
+}
+
+/* ── layout ── */
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 20px; height: 52px; flex-shrink: 0;
+  background: var(--panel); border-bottom: 1px solid var(--border); position: relative;
+}
+header::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .4;
+}
+.logo { font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; }
+.logo span { color: var(--text-dim); font-weight: 400; }
+
+.conn-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.conn-label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+.conn-input {
+  background: var(--bg); border: 1px solid var(--border2); color: var(--text);
+  padding: 4px 8px; border-radius: var(--r); font-family: var(--mono); font-size: 11px;
+  width: 220px; outline: none;
+}
+.conn-input:focus { border-color: var(--accent); }
+.btn {
+  padding: 5px 14px; border-radius: var(--r); border: 1px solid var(--border2);
+  background: var(--panel2); color: var(--text); cursor: pointer; font-size: 11px;
+  font-family: var(--mono); font-weight: 600; letter-spacing: .5px;
+  transition: all .15s; white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .4; cursor: default; }
+.more-item {
+  padding: 9px 16px; cursor: pointer; font-family: var(--mono); font-size: 11px;
+  color: var(--text); border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.more-item:last-child { border-bottom: none; }
+.more-item:hover { background: var(--accent-dim); color: var(--accent); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--text-dim); transition: background .3s;
+}
+.status-dot.live { background: var(--pass); animation: pulse-dot 2s infinite; }
+.status-dot.error { background: var(--fail); }
+@keyframes pulse-dot {
+  0%,100%{ box-shadow: 0 0 0 0 rgba(0,230,118,.5); }
+  50%    { box-shadow: 0 0 0 6px rgba(0,230,118,0); }
+}
+
+/* ── main body ── */
+.body { display: flex; flex: 1; overflow: hidden; }
+
+/* ── left panel ── */
+.live-panel {
+  flex: 1; min-width: 300px; display: flex; flex-direction: column; overflow: hidden;
+}
+.live-header {
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--panel);
+}
+.live-header .section-title {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim);
+}
+.verdict { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.verdict-badge {
+  font-family: var(--mono); font-size: 16px; font-weight: 700; letter-spacing: 4px;
+  padding: 2px 12px; border-radius: 2px; transition: all .2s;
+}
+.verdict-badge.pass { color: var(--pass); background: var(--pass-dim); border: 1px solid rgba(0,230,118,.3); }
+.verdict-badge.fail { color: var(--fail); background: var(--fail-dim); border: 1px solid rgba(255,23,68,.3); animation: fail-flash .8s steps(1) infinite; }
+.verdict-badge.idle { color: var(--text-dim); background: transparent; border: 1px solid var(--border); }
+@keyframes fail-flash { 0%,49%{ opacity:1; } 50%,100%{ opacity:.4; } }
+
+.live-img-wrap {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  background: #020507; overflow: hidden; position: relative;
+}
+#liveImg { max-width: 100%; max-height: 100%; object-fit: contain; display: none; image-rendering: pixelated; }
+.no-signal { position: absolute; text-align: center; font-family: var(--mono); color: var(--text-dim); }
+.no-signal .icon { font-size: 40px; margin-bottom: 12px; opacity: .4; }
+.no-signal p { font-size: 11px; letter-spacing: 1px; opacity: .5; }
+.live-img-wrap.scanning::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .6;
+  animation: scan-line 2s linear infinite;
+}
+@keyframes scan-line { from { top: 0; } to { top: 100%; } }
+
+/* ── KPI row ── */
+.kpi-row {
+  display: flex; align-items: stretch; flex-shrink: 0;
+  border-top: 1px solid var(--border); background: var(--panel); height: 52px;
+}
+.kpi-cell {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-right: 1px solid var(--border); gap: 1px;
+}
+.kpi-cell:last-child { border-right: none; }
+.kpi-label { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+.kpi-val   { font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--text); }
+.kpi-val.pass-col { color: var(--pass); }
+.kpi-val.fail-col { color: var(--fail); }
+.kpi-val.warn-col { color: var(--warn); }
+
+/* ── yield chart ── */
+.chart-wrap {
+  height: 72px; flex-shrink: 0; border-top: 1px solid var(--border);
+  background: var(--panel2); position: relative; overflow: hidden;
+}
+.chart-wrap canvas { display: block; }
+.chart-label {
+  position: absolute; top: 3px; left: 8px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-dim); pointer-events: none;
+}
+
+/* ── score bars ── */
+.scores-panel {
+  height: 120px; flex-shrink: 0; border-top: 1px solid var(--border);
+  background: var(--panel); padding: 10px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+}
+.score-row { display: flex; align-items: center; gap: 10px; }
+.score-label { font-family: var(--mono); font-size: 11px; width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-mid); }
+.score-track { flex: 1; height: 8px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.score-fill  { height: 100%; border-radius: 2px; transition: width .3s; }
+.score-val   { font-family: var(--mono); font-size: 11px; width: 48px; text-align: right; }
+.score-icon  { font-size: 13px; width: 18px; text-align: center; }
+
+/* ── resizer handle ── */
+#resizeHandle {
+  width: 4px; flex-shrink: 0; cursor: col-resize;
+  background: var(--border); transition: background .15s;
+}
+#resizeHandle:hover { background: var(--accent); }
+#resizeHandle.dragging { background: var(--accent); }
+
+/* ── right panel ── */
+#rightPanel {
+  width: 400px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden;
+  transition: width .2s;
+}
+#rightPanel.hidden { width: 0 !important; }
+
+.right-panel-inner { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-width: 200px; }
+
+.log-header {
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+.section-title { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+.filter-pills { display: flex; gap: 4px; }
+.pill {
+  padding: 2px 10px; border-radius: 20px; border: 1px solid var(--border2);
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  font-size: 10px; font-family: var(--mono); font-weight: 600; letter-spacing: .5px; transition: all .12s;
+}
+.pill.active-all  { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.pill.active-pass { border-color: var(--pass);   color: var(--pass);   background: var(--pass-dim); }
+.pill.active-fail { border-color: var(--fail);   color: var(--fail);   background: var(--fail-dim); }
+
+.log-list { flex: 1; overflow-y: auto; border-left: 1px solid var(--border); }
+.log-item { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; }
+.log-item:hover { background: rgba(255,255,255,.02); }
+.log-item.selected { background: rgba(0,176,255,.06); }
+.log-item .bar { width: 3px; flex-shrink: 0; background: var(--text-dim); }
+.log-item.pass .bar { background: var(--pass); }
+.log-item.fail .bar { background: var(--fail); }
+.log-body { padding: 8px 12px; flex: 1; min-width: 0; }
+.log-top { display: flex; align-items: center; gap: 8px; }
+.log-serial { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--text); }
+.log-result { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 2px; }
+.log-item.pass .log-result { color: var(--pass); }
+.log-item.fail .log-result { color: var(--fail); }
+.log-time { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-left: auto; }
+.log-scores { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.log-score-chip { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 2px; background: var(--border); color: var(--text-mid); }
+.log-score-chip.chip-fail { background: var(--fail-dim); color: var(--fail); }
+
+.detail-panel {
+  height: 200px; flex-shrink: 0; border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  background: var(--panel2); display: flex; flex-direction: column; overflow: hidden;
+}
+.detail-header { padding: 6px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.detail-body { flex: 1; overflow-y: auto; padding: 10px 16px; display: flex; gap: 16px; }
+.detail-img-wrap { width: 200px; flex-shrink: 0; }
+.detail-img-wrap img { width: 100%; border-radius: var(--r); border: 1px solid var(--border2); }
+.detail-img-wrap .no-img { width:100%; height:120px; display:flex; align-items:center; justify-content:center; background:var(--bg); border-radius:var(--r); border:1px solid var(--border); font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+.detail-table { flex: 1; overflow-y: auto; }
+.detail-table table { width: 100%; border-collapse: collapse; }
+.detail-table th { padding: 3px 8px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel2); }
+.detail-table td { padding: 3px 8px; font-family: var(--mono); font-size: 11px; border-bottom: 1px solid rgba(30,42,56,.5); }
+.chip { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+.chip.pass { background: var(--pass-dim); color: var(--pass); }
+.chip.fail { background: var(--fail-dim); color: var(--fail); }
+
+/* ── stats bar ── */
+.stats-bar {
+  padding: 4px 16px; background: var(--panel); border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; align-items: center; gap: 20px; font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+}
+.stat { display: flex; gap: 6px; }
+.stat .val { color: var(--text); font-weight: 600; }
+.stat .val.pass-col { color: var(--pass); }
+.stat .val.fail-col { color: var(--fail); }
+
+/* ── countdown ring ── */
+.refresh-ring { position: relative; width: 20px; height: 20px; flex-shrink: 0; }
+.refresh-ring svg { transform: rotate(-90deg); }
+.ring-track { fill: none; stroke: var(--border); stroke-width: 2.5; }
+.ring-fill  { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; transition: stroke-dashoffset .1s linear; }
+#ringText { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:8px; color:var(--accent); }
+
+/* ── modal ── */
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:200; cursor:zoom-out; }
+.modal-bg.open { display:flex; }
+.modal-bg img { max-width:90vw; max-height:90vh; object-fit:contain; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">TM&#8209;INSPECT <span>// 查驗監控台</span></div>
+
+  <div class="conn-group" style="margin-left:0;">
+    <span class="conn-label">產品</span>
+    <select id="productSelect" onchange="switchProduct(this.value)"
+      style="background:var(--bg);border:1px solid var(--border2);color:var(--text);
+             padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;
+             min-width:180px;outline:none;">
+      <option value="">— 選擇產品 —</option>
+    </select>
+    <div class="status-dot" id="productDot" title="產品狀態"></div>
+  </div>
+
+  <div class="conn-group">
+    <span class="conn-label">推論端</span>
+    <input class="conn-input" id="inferUrl" value="/tm-app/infer" placeholder="/tm-app/infer">
+    <div class="status-dot" id="inferDot"></div>
+  </div>
+
+  <div class="conn-group">
+    <span class="conn-label">管理端</span>
+    <input class="conn-input" id="appUrl" value="/tm-app" placeholder="/tm-app">
+    <div class="status-dot" id="appDot"></div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:6px;margin-left:8px;flex-shrink:0;">
+    <div class="refresh-ring" title="輪詢間隔">
+      <svg viewBox="0 0 20 20" width="20" height="20">
+        <circle class="ring-track" cx="10" cy="10" r="8"/>
+        <circle class="ring-fill" id="ringFill" cx="10" cy="10" r="8" stroke-dasharray="50.27" stroke-dashoffset="50.27"/>
+      </svg>
+      <div id="ringText">—</div>
+    </div>
+    <select id="pollInterval" style="background:var(--bg);border:1px solid var(--border2);color:var(--text-dim);padding:3px 6px;border-radius:var(--r);font-family:var(--mono);font-size:10px;">
+      <option value="500" selected>0.5s</option>
+      <option value="1000">1s</option>
+      <option value="2000">2s</option>
+      <option value="5000">5s</option>
+    </select>
+    <button class="btn active" id="pauseBtn" onclick="togglePause()">⏸ 暫停</button>
+    <button class="btn" id="soundBtn" onclick="toggleSound()">🔇 靜音</button>
+    <button class="btn" onclick="openBackendLogin()">⚙ 後端頁面</button>
+    <!-- 更多選單 -->
+    <div style="position:relative;">
+      <button class="btn" onclick="toggleMoreMenu(event)">⋯ 更多</button>
+      <div id="moreMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;
+        background:var(--panel);border:1px solid var(--border2);border-radius:6px;
+        z-index:500;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5);overflow:hidden;">
+        <div class="more-item" onclick="loadLogs();closeMoreMenu()">↻ 重整記錄</div>
+        <div class="more-item" id="reloadBtn" onclick="reloadCache();closeMoreMenu()">⟳ 重載模板</div>
+        <div class="more-item" onclick="openSamplePanel();closeMoreMenu()">🧩 規則群組</div>
+        <div class="more-item" onclick="window.open('./sop-monitor','_blank');closeMoreMenu()">⇄ SOP 前台</div>
+        <div class="more-item" onclick="window.open('./sop-config','_blank');closeMoreMenu()">⚙ SOP 設定</div>
+        <div class="more-item" onclick="takeSnapshot();closeMoreMenu()">📷 截圖</div>
+        <div class="more-item" onclick="openZlanPanel();closeMoreMenu()">⚙ ZLAN 設定</div>
+        <div class="more-item" onclick="openCameraPanel();closeMoreMenu()">🎛 相機亮度</div>
+        <div class="more-item" onclick="openStoragePanel();closeMoreMenu()">🗄 記錄/存圖設定</div>
+      </div>
+    </div>
+    <button class="btn" id="togglePanelBtn" onclick="toggleRightPanel()">◀ 收</button>
+  </div>
+</header>
+
+<div class="body">
+
+  <!-- LEFT: LIVE -->
+  <div class="live-panel">
+    <div class="live-header">
+      <div class="status-dot" id="liveDot"></div>
+      <span class="section-title">即時畫面</span>
+      <span id="liveProduct" style="font-family:var(--mono);font-size:11px;color:var(--text-mid);"></span>
+      <span id="liveTs" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);"></span>
+      <div class="verdict" style="margin-left:auto;">
+        <div class="verdict-badge idle" id="verdictBadge">—</div>
+      </div>
+    </div>
+
+    <div class="live-img-wrap" id="liveWrap">
+      <div class="no-signal" id="noSignal">
+        <div class="icon">📡</div>
+        <p>等待推論端連線…</p>
+      </div>
+      <img id="liveImg" onclick="zoomImg(this.src)" style="cursor:zoom-in;">
+    </div>
+
+    <!-- KPI -->
+    <div class="kpi-row">
+      <div class="kpi-cell"><div class="kpi-label">PASS</div><div class="kpi-val pass-col" id="kpiPass">0</div></div>
+      <div class="kpi-cell"><div class="kpi-label">FAIL</div><div class="kpi-val fail-col" id="kpiFail">0</div></div>
+      <div class="kpi-cell"><div class="kpi-label">良率</div><div class="kpi-val" id="kpiYield">—</div></div>
+      <div class="kpi-cell"><div class="kpi-label">UPH</div><div class="kpi-val warn-col" id="kpiUph">—</div></div>
+      <div class="kpi-cell"><div class="kpi-label">件/分</div><div class="kpi-val" id="kpiPpm">—</div></div>
+    </div>
+
+    <!-- 趨勢圖 -->
+    <div class="chart-wrap" id="chartWrap">
+      <div class="chart-label">良率趨勢 (最近120幀)</div>
+      <canvas id="yieldChart"></canvas>
+    </div>
+
+    <div class="scores-panel" id="scoresPanel">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:1px;">等待推論結果…</div>
+    </div>
+  </div>
+
+  <!-- RESIZE HANDLE -->
+  <div id="resizeHandle"></div>
+
+  <!-- RIGHT: LOG + DETAIL -->
+  <div id="rightPanel">
+    <div class="right-panel-inner">
+      <div class="log-header">
+        <span class="section-title">歷史記錄</span>
+        <div class="filter-pills">
+          <button class="pill active-all" id="filterAll"  onclick="setFilter('all')">全部</button>
+          <button class="pill"           id="filterPass" onclick="setFilter('pass')">PASS</button>
+          <button class="pill"           id="filterFail" onclick="setFilter('fail')">FAIL</button>
+        </div>
+        <span id="logCount" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-left:auto;"></span>
+      </div>
+
+      <div class="log-list" id="logList"></div>
+
+      <div class="detail-panel">
+        <div class="detail-header">
+          <span class="section-title">詳細查驗</span>
+          <span id="detailTitle" style="font-family:var(--mono);font-size:11px;color:var(--text-mid);"></span>
+          <button class="btn" id="detailImgBtn" onclick="zoomDetail()" style="margin-left:auto;display:none;">🔍 放大</button>
+        </div>
+        <div class="detail-body">
+          <div class="detail-img-wrap">
+            <img id="detailImg" style="display:none;" onclick="zoomDetail()" style="cursor:zoom-in;">
+            <div class="no-img" id="detailNoImg">點選記錄查驗</div>
+          </div>
+          <div class="detail-table">
+            <table>
+              <thead><tr><th>區域</th><th>分數</th><th>閾值</th><th>結果</th><th>匹配位置</th></tr></thead>
+              <tbody id="detailBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.body -->
+
+<!-- Stats bar -->
+<div class="stats-bar">
+  <div class="stat"><span>本次連線</span><span class="val" id="statTotal">0</span><span>幀</span></div>
+  <div class="stat"><span>PASS</span><span class="val pass-col" id="statPass">0</span></div>
+  <div class="stat"><span>FAIL</span><span class="val fail-col" id="statFail">0</span></div>
+  <div class="stat"><span>良率</span><span class="val" id="statYield">—</span></div>
+  <div class="stat"><span>最後更新</span><span class="val" id="statTs">—</span></div>
+  <div class="stat"><span>模式</span><span class="val warn-col" id="statMode">—</span></div>
+  <div class="stat"><span>項目</span><span class="val" id="statItems">—</span></div>
+  <div style="flex:1;"></div>
+  <span id="connStatus" style="color:var(--text-dim);">未連線</span>
+</div>
+
+</div><!-- /#app -->
+
+<!-- Toast -->
+<div id="snapToast" style="display:none;position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+  background:var(--panel2);border:1px solid var(--border2);border-radius:6px;
+  padding:10px 20px;font-family:var(--mono);font-size:12px;color:var(--text);
+  z-index:300;box-shadow:0 4px 24px rgba(0,0,0,.5);white-space:nowrap;transition:opacity .3s;"></div>
+
+<!-- Zoom modal -->
+
+<!-- Rule Group Panel: 現場端條件組合設定 -->
+<div class="modal-bg" id="rulePanel" style="align-items:flex-start;justify-content:center;padding-top:70px;">
+  <div onclick="event.stopPropagation()" style="width:min(980px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.65);cursor:default;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <div style="font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:700;letter-spacing:1px;">🧩 條件群組 / Rule Groups</div>
+      <div id="ruleProductInfo" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-left:auto;">—</div>
+    </div>
+    <div style="font-size:11px;color:var(--text-mid);line-height:1.5;margin-bottom:12px;border:1px solid var(--border);background:var(--bg);padding:8px;border-radius:4px;">
+      現場可從目前已建立的 template 中多選，設定 <b>ANY/OR</b> 或 <b>ALL/AND</b>。建議 coating 前/後外觀相容用 <b>ANY/OR</b>；不同必要檢查點則分成多個群組，最終仍為所有啟用群組都通過才 PASS。
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;">
+      <button class="btn" onclick="addRuleGroupRow()">＋ 新增群組</button>
+      <button class="btn" onclick="loadRulePanelData()">↻ 重整</button>
+      <button class="btn" onclick="saveRulePanelData()">✔ 儲存並重載推論</button>
+      <button class="btn" onclick="closeRulePanel()" style="margin-left:auto;">取消</button>
+    </div>
+    <div id="rulePanelMsg" style="font-size:11px;color:var(--text-dim);min-height:16px;margin-bottom:8px;"></div>
+    <div id="ruleRows" style="display:flex;flex-direction:column;gap:10px;"></div>
+  </div>
+
+</div>
+
+<!-- Multi-Sample Template Panel: 正式版現場設定 -->
+<div class="modal-bg" id="samplePanel" onclick="closeSamplePanel()" style="align-items:flex-start;justify-content:center;padding-top:56px;">
+  <div onclick="event.stopPropagation()" style="width:min(1120px,96vw);max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.65);cursor:default;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <div style="font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:700;letter-spacing:1px;">🧩 規則群組 / Rule Groups</div>
+      <div id="sampleProductInfo" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-left:auto;">—</div>
+    </div>
+    <div style="font-size:11px;color:var(--text-mid);line-height:1.5;margin-bottom:12px;border:1px solid var(--border);background:var(--bg);padding:8px;border-radius:4px;">
+      正式版邏輯：每個「規則群組」可從多個來源產品選擇 OK 樣本與 NG 樣本。OK 樣本依 ANY/ALL 判定可接受情境；NG 樣本任一命中會強制 FAIL。儲存後會複製成目前產品的本地樣本，不會受來源產品後續刪改影響。
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+      <label style="font-family:var(--mono);font-size:11px;color:var(--text-mid);">Final Logic</label>
+      <select id="sampleFinalLogic" class="conn-input" style="width:150px;" onchange="ST.sampleFinalLogic=this.value">
+        <option value="ALL">ALL groups / AND</option>
+        <option value="ANY">ANY group / OR</option>
+      </select>
+      <button class="btn" onclick="addSampleItemRow()">＋ 新增規則群組</button>
+      <button class="btn" onclick="loadSamplePanelData()">↻ 重整</button>
+      <button class="btn" onclick="saveSamplePanelData(false)">✔ 儲存並套用</button>
+      <button class="btn primary" onclick="saveSamplePanelData(true)">✔ 儲存並關閉</button>
+      <button class="btn" style="margin-left:auto;" onclick="closeSamplePanel()">關閉</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:10px;margin-bottom:10px;align-items:stretch;">
+      <div style="border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:10px;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700;letter-spacing:1px;">STEP 1 來源產品</span>
+          <span id="sampleProductSummary" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-left:auto;">—</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <input class="conn-input" id="sampleProductFilter" oninput="updateActiveSampleProductFilter(this.value)" placeholder="搜尋產品序號 / 名稱" style="flex:1;min-width:0;">
+          <button class="btn" style="padding:4px 8px;" title="只選目前推論產品" onclick="selectSampleCurrentProductOnly()">本產品</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          <button class="btn" style="padding:4px 8px;font-size:10px;" onclick="selectSampleUsedProducts()">已使用產品</button>
+          <button class="btn" style="padding:4px 8px;font-size:10px;" onclick="selectSampleVisibleProducts()">全選目前搜尋</button>
+          <button class="btn" style="padding:4px 8px;font-size:10px;" onclick="clearSampleProductSelection()">清除</button>
+        </div>
+        <div id="sampleProductPicker" style="display:flex;flex-direction:column;gap:4px;max-height:190px;overflow:auto;border-top:1px solid var(--border);padding-top:8px;"></div>
+      </div>
+
+      <div style="border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:10px;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700;letter-spacing:1px;">STEP 2 Template / Label</span>
+          <label style="display:flex;align-items:center;gap:6px;margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-mid);cursor:pointer;">
+            <input id="sampleShowSelectedOnly" type="checkbox" onchange="updateActiveSampleShowSelectedOnly(this.checked)" style="accent-color:var(--accent);">
+            只看已選樣本
+          </label>
+        </div>
+        <input class="conn-input" id="sampleFilter" oninput="updateActiveSampleLabelFilter(this.value)" placeholder="搜尋 label / template / product" style="width:100%;margin-bottom:8px;">
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.45;">
+          先勾選要加入搜尋範圍的來源產品，再於每個規則群組中把 template 指定為 OK 或 NG。NG 樣本命中會強制 FAIL，請只放明確穩定的 NG 特徵。
+        </div>
+      </div>
+    </div>
+
+    <div id="samplePanelMsg" style="font-size:11px;color:var(--text-dim);min-height:16px;margin-bottom:8px;"></div>
+    <div id="sampleRows" style="display:flex;flex-direction:column;gap:10px;"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="zoomModal" onclick="this.classList.remove('open')">
+  <img id="zoomImg">
+</div>
+
+<div id="backendLoginOverlay" onclick="closeBackendLogin()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:390;"></div>
+<div id="backendLoginPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:22px 24px;
+  z-index:391;min-width:320px;font-family:var(--mono);font-size:12px;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <span style="font-size:13px;font-weight:700;letter-spacing:2px;color:var(--accent);">⚙ 開啟後端頁面</span>
+    <button onclick="closeBackendLogin()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px;">
+    <div>
+      <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">帳號</div>
+      <input id="backendUser" class="conn-input" style="width:100%;" autocomplete="username" value="admin">
+    </div>
+    <div>
+      <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">密碼</div>
+      <input id="backendPass" class="conn-input" style="width:100%;" type="password" autocomplete="current-password" placeholder="Password">
+    </div>
+    <div id="backendLoginMsg" style="min-height:16px;font-size:11px;color:var(--fail);"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn" onclick="closeBackendLogin()">取消</button>
+      <button class="btn active" onclick="submitBackendLogin()">開啟</button>
+    </div>
+  </div>
+</div>
+
+<!-- ZLAN 設定面板 -->
+<div id="zlanOverlay" onclick="closeZlanPanel()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;"></div>
+<div id="zlanPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:24px 28px;
+  z-index:401;min-width:360px;font-family:var(--mono);font-size:12px;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+    <span style="font-size:13px;font-weight:700;letter-spacing:2px;color:var(--accent);">⚙ ZLAN 設定</span>
+    <button onclick="closeZlanPanel()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:12px;">
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+      <input type="checkbox" id="zlanEnabled" onchange="toggleZlanEnabled()" style="accent-color:var(--accent);">
+      <span style="color:var(--text);">啟用 ZLAN</span>
+    </label>
+    <div id="zlanFields" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;gap:10px;">
+        <div style="flex:2;">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">IP</div>
+          <input id="zlanIp" class="conn-input" style="width:100%;" placeholder="169.254.227.55" value="">
+        </div>
+        <div style="flex:1;">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Port</div>
+          <input id="zlanPort" class="conn-input" style="width:100%;" placeholder="5020" value="5020">
+        </div>
+        <div style="flex:1;">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Unit ID</div>
+          <input id="zlanUnit" class="conn-input" style="width:100%;" placeholder="1" value="1">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;">
+        <div style="flex:1;">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">觸發模式</div>
+          <select id="zlanTrigger" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;width:100%;">
+            <option value="polling">polling（DI1 觸發）</option>
+            <option value="free">free（連續推論）</option>
+          </select>
+        </div>
+        <div style="flex:1;">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">脈衝 ms</div>
+          <input id="zlanPulse" class="conn-input" style="width:100%;" placeholder="500" value="500">
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="zlanInvert" style="accent-color:var(--accent);">
+        <span style="color:var(--text-dim);">DI 低有效翻轉（invert_di）</span>
+      </label>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:8px;">
+      <button class="btn" style="flex:1;" onclick="applyZlanConfig()">✔ 套用</button>
+      <button class="btn" onclick="closeZlanPanel()">取消</button>
+    </div>
+    <div id="zlanMsg" style="font-size:11px;color:var(--text-dim);min-height:16px;"></div>
+  </div>
+
+</div>
+
+<!-- 相機亮度/影像參數面板 -->
+<div id="cameraOverlay" onclick="closeCameraPanel()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:410;"></div>
+<div id="cameraPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:24px 28px;
+  z-index:411;min-width:460px;font-family:var(--mono);font-size:12px;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+    <span style="font-size:13px;font-weight:700;letter-spacing:2px;color:var(--accent);">🎛 相機亮度 / 手動影像參數</span>
+    <button onclick="closeCameraPanel()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;">
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">白平衡 white-balance-mode（1=auto）</div><input id="camWb" class="conn-input" style="width:100%;" type="number" min="0" max="10" value="1"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">抗閃爍 antibanding</div><input id="camAntibanding" class="conn-input" style="width:100%;" type="number" min="0" max="3" value="3"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">ISO 模式 iso-mode</div><input id="camIsoMode" class="conn-input" style="width:100%;" type="number" min="0" max="8" value="0"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">手動 ISO manual-iso-value</div><input id="camManualIso" class="conn-input" style="width:100%;" type="number" min="100" max="3200" value="800"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">曝光補償 exposure-compensation</div><input id="camExp" class="conn-input" style="width:100%;" type="number" min="-12" max="12" value="0"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">對比 contrast</div><input id="camContrast" class="conn-input" style="width:100%;" type="number" min="1" max="10" value="5"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">飽和 saturation</div><input id="camSaturation" class="conn-input" style="width:100%;" type="number" min="0" max="10" value="5"></div>
+    <div><div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">銳利 sharpness</div><input id="camSharpness" class="conn-input" style="width:100%;" type="number" min="0" max="6" value="2"></div>
+  </div>
+
+  <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
+    <label style="display:flex;align-items:center;gap:8px;color:var(--text);">
+      <input id="zoomEnabled" type="checkbox"> 啟用數位變焦 digital zoom
+    </label>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 14px;">
+      <div>
+        <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Zoom 倍率 1.0x ~ 4.0x</div>
+        <input id="zoomFactor" class="conn-input" style="width:100%;" type="number" min="1" max="4" step="0.1" value="1.0">
+      </div>
+      <div>
+        <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">中心 X 0.05~0.95</div>
+        <input id="zoomCenterX" class="conn-input" style="width:100%;" type="number" min="0.05" max="0.95" step="0.01" value="0.5">
+      </div>
+      <div>
+        <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">中心 Y 0.05~0.95</div>
+        <input id="zoomCenterY" class="conn-input" style="width:100%;" type="number" min="0.05" max="0.95" step="0.01" value="0.5">
+      </div>
+    </div>
+  </div>
+
+  <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+    建議：先調 exposure-compensation 2~4，ISO 維持 auto。若啟用數位變焦，live preview、推論、存圖都會使用 zoom 後畫面；正式檢測請在固定 zoom 後重新擷取參考圖並確認 ROI/template。
+  </div>
+  <div style="display:flex;gap:10px;margin-top:16px;">
+    <button class="btn" style="flex:1;" onclick="applyCameraConfig()">✔ 套用</button>
+    <button class="btn" onclick="closeCameraPanel()">取消</button>
+  </div>
+  <div id="cameraMsg" style="font-size:11px;color:var(--text-dim);min-height:16px;margin-top:10px;"></div>
+</div>
+
+<!-- 記錄 / 歷史存證設定面板 -->
+<div id="storageOverlay" onclick="closeStoragePanel()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:420;"></div>
+<div id="storagePanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:24px 28px;
+  z-index:421;min-width:680px;max-width:820px;font-family:var(--mono);font-size:12px;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+    <span style="font-size:13px;font-weight:700;letter-spacing:2px;color:var(--accent);">🗄 記錄 / 歷史存證設定</span>
+    <button onclick="closeStoragePanel()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="logEnabled" style="accent-color:var(--accent);">
+        <span style="color:var(--text);">啟用 DB 檢測記錄</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="imageEnabled" onchange="toggleStorageImageFields()" style="accent-color:var(--accent);">
+        <span style="color:var(--text);">啟用歷史圖片保存</span>
+      </label>
+    </div>
+
+    <div style="font-size:10px;color:var(--text-dim);line-height:1.5;border:1px solid var(--border);padding:8px 10px;border-radius:4px;">
+      使用者可選本機資料夾、Samba 或 HTTP 上傳。此裝置若沒有 CIFS/SMB kernel module，Samba 會失敗；建議改用 HTTP 上傳到 PC 儲存服務，不需要 mount。
+    </div>
+
+    <div id="storageStatusBox" style="border:1px solid var(--border);border-radius:4px;padding:10px;background:rgba(0,0,0,.16);display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Storage status</span>
+        <span id="storageStatusBadge" style="font-size:10px;color:var(--text-dim);">尚未讀取</span>
+        <div style="flex:1"></div>
+        <button class="btn" style="padding:3px 8px;font-size:10px;" onclick="refreshStorageStatus(true)">刷新容量</button>
+      </div>
+      <div id="storageWarning" style="display:none;border:1px solid rgba(255,196,0,.35);background:rgba(255,196,0,.08);color:var(--warn);padding:6px 8px;border-radius:4px;font-size:10px;line-height:1.45;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:4px;">
+            <span>歷史圖片用量 / 設定上限</span><span id="archiveUsageText">—</span>
+          </div>
+          <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div id="archiveUsageBar" style="height:100%;width:0%;background:var(--accent);"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:4px;">
+            <span>所在磁碟用量</span><span id="fsUsageText">—</span>
+          </div>
+          <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div id="fsUsageBar" style="height:100%;width:0%;background:var(--accent);"></div></div>
+        </div>
+      </div>
+      <div id="storageStatusDetail" style="font-size:10px;color:var(--text-dim);line-height:1.45;word-break:break-all;">—</div>
+    </div>
+
+    <div id="storageImageFields" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:end;">
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">儲存類型</div>
+          <select id="storageType" onchange="toggleStorageTypeFields()" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;width:100%;">
+            <option value="local">本機資料夾</option>
+            <option value="samba">Samba / Windows 共享資料夾</option>
+            <option value="http">HTTP 上傳到 PC 儲存服務（推薦）</option>
+          </select>
+        </div>
+        <div id="localPathBlock">
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">本機儲存根目錄</div>
+          <input id="storageRoot" class="conn-input" style="width:100%;" placeholder="/data/tm_app/inspection_archive" value="/data/tm_app/inspection_archive">
+        </div>
+      </div>
+
+      <div id="sambaBlock" style="display:none;border:1px solid var(--border);border-radius:4px;padding:10px;gap:10px;flex-direction:column;">
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Samba 位址</div>
+          <input id="sambaUrl" class="conn-input" style="width:100%;" placeholder="//10.5.71.120/inspection_logs 或 smb://10.5.71.120/inspection_logs">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">帳號</div>
+            <input id="sambaUsername" class="conn-input" style="width:100%;" placeholder="username">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">密碼</div>
+            <input id="sambaPassword" class="conn-input" style="width:100%;" type="password" placeholder="留空=沿用已保存密碼">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Domain / 網域</div>
+            <input id="sambaDomain" class="conn-input" style="width:100%;" placeholder="可空白">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 100px;gap:10px;align-items:end;">
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">Camera 掛載點</div>
+            <input id="mountPoint" class="conn-input" style="width:100%;" value="/mnt/tm_inspect_storage">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">子資料夾</div>
+            <input id="sambaSubdir" class="conn-input" style="width:100%;" placeholder="AI_Camera_01">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">SMB 版本</div>
+            <input id="smbVersion" class="conn-input" style="width:100%;" value="3.0">
+          </div>
+        </div>
+        <div id="sambaStatus" style="font-size:10px;color:var(--text-dim);">密碼只會保存於後端 credential 檔，不會回填到前端。</div>
+      </div>
+
+      <div id="httpBlock" style="display:none;border:1px solid var(--border);border-radius:4px;padding:10px;gap:10px;flex-direction:column;">
+        <div style="font-size:10px;color:var(--warn);line-height:1.45;">
+          建議模式：PC 端先執行 pc_storage_server_v1.py，相機會用 HTTP POST 上傳圖片，不需 Samba/CIFS/mount。
+        </div>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">HTTP 儲存服務 URL</div>
+          <input id="httpUrl" class="conn-input" style="width:100%;" placeholder="https://169.254.207.115:9000">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px;gap:10px;align-items:end;">
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">子資料夾</div>
+            <input id="httpSubdir" class="conn-input" style="width:100%;" placeholder="AI_Camera_01">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">HTTP Token（可空白）</div>
+            <input id="httpToken" class="conn-input" style="width:100%;" placeholder="需與 PC 端 --token 一致">
+          </div>
+          <div>
+            <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">逾時秒數</div>
+            <input id="httpTimeout" class="conn-input" style="width:100%;" type="number" min="2" max="60" value="10">
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">保存模式</div>
+          <select id="saveMode" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;width:100%;">
+            <option value="fail_only">只存 FAIL / NG</option>
+            <option value="all">PASS / FAIL 全存</option>
+            <option value="fail_and_pass_sample">FAIL 全存 + PASS 抽樣</option>
+          </select>
+        </div>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">PASS 抽樣 N</div>
+          <input id="passSampleN" class="conn-input" style="width:100%;" type="number" min="1" value="100">
+        </div>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">JPEG 品質</div>
+          <input id="jpegQuality" class="conn-input" style="width:100%;" type="number" min="30" max="95" value="85">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="saveResult" style="accent-color:var(--accent);" checked>
+          <span style="color:var(--text-dim);">保存結果圖</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="saveRaw" style="accent-color:var(--accent);">
+          <span style="color:var(--text-dim);">保存原圖</span>
+        </label>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">保留天數</div>
+          <input id="retainDays" class="conn-input" style="width:100%;" type="number" min="0" value="30">
+        </div>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">最大 GB</div>
+          <input id="maxGb" class="conn-input" style="width:100%;" type="number" min="0" step="0.5" value="20">
+        </div>
+        <div>
+          <div style="color:var(--text-dim);font-size:10px;margin-bottom:4px;">每 N 筆自動清理</div>
+          <input id="cleanupInterval" class="conn-input" style="width:100%;" type="number" min="10" value="100">
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:8px;">
+      <button class="btn" style="flex:1;" onclick="applyStorageConfig()">✔ 套用</button>
+      <button class="btn" onclick="stopStorageConfig()">停止存資料</button>
+      <button class="btn" onclick="testStorageConfig()">測試連線/寫入</button>
+      <button class="btn" onclick="cleanupStorage()">手動清理</button>
+      <button class="btn" onclick="closeStoragePanel()">取消</button>
+    </div>
+    <div id="storageMsg" style="font-size:11px;color:var(--text-dim);min-height:16px;"></div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+// Config & State
+// ══════════════════════════════════════════════════
+function normalizeEndpointUrl(v) {
+  v = (v || '').trim().replace(/\/$/, '');
+  if (v.startsWith('/')) return v;
+  if (location.protocol === 'https:' && v.startsWith('http://')) {
+    // 避免 HTTPS 監控頁呼叫 HTTP API 時被瀏覽器 mixed-content 擋下。
+    v = 'https://' + v.slice('http://'.length);
+  }
+  return v;
+}
+
+const TM_APP_BASE = location.pathname === '/tm-app' || location.pathname.startsWith('/tm-app/')
+  ? '/tm-app'
+  : '';
+const DEFAULT_APP_URL = TM_APP_BASE || '';
+const DEFAULT_INFER_URL = TM_APP_BASE ? `${TM_APP_BASE}/infer` : 'https://localhost:8765';
+
+function normalizeSavedEndpoint(kind, value) {
+  const v = normalizeEndpointUrl(value);
+  if (!TM_APP_BASE) return v;
+  if (!v) return kind === 'infer' ? DEFAULT_INFER_URL : DEFAULT_APP_URL;
+
+  // Existing monitor_config.json may still contain pre-nginx values such as
+  // https://localhost:8765 or https://<camera-ip>:8765. When mounted under
+  // /tm-app, force browser traffic back through nginx on port 443.
+  try {
+    const u = new URL(v, location.origin);
+    if (kind === 'infer' && u.port === '8765') return DEFAULT_INFER_URL;
+    if (kind === 'app' && (u.port === '5000' || u.port === '5555' || u.origin === location.origin)) {
+      if (!u.pathname.startsWith(TM_APP_BASE)) return DEFAULT_APP_URL;
+    }
+  } catch (_) {}
+  return v;
+}
+
+function applyDefaultEndpoints() {
+  const inferEl = document.getElementById('inferUrl');
+  const appEl = document.getElementById('appUrl');
+  if (inferEl) inferEl.value = normalizeSavedEndpoint('infer', inferEl.value || DEFAULT_INFER_URL);
+  if (appEl) appEl.value = normalizeSavedEndpoint('app', appEl.value || DEFAULT_APP_URL);
+}
+
+const C = {
+  inferUrl: () => normalizeEndpointUrl(document.getElementById('inferUrl').value),
+  appUrl:   () => normalizeEndpointUrl(document.getElementById('appUrl').value),
+  pollMs:   () => parseInt(document.getElementById('pollInterval').value) || 1000,
+};
+
+function openBackendLogin() {
+  document.getElementById('backendLoginOverlay').style.display = '';
+  document.getElementById('backendLoginPanel').style.display = '';
+  document.getElementById('backendLoginMsg').textContent = '';
+  setTimeout(() => document.getElementById('backendPass').focus(), 0);
+}
+
+function closeBackendLogin() {
+  document.getElementById('backendLoginOverlay').style.display = 'none';
+  document.getElementById('backendLoginPanel').style.display = 'none';
+}
+
+async function submitBackendLogin() {
+  const msg = document.getElementById('backendLoginMsg');
+  msg.style.color = 'var(--text-dim)';
+  msg.textContent = '驗證中...';
+  try {
+    const r = await fetch(`${C.appUrl()}/api/backend-login`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('backendUser').value,
+        password: document.getElementById('backendPass').value,
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      msg.style.color = 'var(--fail)';
+      msg.textContent = d.error || `驗證失敗 (${r.status})`;
+      return;
+    }
+    closeBackendLogin();
+    window.open(d.url || `${C.appUrl()}/`, '_blank', 'noopener');
+  } catch (_) {
+    msg.style.color = 'var(--fail)';
+    msg.textContent = '後端 API 無回應';
+  }
+}
+
+const ST = {
+  paused: false, filter: 'all',
+  logs: [], liveResult: null, selectedLogId: null,
+  total: 0, pass: 0, fail: 0,
+  pollTimer: null, ringTimer: null, ringStart: null,
+  lastTs: '',
+  soundOn: false,
+  rightHidden: false,
+  frameTimes: [],
+  yieldHist: [],
+  currentProductSerial: '',
+  latestLiveImg: '',
+  ruleProduct: null,
+  ruleRegions: [],
+  ruleRows: [],
+  sampleProduct: null,
+  sampleTemplates: [],
+  sampleItems: [],
+  sampleFinalLogic: 'ALL',
+  sampleSelectedProductIds: new Set(),
+  sampleCollapsedProductIds: new Set(),
+  sampleShowSelectedOnly: false,
+  sampleActiveItemIdx: 0,
+};
+
+// ══════════════════════════════════════════════════
+// Monitor connection config
+// 比照 ZLAN：透過後端 API 讀寫 JSON 設定檔，而不是只存在瀏覽器。
+// ══════════════════════════════════════════════════
+function monitorConfigBaseUrl() {
+  // Use the same app API namespace as the rest of TM-Inspect.
+  // Under firmware nginx this must be /tm-app, not the firmware root /api.
+  if (location.protocol === 'http:' || location.protocol === 'https:') return C.appUrl();
+  return C.appUrl();
+}
+
+async function loadMonitorConfig() {
+  try {
+    const r = await fetch(`${monitorConfigBaseUrl()}/api/monitor-config`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('inferUrl').value = normalizeSavedEndpoint('infer', d.infer_url || DEFAULT_INFER_URL);
+    document.getElementById('appUrl').value   = normalizeSavedEndpoint('app', d.app_url || DEFAULT_APP_URL);
+  } catch (_) {
+    // 後端尚未更新時保留 HTML 預設值，不阻斷監控台啟動。
+  }
+}
+
+async function saveMonitorConfig() {
+  const body = {
+    infer_url: C.inferUrl(),
+    app_url:   C.appUrl(),
+  };
+  try {
+    const r = await fetch(`${monitorConfigBaseUrl()}/api/monitor-config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showToast(`⚠ IP 設定儲存失敗：${d.error || r.status}`, 'var(--warn)', 3000);
+    }
+  } catch (_) {
+    showToast('⚠ IP 設定儲存失敗：管理端無回應', 'var(--warn)', 3000);
+  }
+}
+
+function bindMonitorConfigAutosave() {
+  let timer = null;
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(saveMonitorConfig, 500);
+  };
+  ['inferUrl', 'appUrl'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', saveMonitorConfig);
+    el.addEventListener('blur', saveMonitorConfig);
+    el.addEventListener('input', schedule);
+  });
+}
+
+// ══════════════════════════════════════════════════
+// Polling
+// ══════════════════════════════════════════════════
+function startPolling() {
+  if (ST.pollTimer) clearInterval(ST.pollTimer);
+  schedulePoll();
+}
+function schedulePoll() {
+  if (ST.paused) return;
+  fetchLiveResult();
+  startRing();
+  ST.pollTimer = setTimeout(schedulePoll, C.pollMs());
+}
+function stopPolling() {
+  if (ST.pollTimer) clearTimeout(ST.pollTimer);
+  ST.pollTimer = null;
+  if (ST.ringTimer) clearInterval(ST.ringTimer);
+}
+function togglePause() {
+  ST.paused = !ST.paused;
+  const btn = document.getElementById('pauseBtn');
+  btn.textContent = ST.paused ? '▶ 繼續' : '⏸ 暫停';
+  btn.className   = ST.paused ? 'btn' : 'btn active';
+  if (!ST.paused) schedulePoll(); else stopPolling();
+}
+
+// ══════════════════════════════════════════════════
+// Ring countdown
+// ══════════════════════════════════════════════════
+const CIRC = 50.27;
+function startRing() {
+  if (ST.ringTimer) clearInterval(ST.ringTimer);
+  ST.ringStart = Date.now();
+  const dur = C.pollMs();
+  const fill = document.getElementById('ringFill');
+  const txt  = document.getElementById('ringText');
+  ST.ringTimer = setInterval(() => {
+    const elapsed = Date.now() - ST.ringStart;
+    const ratio   = Math.min(elapsed / dur, 1);
+    fill.style.strokeDashoffset = CIRC * (1 - ratio);
+    txt.textContent = Math.max(0, ((dur - elapsed) / 1000)).toFixed(1) + 's';
+    if (ratio >= 1) clearInterval(ST.ringTimer);
+  }, 50);
+}
+
+// ══════════════════════════════════════════════════
+// Sound
+// ══════════════════════════════════════════════════
+let _audioCtx = null;
+function getACtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return _audioCtx;
+}
+function beepNG() {
+  if (!ST.soundOn) return;
+  try {
+    const ctx = getACtx();
+    [0, 0.2].forEach(d => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'square'; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.3, ctx.currentTime + d);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.15);
+      o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + 0.16);
+    });
+  } catch(_) {}
+}
+function toggleSound() {
+  ST.soundOn = !ST.soundOn;
+  const btn = document.getElementById('soundBtn');
+  btn.textContent = ST.soundOn ? '🔊 聲音' : '🔇 靜音';
+  btn.className   = ST.soundOn ? 'btn active' : 'btn';
+  if (ST.soundOn) try { getACtx().resume(); } catch(_) {}
+  showToast(ST.soundOn ? '🔊 聲音已開啟' : '🔇 聲音已靜音', 'var(--text)', 2000);
+}
+
+// ══════════════════════════════════════════════════
+// Right panel toggle (header button)
+// ══════════════════════════════════════════════════
+function toggleRightPanel() {
+  ST.rightHidden = !ST.rightHidden;
+  const rp  = document.getElementById('rightPanel');
+  const rh  = document.getElementById('resizeHandle');
+  const btn = document.getElementById('togglePanelBtn');
+  if (ST.rightHidden) {
+    rp.classList.add('hidden');
+    rh.style.display = 'none';
+    btn.textContent = '▶ 開';
+  } else {
+    rp.classList.remove('hidden');
+    rh.style.display = '';
+    btn.textContent = '◀ 收';
+  }
+  setTimeout(resizeChart, 250);
+}
+
+// ══════════════════════════════════════════════════
+// Resize handle (drag)
+// ══════════════════════════════════════════════════
+(function() {
+  document.addEventListener('DOMContentLoaded', function() {
+    var handle = document.getElementById('resizeHandle');
+    var rp     = document.getElementById('rightPanel');
+    if (!handle || !rp) return;
+    var dragging = false, startX = 0, startW = 0;
+    handle.addEventListener('mousedown', function(e) {
+      dragging = true;
+      startX   = e.clientX;
+      startW   = rp.offsetWidth;
+      handle.classList.add('dragging');
+      document.body.style.cursor    = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      var newW = Math.max(200, Math.min(700, startW + (startX - e.clientX)));
+      rp.style.width = newW + 'px';
+    });
+    document.addEventListener('mouseup', function() {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.cursor    = '';
+      document.body.style.userSelect = '';
+      resizeChart();
+    });
+  });
+})();
+
+// ══════════════════════════════════════════════════
+// Yield chart
+// ══════════════════════════════════════════════════
+function resizeChart() {
+  var wrap = document.getElementById('chartWrap');
+  var cv   = document.getElementById('yieldChart');
+  if (!wrap || !cv) return;
+  cv.width  = wrap.offsetWidth;
+  cv.height = wrap.offsetHeight;
+  drawChart();
+}
+function drawChart() {
+  var cv = document.getElementById('yieldChart');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  var data = ST.yieldHist;
+  if (data.length < 10) {
+    ctx.fillStyle = '#4a6070'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('等待資料…', W/2, H/2); return;
+  }
+  var WIN = 10, pts = [];
+  for (var i = WIN-1; i < data.length; i++) {
+    var s = 0; for (var j = i-WIN+1; j <= i; j++) s += data[j];
+    pts.push(s / WIN);
+  }
+  var N=pts.length, pl=6,pr=6,pt=10,pb=14, cW=W-pl-pr, cH=H-pt-pb;
+  ctx.strokeStyle='#1e2a38'; ctx.lineWidth=1;
+  [0,0.5,1].forEach(function(v){
+    var y=pt+cH*(1-v);
+    ctx.beginPath(); ctx.moveTo(pl,y); ctx.lineTo(W-pr,y); ctx.stroke();
+    ctx.fillStyle='#4a6070'; ctx.font='8px monospace'; ctx.textAlign='left';
+    ctx.fillText((v*100).toFixed(0)+'%',1,y-1);
+  });
+  var col = pts[pts.length-1] >= 0.8 ? '#00e676' : '#ff1744';
+  ctx.beginPath();
+  pts.forEach(function(v,i){
+    var x=pl+(i/(N-1))*cW, y=pt+cH*(1-v);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.stroke();
+  var lx=pl+((N-1)/(N-1))*cW, ly=pt+cH*(1-pts[pts.length-1]);
+  ctx.lineTo(lx,H-pb); ctx.lineTo(pl,H-pb); ctx.closePath();
+  var g=ctx.createLinearGradient(0,pt,0,H-pb);
+  g.addColorStop(0, pts[pts.length-1]>=0.8?'rgba(0,230,118,.2)':'rgba(255,23,68,.15)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.fillStyle=col; ctx.font='bold 9px monospace'; ctx.textAlign='right';
+  ctx.fillText((pts[pts.length-1]*100).toFixed(1)+'%',W-pr-2,ly-2);
+}
+
+
+function updateStatsDisplayOnly() {
+  document.getElementById('statTotal').textContent = ST.total;
+  document.getElementById('statPass').textContent  = ST.pass;
+  document.getElementById('statFail').textContent  = ST.fail;
+  document.getElementById('statYield').textContent = '—';
+  document.getElementById('statTs').textContent    = '—';
+  document.getElementById('kpiPass').textContent   = ST.pass;
+  document.getElementById('kpiFail').textContent   = ST.fail;
+  document.getElementById('kpiYield').textContent  = '—';
+  document.getElementById('kpiUph').textContent    = '—';
+  document.getElementById('kpiPpm').textContent    = '—';
+  drawChart();
+}
+
+// ══════════════════════════════════════════════════
+// Fetch live result
+// ══════════════════════════════════════════════════
+async function showRawLiveFrame(statusText = '推論端已連線（等待觸發）') {
+  const dot = document.getElementById('inferDot');
+  const lr = await fetch(`${C.inferUrl()}/live`, { signal: AbortSignal.timeout(2000) });
+  if (!lr.ok) return false;
+  const ld = await lr.json();
+  if (!ld.live_img) return false;
+
+  // polling 模式下，可能尚未有 /result；仍要立即從 /health 同步目前後台產品。
+  syncCurrentProductFromInfer();
+
+  ST.latestLiveImg = ld.live_img;
+  dot.className = 'status-dot live';
+  document.getElementById('connStatus').textContent = statusText;
+  document.getElementById('connStatus').style.color = 'var(--warn)';
+
+  const img = document.getElementById('liveImg');
+  img.src = ld.live_img;
+  img.style.display = 'block';
+  document.getElementById('noSignal').style.display = 'none';
+  document.getElementById('liveWrap').classList.remove('scanning');
+  document.getElementById('liveDot').className = 'status-dot live';
+
+  const badge = document.getElementById('verdictBadge');
+  if (badge && (!ST.liveResult || !ST.lastTs)) {
+    badge.textContent = 'WAIT';
+    badge.className = 'verdict-badge idle';
+  }
+  return true;
+}
+
+async function fetchLiveResult() {
+  const dot = document.getElementById('inferDot');
+  try {
+    const r = await fetch(`${C.inferUrl()}/result`, { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    dot.className = 'status-dot live';
+
+    // polling 模式下，送完 DO 後 /result 仍會保留上一筆推論結果。
+    // 如果 ts 沒變，代表沒有新的推論結果；此時改抓 /live 顯示乾淨即時畫面，避免畫面停在上一張有框結果。
+    const isNewResult = !!(d.ts && d.ts !== ST.lastTs);
+    if (!isNewResult && ST.lastTs) {
+      try {
+        const ok = await showRawLiveFrame('推論端已連線（等待下一次觸發）');
+        if (ok) return;
+      } catch(_) {}
+    }
+
+    ST.liveResult = d;
+    if (d.raw_img) ST.latestLiveImg = d.raw_img;
+    renderLive(d);
+    if (isNewResult) {
+      ST.lastTs = d.ts;
+      updateStats(d);
+    }
+    try {
+      const h = await fetch(`${C.inferUrl()}/health`, { signal: AbortSignal.timeout(1000) });
+      if (h.ok) syncProductFromHealth(await h.json());
+    } catch(_) {}
+    document.getElementById('connStatus').textContent = '推論端已連線';
+    document.getElementById('connStatus').style.color = 'var(--pass)';
+  } catch(e) {
+    // /result 尚無推論結果時，嘗試取即時原始影像。
+    try {
+      const ok = await showRawLiveFrame('推論端已連線（等待觸發）');
+      if (ok) return;
+    } catch(_) {}
+    dot.className = 'status-dot error';
+    document.getElementById('connStatus').textContent = '推論端未連線';
+    document.getElementById('connStatus').style.color = 'var(--text-dim)';
+    setLiveOffline();
+  }
+}
+
+function setLiveOffline() {
+  document.getElementById('liveDot').className = 'status-dot';
+  document.getElementById('liveWrap').classList.remove('scanning');
+  document.getElementById('liveImg').style.display = 'none';
+  document.getElementById('noSignal').style.display = '';
+  document.getElementById('verdictBadge').className  = 'verdict-badge idle';
+  document.getElementById('verdictBadge').textContent = '—';
+}
+
+function updateInferenceModeUI(d) {
+  const modeEl = document.getElementById('statMode');
+  const itemEl = document.getElementById('statItems');
+  if (!modeEl || !itemEl) return;
+  const rules = d && Array.isArray(d.rules) ? d.rules : [];
+  const mode = d && (d.mode || '').toString();
+  let label = d && d.mode_label ? d.mode_label : '';
+  if (!label) {
+    if (mode === 'multi_sample') label = 'MULTI-SAMPLE';
+    else if (mode === 'rule_group') label = 'RULE-GROUP';
+    else label = rules.length ? 'GROUP' : 'LEGACY TEMPLATE';
+  }
+  modeEl.textContent = label;
+  modeEl.style.color = rules.length ? 'var(--accent)' : 'var(--text-mid)';
+  itemEl.textContent = rules.length ? String(rules.length) : '0';
+}
+
+async function syncCurrentProductFromInfer() {
+  try {
+    const h = await fetch(`${C.inferUrl()}/health`, { signal: AbortSignal.timeout(2000) });
+    if (!h.ok) return false;
+    syncProductFromHealth(await h.json());
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function syncProductFromHealth(health) {
+  if (!health || !health.product) return;
+  const sel    = document.getElementById('productSelect');
+  const serial = health.product.serial;
+  const name   = health.product.name || '';
+
+  function applySelectedProduct() {
+    if (sel.value !== serial) sel.value = serial;
+    ST.currentProductSerial = serial;
+    document.getElementById('productDot').className = 'status-dot live';
+    document.getElementById('liveProduct').textContent = `${serial}  ${name}`;
+  }
+
+  if ([...sel.options].some(o => o.value === serial)) {
+    applySelectedProduct();
+  } else {
+    loadProducts().then(applySelectedProduct);
+  }
+}
+
+function renderLive(d) {
+  // 防止切換產品瞬間，舊產品的上一筆 /result 又被畫回畫面
+  if (ST.currentProductSerial && d.product && d.product.serial && d.product.serial !== ST.currentProductSerial) {
+    return;
+  }
+  const displayImg = d.result_img || d.raw_img;
+  if (displayImg) {
+    const img = document.getElementById('liveImg');
+    img.src = displayImg; img.style.display = 'block';
+    document.getElementById('noSignal').style.display = 'none';
+    document.getElementById('liveWrap').classList.add('scanning');
+  }
+  const badge = document.getElementById('verdictBadge');
+  badge.textContent = d.pass ? 'PASS' : 'FAIL';
+  badge.className   = `verdict-badge ${d.pass ? 'pass' : 'fail'}`;
+  document.getElementById('liveDot').className = 'status-dot live';
+  if (d.product) document.getElementById('liveProduct').textContent = `${d.product.serial}  ${d.product.name || ''}`;
+  document.getElementById('liveTs').textContent = d.ts ? d.ts.replace('T', ' ').substring(0, 19) : '';
+  renderScoreBars(d.results || [], d.rules || []);
+  updateInferenceModeUI(d);
+}
+
+function renderScoreBars(results, rules) {
+  const el = document.getElementById('scoresPanel');
+  const roleTag = (x) => x && x.sample_role === 'NG' ? '[NG]' : (x && x.sample_role === 'OK' ? '[OK]' : '');
+  const ruleHtml = (rules && rules.length) ? rules.map(rule => {
+    const col = rule.pass ? 'var(--pass)' : 'var(--fail)';
+    const detail = (rule.items || []).map(x => {
+      const icon = x.reject ? '⛔' : (x.pass ? '✔' : '✘');
+      const score = x.score!=null ? ' '+Number(x.score).toFixed(3) : '';
+      return `${icon} ${roleTag(x)} ${esc(x.label)}${score}`;
+    }).join(' / ');
+    const titleName = rule.hard_reject ? `${rule.name}（NG override）` : rule.name;
+    return `<div class="score-row"><div class="score-label" title="${esc(titleName)}">[${esc(rule.logic_mode)}] ${esc(titleName)}</div><div style="flex:1;font-family:var(--mono);font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(detail)}">${detail || '—'}</div><div class="score-icon" style="color:${col};">${rule.hard_reject?'⛔':(rule.pass?'✔':'✘')}</div></div>`;
+  }).join('') : '';
+  if (!results.length) { el.innerHTML = ruleHtml || '<div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);">無 region 資料</div>'; return; }
+  el.innerHTML = ruleHtml + results.map(r => {
+    const label = `${roleTag(r)} ${r.label || ''}`.trim();
+    if (r.score === null) return `<div class="score-row"><div class="score-label">${esc(label)}</div><div style="flex:1;font-family:var(--mono);font-size:10px;color:var(--text-dim);">${r.error||'—'}</div><div class="score-icon">✘</div></div>`;
+    const pct = (r.score * 100).toFixed(1), col = r.reject ? 'var(--fail)' : (r.pass ? 'var(--pass)' : 'var(--fail)');
+    const icon = r.reject ? '⛔' : (r.pass ? '✔' : '✘');
+    return `<div class="score-row"><div class="score-label" title="${esc(label)}">${esc(label)}</div><div class="score-track"><div class="score-fill" style="width:${pct}%;background:${col};"></div></div><div class="score-val" style="color:${col};">${r.score.toFixed(3)}</div><div class="score-icon" style="color:${col};">${icon}</div></div>`;
+  }).join('');
+}
+
+function updateStats(d) {
+  ST.total++; if (d.pass) ST.pass++; else ST.fail++;
+  const y = ST.total > 0 ? ((ST.pass / ST.total) * 100).toFixed(1) + '%' : '—';
+  document.getElementById('statTotal').textContent = ST.total;
+  document.getElementById('statPass').textContent  = ST.pass;
+  document.getElementById('statFail').textContent  = ST.fail;
+  document.getElementById('statYield').textContent = y;
+  document.getElementById('statTs').textContent    = (d.ts||'').replace('T',' ').substring(0,19);
+  // KPI
+  document.getElementById('kpiPass').textContent  = ST.pass;
+  document.getElementById('kpiFail').textContent  = ST.fail;
+  document.getElementById('kpiYield').textContent = y;
+  const now = Date.now();
+  ST.frameTimes.push(now);
+  ST.frameTimes = ST.frameTimes.filter(t => now - t < 60000);
+  if (ST.frameTimes.length >= 2) {
+    const span = (now - ST.frameTimes[0]) / 1000;
+    document.getElementById('kpiPpm').textContent = (ST.frameTimes.length / span * 60).toFixed(1);
+    document.getElementById('kpiUph').textContent = (ST.frameTimes.length / span * 3600).toFixed(0);
+  }
+  // trend
+  ST.yieldHist.push(d.pass ? 1 : 0);
+  if (ST.yieldHist.length > 120) ST.yieldHist.shift();
+  drawChart();
+  // sound
+  if (!d.pass) beepNG();
+}
+
+// ══════════════════════════════════════════════════
+// Logs
+// ══════════════════════════════════════════════════
+async function loadLogs() {
+  const dot = document.getElementById('appDot');
+  try {
+    const r = await fetch(`${C.appUrl()}/api/logs?limit=200`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error(r.status);
+    ST.logs = await r.json(); dot.className = 'status-dot live'; renderLogs(); return;
+  } catch(_) { dot.className = 'status-dot error'; }
+  try {
+    const r = await fetch(`${C.inferUrl()}/logs?limit=200`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error(r.status);
+    ST.logs = await r.json(); renderLogs();
+  } catch(_) {}
+}
+
+function setFilter(f) {
+  ST.filter = f;
+  document.getElementById('filterAll').className  = 'pill' + (f==='all'  ? ' active-all'  : '');
+  document.getElementById('filterPass').className = 'pill' + (f==='pass' ? ' active-pass' : '');
+  document.getElementById('filterFail').className = 'pill' + (f==='fail' ? ' active-fail' : '');
+  renderLogs();
+}
+
+function renderLogs() {
+  const filtered = ST.filter==='all' ? ST.logs : ST.logs.filter(l=>l.pass_fail===ST.filter.toUpperCase());
+  document.getElementById('logCount').textContent = `${filtered.length} 筆`;
+  const el = document.getElementById('logList');
+  if (!filtered.length) { el.innerHTML='<div style="padding:24px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text-dim);">無記錄</div>'; return; }
+  el.innerHTML = filtered.map(log => {
+    let scores=[]; try{scores=JSON.parse(log.result_json||'[]');}catch(_){}
+    const chips = scores.map(r=>r.score===null?`<span class="log-score-chip chip-fail">${esc(r.label)} ERR</span>`:`<span class="log-score-chip${!r.pass?' chip-fail':''}">${esc(r.label)} ${r.score.toFixed(3)}</span>`).join('');
+    const sel = ST.selectedLogId===log.id?' selected':'';
+    const cls = log.pass_fail==='PASS'?'pass':'fail';
+    return `<div class="log-item ${cls}${sel}" onclick="selectLog(${log.id})" data-id="${log.id}"><div class="bar"></div><div class="log-body"><div class="log-top"><span class="log-serial">${esc(log.serial||'—')}</span><span style="font-size:10px;color:var(--text-dim);">${esc(log.name||'')}</span><span class="log-result">${log.pass_fail}</span><span class="log-time">${(log.created_at||'').substring(0,19)}</span></div><div class="log-scores">${chips}</div></div></div>`;
+  }).join('');
+}
+
+async function selectLog(id) {
+  ST.selectedLogId = id;
+  document.querySelectorAll('.log-item').forEach(el=>el.classList.toggle('selected',parseInt(el.dataset.id)===id));
+  const log = ST.logs.find(l=>l.id===id);
+  if (!log) return;
+  document.getElementById('detailTitle').textContent = `#${log.id}  ${log.serial||''}  ${(log.created_at||'').substring(0,19)}  ${log.pass_fail}`;
+  let results=[]; try{results=JSON.parse(log.result_json||'[]');}catch(_){}
+  try{
+    const r=await fetch(`${C.appUrl()}/api/logs/${id}`,{signal:AbortSignal.timeout(2000)});
+    if(r.ok){const d=await r.json();if(d.results)results=d.results;}
+  }catch(_){}
+  const img=document.getElementById('detailImg'), noImg=document.getElementById('detailNoImg'), zoomBtn=document.getElementById('detailImgBtn');
+  img.style.display='none'; noImg.style.display='flex'; noImg.textContent='讀取影像中…'; zoomBtn.style.display='none';
+  let imageLoaded = false;
+  try {
+    const imgUrl = `${C.appUrl()}/api/logs/${id}/image?type=result&ts=${Date.now()}`;
+    const probe = await fetch(imgUrl, {method:'GET', signal:AbortSignal.timeout(2500)});
+    if (probe.ok) {
+      img.src = imgUrl; img.style.display='block'; noImg.style.display='none'; zoomBtn.style.display=''; imageLoaded = true;
+    }
+  } catch(_) {}
+  if (!imageLoaded) {
+    const lv=ST.liveResult;
+    if(lv&&lv.result_img&&lv.product&&lv.product.serial===log.serial&&Math.abs(new Date(lv.ts)-new Date(log.created_at))<15000){
+      img.src=lv.result_img;img.style.display='block';noImg.style.display='none';zoomBtn.style.display='';
+    }else{
+      noImg.textContent=(log.storage_status&&String(log.storage_status).startsWith('FAILED'))?'圖片保存失敗':'本筆記錄無結果影像';
+    }
+  }
+  const tbody=document.getElementById('detailBody');
+  if(!results.length){tbody.innerHTML='<tr><td colspan="5" style="color:var(--text-dim);padding:8px;">無詳細資料</td></tr>';return;}
+  tbody.innerHTML=results.map(r=>{
+    const score=r.score!=null?r.score.toFixed(4):'—', thresh=r.threshold!=null?r.threshold.toFixed(2):'—', loc=r.match_loc?`(${r.match_loc[0]}, ${r.match_loc[1]})`:'—';
+    return `<tr><td>${esc(r.label)}</td><td style="color:${r.pass?'var(--pass)':'var(--fail)'};">${score}</td><td style="color:var(--text-mid);">${thresh}</td><td><span class="chip ${r.pass?'pass':'fail'}">${r.pass?'PASS':'FAIL'}</span></td><td style="color:var(--text-dim);">${loc}</td></tr>`;
+  }).join('');
+}
+
+
+
+function renderRuleGroupDetails(ruleResults) {
+  if (!Array.isArray(ruleResults) || !ruleResults.length) return '';
+  return `<div style="margin:8px 0 10px 0;border:1px solid var(--border);border-radius:4px;background:var(--bg);padding:8px;">
+    <div style="font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:6px;">Rule Groups</div>
+    ${ruleResults.map(g => `<div style="font-size:11px;margin:4px 0;">
+      <span class="chip ${g.pass?'pass':'fail'}">${g.pass?'PASS':'FAIL'}</span>
+      <b>${esc(g.name || 'Group')}</b>
+      <span style="color:var(--text-dim);font-family:var(--mono);">${esc(g.logic_mode || 'ANY')}</span>
+      ${(g.items||[]).length ? `<div style="margin-left:12px;color:var(--text-mid);">${(g.items||[]).map(it => `${esc(it.label || it.sample_name || '')}: <span style="color:${it.pass?'var(--pass)':'var(--fail)'}">${it.pass?'PASS':'FAIL'}</span>`).join('　')}</div>` : ''}
+    </div>`).join('')}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════
+// Zoom
+// ══════════════════════════════════════════════════
+function zoomImg(src){if(!src)return;document.getElementById('zoomImg').src=src;document.getElementById('zoomModal').classList.add('open');}
+function zoomDetail(){zoomImg(document.getElementById('detailImg').src);}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escAttr(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// ══════════════════════════════════════════════════
+// Products
+// ══════════════════════════════════════════════════
+async function loadProducts() {
+  try {
+    const res=await fetch(`${C.inferUrl()}/products`,{signal:AbortSignal.timeout(3000)});
+    if(!res.ok)throw new Error(res.status);
+    const list=await res.json(), sel=document.getElementById('productSelect'), cur=sel.value;
+    sel.innerHTML='<option value="">— 選擇產品 —</option>'+list.map(p=>`<option value="${esc(p.serial)}">${esc(p.serial)}${p.name?'  '+esc(p.name):''}</option>`).join('');
+    if(cur)sel.value=cur;
+  }catch(_){}
+}
+
+async function switchProduct(serial) {
+  if(!serial)return;
+  const dot=document.getElementById('productDot'); dot.className='status-dot';
+  try{
+    const res=await fetch(`${C.inferUrl()}/switch-product`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial}),signal:AbortSignal.timeout(8000)});
+    const d=await res.json();
+    if(res.ok&&d.ok){
+        dot.className='status-dot live';
+        ST.currentProductSerial = serial;
+        showToast(`✅ 已切換至 ${serial}  regions=${(d.cache||{}).regions??'?'}`, 'var(--pass)',3000);
+        stopPolling();
+        ST.liveResult = null;
+        ST.selectedLogId = null;
+        ST.lastTs = '';
+        ST.total = 0; ST.pass = 0; ST.fail = 0;
+        ST.frameTimes = []; ST.yieldHist = [];
+        updateStatsDisplayOnly();
+        document.getElementById('liveImg').style.display = 'none';
+        document.getElementById('noSignal').style.display = '';
+        document.getElementById('verdictBadge').className  = 'verdict-badge idle';
+        document.getElementById('verdictBadge').textContent = '—';
+        document.getElementById('scoresPanel').innerHTML = '<div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:1px;">等待新產品推論結果…</div>';
+        document.getElementById('detailTitle').textContent = '';
+        document.getElementById('detailBody').innerHTML = '';
+        document.getElementById('detailImg').style.display = 'none';
+        document.getElementById('detailNoImg').style.display = '';
+        loadLogs();
+        setTimeout(() => { if(!ST.paused) schedulePoll(); }, 1500);
+    }
+    else{dot.className='status-dot error';showToast(`❌ 切換失敗：${d.error||res.status}`,'var(--fail)',4000);document.getElementById('productSelect').value='';}
+  }catch(e){dot.className='status-dot error';showToast('❌ 推論端無回應','var(--fail)',3000);document.getElementById('productSelect').value='';}
+}
+
+
+// ══════════════════════════════════════════════════
+// Rule Group Panel：現場端條件群組設定
+// ══════════════════════════════════════════════════
+function selectedProductSerial() {
+  return ST.currentProductSerial || document.getElementById('productSelect').value || '';
+}
+
+function setRuleMsg(msg, color='var(--text-dim)') {
+  const el = document.getElementById('rulePanelMsg');
+  if (el) { el.textContent = msg || ''; el.style.color = color; }
+}
+
+async function findAppProductBySerial(serial) {
+  const r = await fetch(`${C.appUrl()}/api/products`, {signal: AbortSignal.timeout(5000)});
+  if (!r.ok) throw new Error(`管理端產品列表讀取失敗 ${r.status}`);
+  const list = await r.json();
+  return (list || []).find(p => String(p.serial) === String(serial));
+}
+
+async function openRulePanel() {
+  const serial = selectedProductSerial();
+  if (!serial) { showToast('⚠ 請先選擇產品', 'var(--warn)', 2500); return; }
+  document.getElementById('rulePanel').classList.add('open');
+  await loadRulePanelData();
+}
+
+function closeRulePanel() {
+  document.getElementById('rulePanel').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const p = document.getElementById('rulePanel');
+    if (p && p.classList.contains('open')) closeRulePanel();
+    const sp = document.getElementById('samplePanel');
+    if (sp && sp.classList.contains('open')) closeSamplePanel();
+  }
+});
+
+async function loadRulePanelData() {
+  const serial = selectedProductSerial();
+  if (!serial) { setRuleMsg('請先選擇產品', 'var(--warn)'); return; }
+  setRuleMsg('讀取中…');
+  try {
+    const product = await findAppProductBySerial(serial);
+    if (!product) throw new Error(`管理端找不到產品 ${serial}`);
+    ST.ruleProduct = product;
+    document.getElementById('ruleProductInfo').textContent = `${product.serial}  ${product.name || ''}  / ID=${product.id}`;
+
+    const [rr, rg] = await Promise.all([
+      fetch(`${C.appUrl()}/api/products/${product.id}/regions`, {signal: AbortSignal.timeout(5000)}),
+      fetch(`${C.appUrl()}/api/products/${product.id}/rules`, {signal: AbortSignal.timeout(5000)}),
+    ]);
+    if (!rr.ok) throw new Error(`template 讀取失敗 ${rr.status}`);
+    if (!rg.ok) throw new Error(`rules 讀取失敗 ${rg.status}`);
+    ST.ruleRegions = await rr.json();
+    const rules = await rg.json();
+    ST.ruleRows = (rules || []).map(rule => ({
+      name: rule.name || '',
+      logic_mode: rule.logic_mode || 'ANY',
+      enabled: rule.enabled !== false && rule.enabled !== 0,
+      region_ids: (rule.items || []).map(x => Number(x.region_id)).filter(Boolean),
+    }));
+    if (!ST.ruleRows.length && ST.ruleRegions.length) {
+      // 預設提供一組，但不自動儲存，避免現場誤套。
+      ST.ruleRows = [{name:'外觀相容檢查', logic_mode:'ANY', enabled:true, region_ids:[]}];
+    }
+    renderRuleRows();
+    setRuleMsg(`已讀取 ${ST.ruleRegions.length} 個 template、${ST.ruleRows.length} 個群組`);
+  } catch (e) {
+    setRuleMsg(`讀取失敗：${e.message || e}`, 'var(--fail)');
+  }
+}
+
+function addRuleGroupRow() {
+  ST.ruleRows.push({name:`Rule-${ST.ruleRows.length + 1}`, logic_mode:'ANY', enabled:true, region_ids:[]});
+  renderRuleRows();
+}
+
+function removeRuleGroupRow(idx) {
+  ST.ruleRows.splice(idx, 1);
+  renderRuleRows();
+}
+
+function updateRuleField(idx, field, value) {
+  if (!ST.ruleRows[idx]) return;
+  if (field === 'enabled') ST.ruleRows[idx][field] = !!value;
+  else ST.ruleRows[idx][field] = value;
+}
+
+function toggleRuleRegion(idx, regionId, checked) {
+  const row = ST.ruleRows[idx];
+  if (!row) return;
+  row.region_ids = row.region_ids || [];
+  regionId = Number(regionId);
+  if (checked) {
+    if (!row.region_ids.includes(regionId)) row.region_ids.push(regionId);
+  } else {
+    row.region_ids = row.region_ids.filter(x => Number(x) !== regionId);
+  }
+}
+
+function renderRuleRows() {
+  const el = document.getElementById('ruleRows');
+  const regions = ST.ruleRegions || [];
+  if (!regions.length) {
+    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--warn);border:1px solid var(--border);padding:10px;border-radius:4px;">此產品目前沒有 template，請先在 Label / Browse 建立檢查區。</div>';
+    return;
+  }
+  el.innerHTML = (ST.ruleRows || []).map((row, idx) => {
+    const checks = regions.map(r => {
+      const checked = (row.region_ids || []).map(Number).includes(Number(r.id));
+      const title = `${r.label || ('Region-'+r.id)}  x=${r.x}, y=${r.y}, w=${r.w}, h=${r.h}, threshold=${r.threshold}`;
+      return `<label title="${esc(title)}" style="display:flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;min-width:180px;">
+        <input type="checkbox" ${checked?'checked':''} onchange="toggleRuleRegion(${idx}, ${Number(r.id)}, this.checked)" style="accent-color:var(--accent);">
+        <span style="font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.label || ('Region-'+r.id))}</span>
+      </label>`;
+    }).join('');
+    return `<div style="border:1px solid var(--border2);border-radius:6px;background:var(--panel2);padding:10px;">
+      <div style="display:grid;grid-template-columns:70px 1fr 150px 70px;gap:10px;align-items:center;margin-bottom:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--text-mid);">
+          <input type="checkbox" ${row.enabled?'checked':''} onchange="updateRuleField(${idx}, 'enabled', this.checked)" style="accent-color:var(--accent);">ON
+        </label>
+        <input class="conn-input" style="width:100%;" value="${esc(row.name || '')}" onchange="updateRuleField(${idx}, 'name', this.value)" placeholder="群組名稱，例如：蓋子 coating 相容">
+        <select style="background:var(--bg);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;width:100%;" onchange="updateRuleField(${idx}, 'logic_mode', this.value)">
+          <option value="ANY" ${row.logic_mode === 'ALL' ? '' : 'selected'}>ANY / OR 任一通過</option>
+          <option value="ALL" ${row.logic_mode === 'ALL' ? 'selected' : ''}>ALL / AND 全部通過</option>
+        </select>
+        <button class="btn" onclick="removeRuleGroupRow(${idx})">刪除</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">${checks}</div>
+    </div>`;
+  }).join('') || '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">尚未建立群組。</div>';
+}
+
+async function saveRulePanelData() {
+  if (!ST.ruleProduct) { setRuleMsg('尚未載入產品資料', 'var(--warn)'); return; }
+  const rules = (ST.ruleRows || []).map((r, idx) => ({
+    name: (r.name || `Rule-${idx+1}`).trim(),
+    logic_mode: r.logic_mode === 'ALL' ? 'ALL' : 'ANY',
+    enabled: !!r.enabled,
+    region_ids: (r.region_ids || []).map(Number).filter(Boolean),
+  })).filter(r => r.name && r.region_ids.length);
+  if (!rules.length) {
+    setRuleMsg('至少要有一組群組，且每組至少勾選一個 template。', 'var(--warn)');
+    return;
+  }
+  setRuleMsg('儲存中…');
+  try {
+    const r = await fetch(`${C.appUrl()}/api/products/${ST.ruleProduct.id}/rules`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rules}),
+      signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || `儲存失敗 ${r.status}`);
+    setRuleMsg(`已儲存 ${d.count || rules.length} 組，正在重載推論端…`, 'var(--pass)');
+    await reloadCache();
+    showToast('✅ 條件群組已套用', 'var(--pass)', 3000);
+  } catch(e) {
+    setRuleMsg(`儲存失敗：${e.message || e}`, 'var(--fail)');
+  }
+}
+
+
+// ══════════════════════════════════════════════════
+// Multi-Sample Template Panel：正式版現場多樣本設定（方案 B+：OK / NG samples）
+// ══════════════════════════════════════════════════
+function setSampleMsg(msg, color='var(--text-dim)') {
+  const el = document.getElementById('samplePanelMsg');
+  if (el) { el.textContent = msg || ''; el.style.color = color; }
+}
+
+function cleanSampleRole(role) {
+  return String(role || '').toUpperCase() === 'NG' ? 'NG' : 'OK';
+}
+function cleanSampleHint(v) {
+  const x = String(v || '').trim().toUpperCase();
+  if (x === 'NG' || x === 'REJECT' || x === 'FAIL') return 'NG';
+  if (x === 'NEUTRAL' || x === 'NONE' || x === 'UNSPECIFIED' || x === 'GENERAL') return 'NEUTRAL';
+  return 'OK';
+}
+function sampleHintBadge(t) {
+  const h = cleanSampleHint(t && t.sample_hint);
+  const color = h === 'NG' ? 'var(--fail)' : (h === 'NEUTRAL' ? 'var(--text-dim)' : 'var(--pass)');
+  const text = h === 'NG' ? 'NG候選' : (h === 'NEUTRAL' ? '一般' : 'OK候選');
+  return `<span title="index.html 標記的候選用途；真正 OK/NG 仍由本規則群組勾選決定。" style="display:inline-block;padding:1px 5px;border:1px solid ${color};border-radius:3px;color:${color};font-family:var(--mono);font-size:9px;white-space:nowrap;">${text}</span>`;
+}
+function normalizeSampleItemRow(row) {
+  row = row || {};
+  if (!Array.isArray(row.ok_source_region_ids)) {
+    row.ok_source_region_ids = Array.isArray(row.source_region_ids) ? row.source_region_ids.map(Number).filter(Boolean) : [];
+  }
+  if (!Array.isArray(row.ng_source_region_ids)) row.ng_source_region_ids = [];
+  row.ok_source_region_ids = Array.from(new Set(row.ok_source_region_ids.map(Number).filter(Boolean)));
+  row.ng_source_region_ids = Array.from(new Set(row.ng_source_region_ids.map(Number).filter(Boolean)));
+  // 同一個 source template 不應同時是 OK 與 NG；若發生，NG 優先。
+  const ngSet = new Set(row.ng_source_region_ids.map(Number));
+  row.ok_source_region_ids = row.ok_source_region_ids.filter(id => !ngSet.has(Number(id)));
+  return row;
+}
+function sampleRoleIds(row, role='OK') {
+  row = normalizeSampleItemRow(row);
+  return cleanSampleRole(role) === 'NG' ? row.ng_source_region_ids : row.ok_source_region_ids;
+}
+function sampleAllRoleIds(row) {
+  row = normalizeSampleItemRow(row);
+  return Array.from(new Set([...(row.ok_source_region_ids || []), ...(row.ng_source_region_ids || [])].map(Number).filter(Boolean)));
+}
+function sampleSetRoleIds(row, role, ids) {
+  row = normalizeSampleItemRow(row);
+  ids = Array.from(new Set((ids || []).map(Number).filter(Boolean)));
+  if (cleanSampleRole(role) === 'NG') row.ng_source_region_ids = ids;
+  else row.ok_source_region_ids = ids;
+  const okSet = new Set((row.ok_source_region_ids || []).map(Number));
+  const ngSet = new Set((row.ng_source_region_ids || []).map(Number));
+  // NG 優先，避免同一 template 同時被標成 OK/NG。
+  row.ok_source_region_ids = Array.from(okSet).filter(id => !ngSet.has(Number(id)));
+}
+
+async function openSamplePanel() {
+  const serial = selectedProductSerial();
+  if (!serial) { showToast('⚠ 請先選擇產品', 'var(--warn)', 2500); return; }
+  document.getElementById('samplePanel').classList.add('open');
+  await loadSamplePanelData();
+}
+
+function closeSamplePanel() {
+  document.getElementById('samplePanel').classList.remove('open');
+}
+
+async function loadSamplePanelData() {
+  const serial = selectedProductSerial();
+  if (!serial) { setSampleMsg('請先選擇產品', 'var(--warn)'); return; }
+  setSampleMsg('讀取中…');
+  try {
+    const product = await findAppProductBySerial(serial);
+    if (!product) throw new Error(`管理端找不到產品 ${serial}`);
+    ST.sampleProduct = product;
+    document.getElementById('sampleProductInfo').textContent = `${product.serial}  ${product.name || ''}  / ID=${product.id}`;
+    const [tplResp, itemResp] = await Promise.all([
+      fetch(`${C.appUrl()}/api/templates`, {signal: AbortSignal.timeout(7000)}),
+      fetch(`${C.appUrl()}/api/products/${product.id}/rule-groups`, {signal: AbortSignal.timeout(7000)}),
+    ]);
+    if (!tplResp.ok) throw new Error(`template library 讀取失敗 ${tplResp.status}`);
+    if (!itemResp.ok) throw new Error(`inspection items 讀取失敗 ${itemResp.status}`);
+    ST.sampleTemplates = (await tplResp.json() || []).map(t => ({...t, id:Number(t.id), product_id:Number(t.product_id), sample_hint: cleanSampleHint(t.sample_hint)}));
+    const payload = await itemResp.json();
+    const items = Array.isArray(payload) ? payload : (payload.groups || payload.items || []);
+    ST.sampleFinalLogic = (Array.isArray(payload) ? 'ALL' : (payload.final_logic_mode || 'ALL'));
+    const finalSel = document.getElementById('sampleFinalLogic');
+    if (finalSel) finalSel.value = ST.sampleFinalLogic;
+
+    // If a rule group references a source region that was later deleted/re-saved, runtime is
+    // still valid because the template was copied locally. Add a negative-id pseudo-template
+    // so the UI can keep showing/saving that copied sample instead of silently dropping it.
+    const globalTemplateIds = new Set(ST.sampleTemplates.map(t => Number(t.id)));
+    const pseudoTemplates = [];
+    const idForSample = (sample) => {
+      const srcId = Number(sample.source_region_id || 0);
+      if (srcId && globalTemplateIds.has(srcId)) return srcId;
+      const localId = -Number(sample.id || 0);
+      if (!localId) return 0;
+      if (!globalTemplateIds.has(localId)) {
+        globalTemplateIds.add(localId);
+        pseudoTemplates.push({
+          id: localId,
+          _is_local_copy: true,
+          existing_sample_id: Number(sample.id),
+          product_id: Number(sample.source_product_id || (ST.sampleProduct && ST.sampleProduct.id) || -1),
+          product_serial: sample.source_product_serial || 'LOCAL-COPY',
+          product_name: sample.source_product_name || '來源已變更/已刪除',
+          label: sample.source_region_label || sample.sample_name || `Copied Sample ${sample.id}`,
+          x: sample.x, y: sample.y, w: sample.w, h: sample.h,
+          threshold: sample.threshold,
+          search_margin: sample.search_margin || 0,
+          sample_hint: cleanSampleHint(sample.source_sample_hint || sample.sample_role),
+        });
+      }
+      return localId;
+    };
+
+    ST.sampleItems = (items || []).map(item => {
+      const samples = item.samples || [];
+      return normalizeSampleItemRow({
+        name: item.name || '',
+        logic_mode: item.logic_mode || 'ANY',
+        enabled: item.enabled !== false && item.enabled !== 0,
+        ok_source_region_ids: samples.filter(x => cleanSampleRole(x.sample_role) !== 'NG').map(idForSample).filter(Boolean),
+        ng_source_region_ids: samples.filter(x => cleanSampleRole(x.sample_role) === 'NG').map(idForSample).filter(Boolean),
+      });
+    });
+    if (pseudoTemplates.length) ST.sampleTemplates = ST.sampleTemplates.concat(pseudoTemplates);
+    if (!ST.sampleItems.length) {
+      ST.sampleItems = [normalizeSampleItemRow({name:'蓋子外觀相容', logic_mode:'ANY', enabled:true, ok_source_region_ids:[], ng_source_region_ids:[]})];
+    }
+    ST.sampleActiveItemIdx = 0;
+    initSampleSourceProducts();
+    renderSampleProductPicker();
+    renderSampleRows();
+    const okCount = ST.sampleItems.reduce((a,r)=>a+sampleRoleIds(r,'OK').length,0);
+    const ngCount = ST.sampleItems.reduce((a,r)=>a+sampleRoleIds(r,'NG').length,0);
+    const hintNgCount = ST.sampleTemplates.filter(t => cleanSampleHint(t.sample_hint) === 'NG').length;
+    setSampleMsg(`已讀取全域 ${ST.sampleTemplates.length} 個 template（NG候選 ${hintNgCount}）、目前產品 ${ST.sampleItems.length} 個規則群組；OK=${okCount}, NG=${ngCount}；目前編輯群組已預選 ${ensureSampleItemUi(activeSampleItemRow()).selectedProductIds.size} 個來源產品。`);
+  } catch(e) {
+    setSampleMsg(`讀取失敗：${e.message || e}`, 'var(--fail)');
+  }
+}
+
+function addSampleItemRow() {
+  const row = normalizeSampleItemRow({name:`Group-${ST.sampleItems.length + 1}`, logic_mode:'ANY', enabled:true, ok_source_region_ids:[], ng_source_region_ids:[]});
+  ST.sampleItems.push(row);
+  ST.sampleActiveItemIdx = ST.sampleItems.length - 1;
+  const ui = ensureSampleItemUi(row);
+  ui.selectedProductIds = defaultSampleSelectedProductsForRow(row);
+  ui.collapsedProductIds = new Set();
+  ui.productKeyword = '';
+  ui.labelKeyword = '';
+  ui.showSelectedOnly = false;
+  syncActiveSampleUiToControls();
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function removeSampleItemRow(idx) {
+  ST.sampleItems.splice(idx, 1);
+  if (!ST.sampleItems.length) {
+    ST.sampleItems = [normalizeSampleItemRow({name:'Group-1', logic_mode:'ANY', enabled:true, ok_source_region_ids:[], ng_source_region_ids:[]})];
+  }
+  ST.sampleActiveItemIdx = Math.max(0, Math.min(Number(ST.sampleActiveItemIdx || 0), ST.sampleItems.length - 1));
+  ensureSampleProductSelectionFallback(activeSampleItemRow());
+  syncActiveSampleUiToControls();
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function setSampleActiveItemRow(idx) {
+  idx = Number(idx);
+  if (!Number.isFinite(idx) || idx < 0 || idx >= (ST.sampleItems || []).length) return;
+  ST.sampleActiveItemIdx = idx;
+  ensureSampleProductSelectionFallback(activeSampleItemRow());
+  syncActiveSampleUiToControls();
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function updateSampleItemField(idx, field, value) {
+  if (!ST.sampleItems[idx]) return;
+  if (field === 'enabled') ST.sampleItems[idx][field] = !!value;
+  else ST.sampleItems[idx][field] = value;
+}
+
+function toggleSampleTemplate(idx, regionId, role, checked) {
+  const row = ST.sampleItems[idx];
+  if (!row) return;
+  role = cleanSampleRole(role);
+  regionId = Number(regionId);
+  normalizeSampleItemRow(row);
+  const target = sampleRoleIds(row, role).map(Number);
+  const otherRole = role === 'NG' ? 'OK' : 'NG';
+  const other = sampleRoleIds(row, otherRole).map(Number).filter(x => Number(x) !== regionId);
+  let next = target;
+  if (checked) {
+    if (!next.includes(regionId)) next.push(regionId);
+  } else {
+    next = next.filter(x => Number(x) !== regionId);
+  }
+  sampleSetRoleIds(row, otherRole, other);
+  sampleSetRoleIds(row, role, next);
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function sampleTemplateIndex() {
+  return Object.fromEntries((ST.sampleTemplates || []).map(t => [Number(t.id), t]));
+}
+
+function sampleProductMetaList() {
+  const byProduct = new Map();
+  const tplIndex = sampleTemplateIndex();
+  (ST.sampleTemplates || []).forEach(t => {
+    const pid = Number(t.product_id);
+    if (!byProduct.has(pid)) {
+      byProduct.set(pid, {
+        id: pid,
+        serial: t.product_serial || `Product-${pid}`,
+        name: t.product_name || '',
+        count: 0,
+        ok_hint_count: 0,
+        ng_hint_count: 0,
+        neutral_hint_count: 0,
+        used_count: 0,
+        same: ST.sampleProduct && Number(ST.sampleProduct.id) === pid,
+      });
+    }
+    const m = byProduct.get(pid);
+    m.count += 1;
+    const hint = cleanSampleHint(t.sample_hint);
+    if (hint === 'NG') m.ng_hint_count += 1;
+    else if (hint === 'NEUTRAL') m.neutral_hint_count += 1;
+    else m.ok_hint_count += 1;
+  });
+  (ST.sampleItems || []).forEach(row => {
+    sampleAllRoleIds(row).forEach(id => {
+      const t = tplIndex[Number(id)];
+      if (!t) return;
+      const m = byProduct.get(Number(t.product_id));
+      if (m) m.used_count += 1;
+    });
+  });
+  return Array.from(byProduct.values()).sort((a,b) => {
+    if (a.same !== b.same) return a.same ? -1 : 1;
+    return String(a.serial).localeCompare(String(b.serial), undefined, {numeric:true, sensitivity:'base'});
+  });
+}
+
+function activeSampleItemRow() {
+  const items = ST.sampleItems || [];
+  if (!items.length) return null;
+  let idx = Number(ST.sampleActiveItemIdx || 0);
+  if (!Number.isFinite(idx) || idx < 0) idx = 0;
+  if (idx >= items.length) idx = items.length - 1;
+  ST.sampleActiveItemIdx = idx;
+  return items[idx] || null;
+}
+
+function ensureSampleItemUi(row) {
+  if (!row) row = activeSampleItemRow();
+  if (!row) return {
+    selectedProductIds: new Set(),
+    collapsedProductIds: new Set(),
+    productKeyword: '',
+    labelKeyword: '',
+    showSelectedOnly: false,
+  };
+  if (!row._ui) row._ui = {};
+  const ui = row._ui;
+  if (!(ui.selectedProductIds instanceof Set)) ui.selectedProductIds = new Set(ui.selectedProductIds || []);
+  if (!(ui.collapsedProductIds instanceof Set)) ui.collapsedProductIds = new Set(ui.collapsedProductIds || []);
+  ui.productKeyword = String(ui.productKeyword || '');
+  ui.labelKeyword = String(ui.labelKeyword || '');
+  ui.showSelectedOnly = !!ui.showSelectedOnly;
+  return ui;
+}
+
+function defaultSampleSelectedProductsForRow(row) {
+  const ids = new Set();
+  const tplIndex = sampleTemplateIndex();
+  if (ST.sampleProduct) ids.add(Number(ST.sampleProduct.id));
+  sampleAllRoleIds(row || {}).forEach(id => {
+    const t = tplIndex[Number(id)];
+    if (t && t.product_id != null) ids.add(Number(t.product_id));
+  });
+  const all = sampleProductMetaList();
+  if (!ids.size && all.length) ids.add(Number(all[0].id));
+  return ids;
+}
+
+function ensureSampleProductSelectionFallback(row=null) {
+  const target = row || activeSampleItemRow();
+  const ui = ensureSampleItemUi(target);
+  if (!ui.selectedProductIds.size) {
+    ui.selectedProductIds = defaultSampleSelectedProductsForRow(target || {});
+  }
+  return ui.selectedProductIds;
+}
+
+function syncActiveSampleUiToControls() {
+  const row = activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  const only = document.getElementById('sampleShowSelectedOnly');
+  if (only) only.checked = !!ui.showSelectedOnly;
+  const pf = document.getElementById('sampleProductFilter');
+  if (pf && pf.value !== ui.productKeyword) pf.value = ui.productKeyword;
+  const lf = document.getElementById('sampleFilter');
+  if (lf && lf.value !== ui.labelKeyword) lf.value = ui.labelKeyword;
+}
+
+function updateActiveSampleProductFilter(value) {
+  const ui = ensureSampleItemUi(activeSampleItemRow());
+  ui.productKeyword = String(value || '');
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function updateActiveSampleLabelFilter(value) {
+  const ui = ensureSampleItemUi(activeSampleItemRow());
+  ui.labelKeyword = String(value || '');
+  renderSampleRows();
+}
+
+function updateActiveSampleShowSelectedOnly(checked) {
+  const ui = ensureSampleItemUi(activeSampleItemRow());
+  ui.showSelectedOnly = !!checked;
+  renderSampleRows();
+}
+
+function sampleProductKeyword(row=null) {
+  return String(ensureSampleItemUi(row || activeSampleItemRow()).productKeyword || '').trim().toLowerCase();
+}
+
+function sampleLabelKeyword(row=null) {
+  return String(ensureSampleItemUi(row || activeSampleItemRow()).labelKeyword || '').trim().toLowerCase();
+}
+
+function visibleSampleProductMetas(row=null) {
+  const target = row || activeSampleItemRow();
+  const kw = sampleProductKeyword(target);
+  return sampleProductMetaList().filter(p => !kw || `${p.serial||''} ${p.name||''}`.toLowerCase().includes(kw));
+}
+
+function initSampleSourceProducts() {
+  (ST.sampleItems || []).forEach(row => {
+    const ui = ensureSampleItemUi(row);
+    ui.selectedProductIds = defaultSampleSelectedProductsForRow(row);
+    ui.collapsedProductIds = new Set();
+    ui.productKeyword = '';
+    ui.labelKeyword = '';
+    ui.showSelectedOnly = false;
+  });
+  syncActiveSampleUiToControls();
+}
+
+function toggleSampleSourceProduct(productId, checked) {
+  const row = activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  productId = Number(productId);
+  if (checked) ui.selectedProductIds.add(productId);
+  else ui.selectedProductIds.delete(productId);
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function selectSampleCurrentProductOnly() {
+  const ui = ensureSampleItemUi(activeSampleItemRow());
+  ui.selectedProductIds = new Set();
+  if (ST.sampleProduct) ui.selectedProductIds.add(Number(ST.sampleProduct.id));
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function selectSampleUsedProducts() {
+  const row = activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  ui.selectedProductIds = defaultSampleSelectedProductsForRow(row || {});
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function selectSampleVisibleProducts() {
+  const row = activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  visibleSampleProductMetas(row).forEach(p => ui.selectedProductIds.add(Number(p.id)));
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function clearSampleProductSelection() {
+  const ui = ensureSampleItemUi(activeSampleItemRow());
+  ui.selectedProductIds = new Set();
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function toggleSampleProductCollapse(productId, idx=null) {
+  const row = Number.isInteger(Number(idx)) && ST.sampleItems && ST.sampleItems[Number(idx)] ? ST.sampleItems[Number(idx)] : activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  productId = Number(productId);
+  if (ui.collapsedProductIds.has(productId)) ui.collapsedProductIds.delete(productId);
+  else ui.collapsedProductIds.add(productId);
+  renderSampleRows();
+}
+
+function renderSampleProductPicker() {
+  const el = document.getElementById('sampleProductPicker');
+  if (!el) return;
+  const row = activeSampleItemRow();
+  const ui = ensureSampleItemUi(row);
+  ensureSampleProductSelectionFallback(row);
+  syncActiveSampleUiToControls();
+  const all = sampleProductMetaList();
+  const visible = visibleSampleProductMetas(row);
+  const selected = ui.selectedProductIds || new Set();
+  const summary = document.getElementById('sampleProductSummary');
+  if (summary) summary.textContent = `Group ${Number(ST.sampleActiveItemIdx || 0) + 1}: ${selected.size}/${all.length} products`;
+  if (!all.length) {
+    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--warn);">沒有可用來源產品。</div>';
+    return;
+  }
+  el.innerHTML = visible.map(p => {
+    const checked = selected.has(Number(p.id));
+    const activeUsed = row ? sampleAllRoleIds(row).some(id => {
+      const t = sampleTemplateIndex()[Number(id)];
+      return t && Number(t.product_id) === Number(p.id);
+    }) : false;
+    const badge = p.same ? '本產品' : (activeUsed ? '本組已用' : (p.used_count ? '其他組已用' : '來源'));
+    const border = p.same ? 'var(--accent)' : (activeUsed ? 'var(--pass)' : (p.used_count ? 'var(--warn)' : 'var(--border)'));
+    return `<label title="${escAttr(`${p.serial} ${p.name || ''}`)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid ${border};border-radius:4px;background:${checked?'rgba(0,176,255,.08)':'var(--panel2)'};cursor:pointer;min-width:0;">
+      <input type="checkbox" ${checked?'checked':''} onchange="toggleSampleSourceProduct(${Number(p.id)}, this.checked)" style="accent-color:var(--accent);">
+      <span style="font-family:var(--mono);font-size:10px;color:${p.same?'var(--accent)':'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.same?'★':'◇'} ${esc(p.serial)} ${p.name ? '/ '+esc(p.name) : ''}</span>
+      <span style="font-family:var(--mono);font-size:9px;color:var(--text-dim);white-space:nowrap;">${p.count} tpl</span>
+      <span style="font-family:var(--mono);font-size:9px;color:${p.ng_hint_count?'var(--fail)':'var(--text-dim)'};white-space:nowrap;">NG候選 ${p.ng_hint_count}</span>
+      <span style="font-family:var(--mono);font-size:9px;color:${activeUsed?'var(--pass)':(p.used_count?'var(--warn)':'var(--text-dim)')};white-space:nowrap;">${badge}${p.used_count ? ` ${p.used_count}` : ''}</span>
+    </label>`;
+  }).join('') || '<div style="font-family:var(--mono);font-size:11px;color:var(--warn);">搜尋條件下沒有來源產品。</div>';
+}
+
+function currentVisibleSampleTemplates(row=null) {
+  const target = row || activeSampleItemRow();
+  const ui = ensureSampleItemUi(target);
+  ensureSampleProductSelectionFallback(target);
+  const labelKw = sampleLabelKeyword(target);
+  const selectedProductIds = ui.selectedProductIds || new Set();
+  let templates = (ST.sampleTemplates || []).filter(t => selectedProductIds.has(Number(t.product_id)));
+  if (labelKw) {
+    templates = templates.filter(t => `${t.product_serial||''} ${t.product_name||''} ${t.label||''} ${cleanSampleHint(t.sample_hint)}`.toLowerCase().includes(labelKw));
+  }
+  return templates;
+}
+
+function groupTemplatesByProduct(templates) {
+  const map = new Map();
+  (templates || []).forEach(t => {
+    const pid = Number(t.product_id);
+    if (!map.has(pid)) map.set(pid, {
+      id: pid,
+      serial: t.product_serial || `Product-${pid}`,
+      name: t.product_name || '',
+      same: ST.sampleProduct && Number(ST.sampleProduct.id) === pid,
+      templates: [],
+    });
+    map.get(pid).templates.push(t);
+  });
+  return Array.from(map.values()).sort((a,b) => {
+    if (a.same !== b.same) return a.same ? -1 : 1;
+    return String(a.serial).localeCompare(String(b.serial), undefined, {numeric:true, sensitivity:'base'});
+  });
+}
+
+
+function mergeTemplatesKeepSelectedFirst(selectedTemplates, visibleTemplates) {
+  const out = [];
+  const seen = new Set();
+  const push = (t) => {
+    if (!t) return;
+    const id = Number(t.id);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(t);
+  };
+  // 已選樣本固定優先顯示，避免來源產品或搜尋條件改變時讓使用者誤以為被洗掉。
+  (selectedTemplates || []).forEach(push);
+  (visibleTemplates || []).forEach(push);
+  return out;
+}
+
+function selectAllVisibleTemplatesForRow(idx, role='OK') {
+  const row = ST.sampleItems[idx];
+  if (!row) return;
+  role = cleanSampleRole(role);
+  const visibleIds = currentVisibleSampleTemplates(row).map(t => Number(t.id));
+  const next = Array.from(new Set([...sampleRoleIds(row, role).map(Number), ...visibleIds]));
+  // 避免同一 template 同時被標成 OK/NG；剛加入的 role 優先。
+  const otherRole = role === 'NG' ? 'OK' : 'NG';
+  sampleSetRoleIds(row, otherRole, sampleRoleIds(row, otherRole).filter(id => !visibleIds.includes(Number(id))));
+  sampleSetRoleIds(row, role, next);
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function selectVisibleTemplateHintForRow(idx, role='OK', hint='OK') {
+  const row = ST.sampleItems[idx];
+  if (!row) return;
+  role = cleanSampleRole(role);
+  hint = cleanSampleHint(hint);
+  const visibleIds = currentVisibleSampleTemplates(row)
+    .filter(t => cleanSampleHint(t.sample_hint) === hint)
+    .map(t => Number(t.id));
+  const next = Array.from(new Set([...sampleRoleIds(row, role).map(Number), ...visibleIds]));
+  const otherRole = role === 'NG' ? 'OK' : 'NG';
+  sampleSetRoleIds(row, otherRole, sampleRoleIds(row, otherRole).filter(id => !visibleIds.includes(Number(id))));
+  sampleSetRoleIds(row, role, next);
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function clearSampleTemplatesForRow(idx, role='ALL') {
+  const row = ST.sampleItems[idx];
+  if (!row) return;
+  role = String(role || 'ALL').toUpperCase();
+  if (role === 'OK' || role === 'ALL') sampleSetRoleIds(row, 'OK', []);
+  if (role === 'NG' || role === 'ALL') sampleSetRoleIds(row, 'NG', []);
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function removeSelectedSampleChip(idx, role, regionId) {
+  const row = ST.sampleItems[idx];
+  if (!row) return;
+  role = cleanSampleRole(role);
+  sampleSetRoleIds(row, role, sampleRoleIds(row, role).filter(id => Number(id) !== Number(regionId)));
+  renderSampleProductPicker();
+  renderSampleRows();
+}
+
+function renderSampleRoleChips(idx, row, role, tplIndex, globalVisibleIds) {
+  const ids = sampleRoleIds(row, role).map(Number).filter(Boolean);
+  const color = role === 'NG' ? 'var(--fail)' : 'var(--accent)';
+  const empty = role === 'NG' ? '— 無 NG 樣本' : '— 尚未選 OK 樣本';
+  const label = role === 'NG' ? 'NG 強制 FAIL' : 'OK 可接受樣本';
+  const chips = ids.map(id => tplIndex[Number(id)]).filter(Boolean).map(t => {
+    const hiddenByFilter = !globalVisibleIds.has(Number(t.id));
+    return `<span title="${hiddenByFilter?'目前被來源產品或搜尋條件隱藏，但仍會儲存。':''}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid ${hiddenByFilter?'var(--warn)':color};border-radius:3px;background:var(--bg);font-family:var(--mono);font-size:10px;color:${hiddenByFilter?'var(--warn)':color};margin:0 4px 4px 0;">
+      ${hiddenByFilter?'⚠ ':''}${esc(t.product_serial || '')}/${esc(t.label || '')} ${sampleHintBadge(t)}
+      <button onclick="removeSelectedSampleChip(${idx}, '${role}', ${Number(t.id)})" style="border:none;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;">×</button>
+    </span>`;
+  }).join('');
+  return `<div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-bottom:5px;line-height:1.6;"><span style="color:${color};font-weight:700;">${label} ${ids.length}</span>：${chips || empty}</div>`;
+}
+
+function renderSampleRows() {
+  const el = document.getElementById('sampleRows');
+  if (!el) return;
+  if (!Number.isFinite(Number(ST.sampleActiveItemIdx))) ST.sampleActiveItemIdx = 0;
+  ST.sampleActiveItemIdx = Math.max(0, Math.min(Number(ST.sampleActiveItemIdx || 0), Math.max(0, (ST.sampleItems || []).length - 1)));
+  ensureSampleProductSelectionFallback(activeSampleItemRow());
+  renderSampleProductPicker();
+
+  if (!ST.sampleTemplates.length) {
+    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--warn);border:1px solid var(--border);padding:10px;border-radius:4px;">目前沒有任何可用 template，請先在 Label / Browse 建立至少一個 template。</div>';
+    return;
+  }
+
+  const tplIndex = sampleTemplateIndex();
+
+  el.innerHTML = (ST.sampleItems || []).map((row, idx) => {
+    normalizeSampleItemRow(row);
+    const rowUi = ensureSampleItemUi(row);
+    ensureSampleProductSelectionFallback(row);
+    const rowVisibleTemplates = currentVisibleSampleTemplates(row);
+    const rowVisibleIds = new Set(rowVisibleTemplates.map(t => Number(t.id)));
+    const showSelectedOnly = !!rowUi.showSelectedOnly;
+    const isActive = Number(ST.sampleActiveItemIdx || 0) === idx;
+
+    const okIds = sampleRoleIds(row, 'OK').map(Number).filter(Boolean);
+    const ngIds = sampleRoleIds(row, 'NG').map(Number).filter(Boolean);
+    const okSet = new Set(okIds);
+    const ngSet = new Set(ngIds);
+    const allSelectedIds = Array.from(new Set([...okIds, ...ngIds]));
+    const selectedTemplates = allSelectedIds.map(id => tplIndex[Number(id)]).filter(Boolean);
+    const displayTemplates = showSelectedOnly
+      ? selectedTemplates
+      : mergeTemplatesKeepSelectedFirst(selectedTemplates, rowVisibleTemplates);
+    const pinnedHiddenCount = selectedTemplates.filter(t => !rowVisibleIds.has(Number(t.id))).length;
+    const grouped = isActive ? groupTemplatesByProduct(displayTemplates) : [];
+
+    const checks = isActive ? grouped.map(g => {
+      const collapsed = rowUi.collapsedProductIds && rowUi.collapsedProductIds.has(Number(g.id));
+      const okInGroup = g.templates.filter(t => okSet.has(Number(t.id))).length;
+      const ngInGroup = g.templates.filter(t => ngSet.has(Number(t.id))).length;
+      const headerBorder = g.same ? 'var(--accent)' : 'var(--border)';
+      const tplHtml = collapsed ? '' : `<div style="display:flex;flex-direction:column;gap:5px;padding:7px 8px;">${g.templates.map(t => {
+        const id = Number(t.id);
+        const okChecked = okSet.has(id);
+        const ngChecked = ngSet.has(id);
+        const sameProduct = ST.sampleProduct && Number(t.product_id) === Number(ST.sampleProduct.id);
+        const hintType = cleanSampleHint(t.sample_hint);
+        const hiddenByCurrentFilter = !rowVisibleIds.has(id);
+        const title = `${t.product_serial || ''} / ${t.label || ('Region-'+t.id)} / hint=${hintType}  x=${t.x}, y=${t.y}, w=${t.w}, h=${t.h}, threshold=${t.threshold}${hiddenByCurrentFilter ? ' / 已選但目前被本群組來源產品或搜尋條件隱藏' : ''}`;
+        const border = hiddenByCurrentFilter ? 'var(--warn)' : (ngChecked ? 'var(--fail)' : (okChecked ? 'var(--accent)' : (hintType === 'NG' ? 'rgba(255,23,68,.45)' : (sameProduct ? 'rgba(0,176,255,.45)' : 'var(--border)'))));
+        const bg = ngChecked ? 'rgba(255,23,68,.09)' : (okChecked ? 'rgba(0,176,255,.10)' : (hintType === 'NG' ? 'rgba(255,23,68,.035)' : 'var(--bg)'));
+        return `<div title="${escAttr(title)}" style="display:grid;grid-template-columns:1fr 86px 74px 74px;gap:8px;align-items:center;padding:5px 7px;border:1px solid ${border};border-radius:4px;background:${bg};min-width:0;">
+          <div style="font-family:var(--mono);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${hiddenByCurrentFilter?'var(--warn)':(sameProduct?'var(--accent)':'var(--text)')};">
+            ${hiddenByCurrentFilter?'⚠ ':''}${sameProduct?'★':'◇'} ${esc(t.label || ('Region-'+t.id))}
+          </div>
+          <div>${sampleHintBadge(t)}</div>
+          <label style="display:flex;align-items:center;justify-content:center;gap:5px;font-family:var(--mono);font-size:10px;color:var(--accent);cursor:pointer;">
+            <input type="checkbox" ${okChecked?'checked':''} onchange="toggleSampleTemplate(${idx}, ${id}, 'OK', this.checked)" style="accent-color:var(--accent);"> OK
+          </label>
+          <label style="display:flex;align-items:center;justify-content:center;gap:5px;font-family:var(--mono);font-size:10px;color:var(--fail);cursor:pointer;">
+            <input type="checkbox" ${ngChecked?'checked':''} onchange="toggleSampleTemplate(${idx}, ${id}, 'NG', this.checked)" style="accent-color:var(--fail);"> NG
+          </label>
+        </div>`;
+      }).join('')}</div>`;
+      return `<div style="border:1px solid ${headerBorder};border-radius:5px;background:rgba(0,0,0,.12);margin-bottom:7px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border-bottom:${collapsed?'none':'1px solid var(--border)'};">
+          <button class="btn" style="padding:1px 6px;font-size:10px;" onclick="toggleSampleProductCollapse(${Number(g.id)}, ${idx})">${collapsed?'＋':'－'}</button>
+          <span style="font-family:var(--mono);font-size:10px;color:${g.same?'var(--accent)':'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.same?'★':'◇'} ${esc(g.serial)} ${g.name ? '/ '+esc(g.name) : ''}</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text-dim);margin-left:auto;">OK ${okInGroup} / NG ${ngInGroup} / ${g.templates.length}</span>
+        </div>
+        ${tplHtml}
+      </div>`;
+    }).join('') : '';
+
+    const hint = showSelectedOnly
+      ? '只顯示本群組已選 OK/NG 樣本'
+      : `本群組來源產品/搜尋條件下可見 ${rowVisibleTemplates.length} 個 template；本群組已選 ${allSelectedIds.length} 個會固定顯示${pinnedHiddenCount ? `（其中 ${pinnedHiddenCount} 個目前被本群組來源產品/搜尋隱藏，但仍保留）` : ''}`;
+    const activeTools = isActive ? `
+      <button class="btn" style="padding:4px 8px;font-size:10px;" onclick="selectVisibleTemplateHintForRow(${idx}, 'OK', 'OK')" title="只把本群組目前可見的 OK 候選加入 OK 樣本">OK候選→OK</button>
+      <button class="btn" style="padding:4px 8px;font-size:10px;color:var(--fail);" onclick="selectVisibleTemplateHintForRow(${idx}, 'NG', 'NG')" title="只把本群組目前可見的 NG 候選加入 NG 強制 FAIL">NG候選→NG</button>
+      <button class="btn" style="padding:4px 8px;font-size:10px;" onclick="clearSampleTemplatesForRow(${idx}, 'OK')">清OK</button>
+      <button class="btn" style="padding:4px 8px;font-size:10px;color:var(--fail);" onclick="clearSampleTemplatesForRow(${idx}, 'NG')">清NG</button>` : `
+      <button class="btn primary" style="padding:4px 10px;font-size:10px;" onclick="setSampleActiveItemRow(${idx})">編輯此群組</button>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);grid-column:span 3;">未啟用編輯，已選樣本只顯示摘要，不會被目前 picker 影響。</span>`;
+    const pickerBlock = isActive ? `
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-bottom:6px;">
+        只會編輯目前這一組：
+        <button class="btn" style="padding:2px 6px;font-size:10px;" onclick="selectAllVisibleTemplatesForRow(${idx}, 'OK')">全部可見→OK</button>
+        <button class="btn" style="padding:2px 6px;font-size:10px;color:var(--fail);" onclick="selectAllVisibleTemplatesForRow(${idx}, 'NG')">全部可見→NG</button>
+        <span>${hint}</span>
+      </div>
+      <div style="max-height:300px;overflow:auto;border-top:1px solid var(--border);padding-top:8px;">${checks || '<span style="font-size:11px;color:var(--warn);">目前條件下沒有 template。請調整本群組的來源產品或搜尋條件。</span>'}</div>` : `
+      <div style="border-top:1px solid var(--border);padding-top:7px;font-family:var(--mono);font-size:10px;color:var(--text-dim);">
+        此群組未展開 template picker。請按「編輯此群組」再選 template。每個群組的來源產品、搜尋、展開/收合狀態都獨立保存。
+      </div>`;
+    return `<div style="border:1px solid ${isActive?'var(--accent)':'var(--border2)'};border-radius:6px;background:${isActive?'rgba(0,176,255,.045)':'var(--panel2)'};padding:10px;">
+      <div style="display:grid;grid-template-columns:70px 1fr 180px 110px 110px 86px 86px 70px;gap:10px;align-items:center;margin-bottom:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:${isActive?'var(--accent)':'var(--text-mid)'};">
+          <input type="checkbox" ${row.enabled?'checked':''} onchange="updateSampleItemField(${idx}, 'enabled', this.checked)" style="accent-color:var(--accent);">${isActive?'EDIT':'ON'}
+        </label>
+        <input class="conn-input" style="width:100%;" value="${escAttr(row.name || '')}" onchange="updateSampleItemField(${idx}, 'name', this.value)" placeholder="規則群組，例如：蓋子 coating 外觀相容">
+        <select style="background:var(--bg);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:var(--r);font-family:var(--mono);font-size:11px;width:100%;" onchange="updateSampleItemField(${idx}, 'logic_mode', this.value)">
+          <option value="ANY" ${row.logic_mode === 'ALL' ? '' : 'selected'}>OK ANY / OR</option>
+          <option value="ALL" ${row.logic_mode === 'ALL' ? 'selected' : ''}>OK ALL / AND</option>
+        </select>
+        ${activeTools}
+        <button class="btn" onclick="removeSampleItemRow(${idx})">刪除</button>
+      </div>
+      ${renderSampleRoleChips(idx, row, 'OK', tplIndex, rowVisibleIds)}
+      ${renderSampleRoleChips(idx, row, 'NG', tplIndex, rowVisibleIds)}
+      <div style="font-family:var(--mono);font-size:10px;color:var(--warn);margin-bottom:6px;${ngIds.length?'':'display:none;'}">⚠ NG 樣本任一命中會強制 FAIL，不受 Final ANY/ALL 蓋過。</div>
+      ${pickerBlock}
+    </div>`;
+  }).join('') || '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">尚未建立規則群組。</div>';
+}
+
+async function saveSamplePanelData(closeAfter=false) {
+  if (!ST.sampleProduct) { setSampleMsg('尚未載入產品資料', 'var(--warn)'); return; }
+  const final_logic_mode = (document.getElementById('sampleFinalLogic')?.value || ST.sampleFinalLogic || 'ALL');
+  const items = (ST.sampleItems || []).map((r, idx) => {
+    normalizeSampleItemRow(r);
+    const buildSampleRef = (id, role) => {
+      id = Number(id);
+      return id < 0 ? {existing_sample_id: Math.abs(id), sample_role: role} : {source_region_id: id, sample_role: role};
+    };
+    const okSamples = sampleRoleIds(r, 'OK').map(id => buildSampleRef(id, 'OK')).filter(x => x.source_region_id || x.existing_sample_id);
+    const ngSamples = sampleRoleIds(r, 'NG').map(id => buildSampleRef(id, 'NG')).filter(x => x.source_region_id || x.existing_sample_id);
+    return {
+      name: (r.name || `Group-${idx+1}`).trim(),
+      logic_mode: r.logic_mode === 'ALL' ? 'ALL' : 'ANY',
+      enabled: !!r.enabled,
+      samples: [...okSamples, ...ngSamples],
+    };
+  }).filter(r => r.name && r.samples.length);
+  if (!items.length) {
+    setSampleMsg('至少要有一個規則群組，且每項至少勾選一個 OK 或 NG 樣本 template。', 'var(--warn)');
+    return;
+  }
+  const ngCount = items.reduce((a,g)=>a+g.samples.filter(s=>s.sample_role==='NG').length,0);
+  setSampleMsg('儲存中…');
+  try {
+    const r = await fetch(`${C.appUrl()}/api/products/${ST.sampleProduct.id}/rule-groups`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({final_logic_mode, groups: items, items}),
+      signal: AbortSignal.timeout(10000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || `儲存失敗 ${r.status}`);
+    setSampleMsg(`已儲存 ${d.count || items.length} 個規則群組、${d.samples || 0} 個樣本（NG ${ngCount}），正在重載推論端…`, 'var(--pass)');
+    await reloadCache();
+    const itemCount = d.count || items.length;
+    const sampleCount = d.samples || 0;
+    setSampleMsg(`✅ 已套用 RULE-GROUP B+：${itemCount} 個規則群組、${sampleCount} 個樣本、NG ${ngCount} 個。`, 'var(--pass)');
+    updateInferenceModeUI({mode:'multi_sample', mode_label:'MULTI-SAMPLE B+', rules:new Array(itemCount).fill({})});
+    showToast('✅ 規則群組 B+ 已套用', 'var(--pass)', 3000);
+    if (closeAfter) closeSamplePanel();
+  } catch(e) {
+    setSampleMsg(`儲存失敗：${e.message || e}`, 'var(--fail)');
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Reload / Snapshot / Toast
+// ══════════════════════════════════════════════════
+async function reloadCache() {
+  const btn=document.getElementById('reloadBtn'); btn.disabled=true; btn.textContent='⏳…';
+  try{
+    const res=await fetch(`${C.inferUrl()}/reload`,{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(6000)});
+    const d=await res.json();
+    if(res.ok&&d.ok){const c=d.cache||{};showToast(`✅ 模板已重載  regions=${c.regions??'?'}  第${c.reload_count??'?'}次`,'var(--pass)',4000);}
+    else showToast(`❌ 重載失敗：${d.error||res.status}`,'var(--fail)',4000);
+  }catch(e){showToast('❌ 推論端無回應','var(--fail)',4000);}
+  btn.disabled=false; btn.textContent='⟳ 重載模板';
+}
+
+function toggleMoreMenu(e) {
+  e.stopPropagation();
+  const m = document.getElementById('moreMenu');
+  m.style.display = m.style.display === 'none' ? '' : 'none';
+}
+function closeMoreMenu() {
+  document.getElementById('moreMenu').style.display = 'none';
+}
+document.addEventListener('click', closeMoreMenu);
+
+async function takeSnapshot() {
+  // 截圖需求：下載乾淨原圖，不包含推論標記框 / 分數文字 / PASS FAIL overlay。
+  // 優先順序：最新 /live 原圖快取 → 畫面目前顯示圖 → 最新推論 raw_img → 即時向後端補抓 /live。
+  let img = ST.latestLiveImg || '';
+
+  const liveEl = document.getElementById('liveImg');
+  if (!img && liveEl && liveEl.src && liveEl.src.startsWith('data:image/')) {
+    img = liveEl.src;
+  }
+
+  if (!img && ST.liveResult) {
+    img = ST.liveResult.raw_img || ST.liveResult.live_img || '';
+  }
+
+  if (!img) {
+    try {
+      const r = await fetch(`${C.inferUrl()}/live`, { signal: AbortSignal.timeout(2500) });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.live_img) {
+          img = d.live_img;
+          ST.latestLiveImg = d.live_img;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!img) {
+    showToast('⚠ 尚無原始畫面可截圖', 'var(--warn)');
+    return;
+  }
+
+  const serial =
+    (ST.liveResult && ST.liveResult.product && ST.liveResult.product.serial) ||
+    document.getElementById('productSelect').value ||
+    'unknown';
+  const stamp  = (ST.liveResult && ST.liveResult.stamp) || 'LIVE';
+  const now    = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const fname  = `SNAP_RAW_${serial}_${stamp}_${now}.jpg`;
+
+  const a = document.createElement('a');
+  a.href = img;
+  a.download = fname;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast(`📷 已下載原始截圖 ${fname}`, 'var(--pass)', 3000);
+}
+
+// ══════════════════════════════════════════════════
+// ZLAN 設定面板
+// ══════════════════════════════════════════════════
+async function openZlanPanel() {
+  document.getElementById('zlanOverlay').style.display = '';
+  document.getElementById('zlanPanel').style.display = '';
+  document.getElementById('zlanMsg').textContent = '讀取中…';
+  try {
+    const r = await fetch(`${C.inferUrl()}/zlan-config`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById('zlanEnabled').checked = d.enabled || false;
+      document.getElementById('zlanIp').value      = d.ip       || '';
+      document.getElementById('zlanPort').value    = d.port     || 5020;
+      document.getElementById('zlanUnit').value    = d.unit     || 1;
+      document.getElementById('zlanTrigger').value = d.trigger  || 'polling';
+      document.getElementById('zlanPulse').value   = d.pulse_ms || 500;
+      document.getElementById('zlanInvert').checked = d.invert_di || false;
+      toggleZlanEnabled();
+    }
+    document.getElementById('zlanMsg').textContent = '';
+  } catch(e) {
+    document.getElementById('zlanMsg').textContent = '無法讀取目前設定';
+  }
+}
+
+function closeZlanPanel() {
+  document.getElementById('zlanOverlay').style.display = 'none';
+  document.getElementById('zlanPanel').style.display = 'none';
+}
+
+function toggleZlanEnabled() {
+  const en = document.getElementById('zlanEnabled').checked;
+  document.getElementById('zlanFields').style.opacity = en ? '1' : '0.4';
+  document.getElementById('zlanFields').style.pointerEvents = en ? '' : 'none';
+}
+
+async function applyZlanConfig() {
+  const enabled = document.getElementById('zlanEnabled').checked;
+  const msg = document.getElementById('zlanMsg');
+  msg.style.color = 'var(--text-dim)';
+  msg.textContent = '套用中…';
+  const body = {
+    enabled,
+    ip:       document.getElementById('zlanIp').value.trim(),
+    port:     parseInt(document.getElementById('zlanPort').value) || 5020,
+    unit:     parseInt(document.getElementById('zlanUnit').value) || 1,
+    trigger:  document.getElementById('zlanTrigger').value,
+    pulse_ms: parseFloat(document.getElementById('zlanPulse').value) || 500,
+    invert_di: document.getElementById('zlanInvert').checked,
+  };
+  try {
+    const r = await fetch(`${C.inferUrl()}/zlan-config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      msg.style.color = 'var(--pass)';
+      msg.textContent = `✔ 套用成功（${d.trigger || 'free'} 模式）`;
+      showToast(`✅ ZLAN 設定已套用：${d.enabled ? d.ip+' '+d.trigger : '已停用'}`, 'var(--pass)', 3000);
+      setTimeout(closeZlanPanel, 1200);
+    } else {
+      msg.style.color = 'var(--fail)';
+      msg.textContent = `✘ ${d.error || '套用失敗'}`;
+    }
+  } catch(e) {
+    msg.style.color = 'var(--fail)';
+    msg.textContent = '✘ 推論端無回應';
+  }
+}
+
+
+// ══════════════════════════════════════════════════
+// 相機亮度 / 影像參數面板
+// ══════════════════════════════════════════════════
+function _num(id, fallback) {
+  const v = parseFloat(document.getElementById(id).value);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+async function openCameraPanel() {
+  document.getElementById('cameraOverlay').style.display = '';
+  document.getElementById('cameraPanel').style.display = '';
+  document.getElementById('cameraMsg').textContent = '讀取中…';
+  try {
+    const r = await fetch(`${C.inferUrl()}/camera-config`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById('camWb').value = d.white_balance_mode ?? 1;
+      document.getElementById('camAntibanding').value = d.antibanding ?? 3;
+      document.getElementById('camIsoMode').value = d.iso_mode ?? 0;
+      document.getElementById('camManualIso').value = d.manual_iso_value ?? 800;
+      document.getElementById('camExp').value = d.exposure_compensation ?? 0;
+      document.getElementById('camContrast').value = d.contrast ?? 5;
+      document.getElementById('camSaturation').value = d.saturation ?? 5;
+      document.getElementById('camSharpness').value = d.sharpness ?? 2;
+      document.getElementById('zoomEnabled').checked = !!d.digital_zoom_enabled;
+      document.getElementById('zoomFactor').value = d.digital_zoom ?? 1.0;
+      document.getElementById('zoomCenterX').value = d.zoom_center_x ?? 0.5;
+      document.getElementById('zoomCenterY').value = d.zoom_center_y ?? 0.5;
+      document.getElementById('cameraMsg').textContent = '';
+    } else {
+      document.getElementById('cameraMsg').textContent = '推論端不支援 /camera-config，請確認 infer_runner.py 已更新';
+    }
+  } catch(e) {
+    document.getElementById('cameraMsg').textContent = '無法讀取相機設定';
+  }
+}
+
+function closeCameraPanel() {
+  document.getElementById('cameraOverlay').style.display = 'none';
+  document.getElementById('cameraPanel').style.display = 'none';
+}
+
+async function applyCameraConfig() {
+  const msg = document.getElementById('cameraMsg');
+  msg.style.color = 'var(--text-dim)';
+  msg.textContent = '套用中…';
+  const body = {
+    white_balance_mode: Math.round(_num('camWb', 1)),
+    antibanding: Math.round(_num('camAntibanding', 3)),
+    iso_mode: Math.round(_num('camIsoMode', 0)),
+    manual_iso_value: Math.round(_num('camManualIso', 800)),
+    exposure_compensation: Math.round(_num('camExp', 0)),
+    contrast: Math.round(_num('camContrast', 5)),
+    saturation: Math.round(_num('camSaturation', 5)),
+    sharpness: Math.round(_num('camSharpness', 2)),
+    digital_zoom_enabled: document.getElementById('zoomEnabled').checked,
+    digital_zoom: _num('zoomFactor', 1.0),
+    zoom_center_x: _num('zoomCenterX', 0.5),
+    zoom_center_y: _num('zoomCenterY', 0.5),
+  };
+  try {
+    const r = await fetch(`${C.inferUrl()}/camera-config`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      msg.style.color = 'var(--pass)';
+      msg.textContent = `✔ 套用成功 rev=${d.revision}`;
+      showToast('✅ 相機/Zoom 設定已套用', 'var(--pass)', 2500);
+      setTimeout(closeCameraPanel, 900);
+    } else {
+      msg.style.color = 'var(--fail)';
+      msg.textContent = `✘ ${d.error || '套用失敗'}`;
+    }
+  } catch(e) {
+    msg.style.color = 'var(--fail)';
+    msg.textContent = '✘ 推論端無回應';
+  }
+}
+
+
+// ══════════════════════════════════════════════════
+// 記錄 / 歷史存證設定
+// ══════════════════════════════════════════════════
+function _setStorageMsg(text, color='var(--text-dim)') {
+  const msg = document.getElementById('storageMsg');
+  msg.style.color = color;
+  msg.textContent = text;
+}
+function toggleStorageImageFields() {
+  const en = document.getElementById('imageEnabled').checked;
+  const fields = document.getElementById('storageImageFields');
+  fields.style.opacity = en ? '1' : '0.45';
+  fields.style.pointerEvents = en ? '' : 'none';
+  toggleStorageTypeFields();
+}
+function toggleStorageTypeFields() {
+  const t = document.getElementById('storageType')?.value || 'local';
+  const samba = document.getElementById('sambaBlock');
+  const http = document.getElementById('httpBlock');
+  const local = document.getElementById('localPathBlock');
+  if (samba) samba.style.display = (t === 'samba') ? 'flex' : 'none';
+  if (http) http.style.display = (t === 'http') ? 'flex' : 'none';
+  if (local) local.style.display = (t === 'local') ? '' : 'none';
+}
+async function openStoragePanel() {
+  document.getElementById('storageOverlay').style.display = '';
+  document.getElementById('storagePanel').style.display = '';
+  _setStorageMsg('讀取中…');
+  try {
+    const r = await fetch(`${C.inferUrl()}/storage-config`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    document.getElementById('logEnabled').checked = !!d.log_enabled;
+    document.getElementById('imageEnabled').checked = !!d.image_enabled;
+    document.getElementById('storageType').value = d.storage_type || 'local';
+    document.getElementById('storageRoot').value = d.root_path || '/data/tm_app/inspection_archive';
+    document.getElementById('sambaUrl').value = d.samba_url || '';
+    document.getElementById('sambaUsername').value = d.samba_username || '';
+    document.getElementById('sambaPassword').value = '';
+    document.getElementById('sambaDomain').value = d.samba_domain || '';
+    document.getElementById('sambaSubdir').value = d.samba_subdir || '';
+    document.getElementById('mountPoint').value = d.mount_point || '/mnt/tm_inspect_storage';
+    document.getElementById('smbVersion').value = d.smb_version || '3.0';
+    document.getElementById('httpUrl').value = d.http_url || '';
+    document.getElementById('httpSubdir').value = d.http_subdir || 'AI_Camera_01';
+    document.getElementById('httpToken').value = d.http_token || '';
+    document.getElementById('httpTimeout').value = d.http_timeout_sec || 10;
+    document.getElementById('sambaStatus').textContent = d.samba_password_saved ? '已保存密碼；密碼留空代表沿用。' : '尚未保存密碼。';
+    document.getElementById('saveMode').value = d.save_mode || 'fail_only';
+    document.getElementById('passSampleN').value = d.pass_sample_n || 100;
+    document.getElementById('saveRaw').checked = !!d.save_raw;
+    document.getElementById('saveResult').checked = d.save_result !== false;
+    document.getElementById('jpegQuality').value = d.jpeg_quality || 85;
+    document.getElementById('retainDays').value = d.retain_days || 30;
+    document.getElementById('maxGb').value = d.max_gb || 20;
+    document.getElementById('cleanupInterval').value = d.cleanup_interval_results || 100;
+    toggleStorageImageFields();
+    toggleStorageTypeFields();
+    _setStorageMsg(d.effective_root ? `目前有效儲存路徑：${d.effective_root}` : '');
+    refreshStorageStatus(false);
+  } catch(e) {
+    _setStorageMsg('無法讀取推論端 /storage-config，請確認 infer_runner.py 已更新', 'var(--fail)');
+  }
+}
+function closeStoragePanel() {
+  document.getElementById('storageOverlay').style.display = 'none';
+  document.getElementById('storagePanel').style.display = 'none';
+}
+function storageConfigBody() {
+  return {
+    log_enabled: document.getElementById('logEnabled').checked,
+    image_enabled: document.getElementById('imageEnabled').checked,
+    storage_type: document.getElementById('storageType').value,
+    root_path: document.getElementById('storageRoot').value.trim(),
+    samba_url: document.getElementById('sambaUrl').value.trim(),
+    samba_username: document.getElementById('sambaUsername').value.trim(),
+    samba_password: document.getElementById('sambaPassword').value,
+    samba_domain: document.getElementById('sambaDomain').value.trim(),
+    samba_subdir: document.getElementById('sambaSubdir').value.trim(),
+    mount_point: document.getElementById('mountPoint').value.trim(),
+    smb_version: document.getElementById('smbVersion').value.trim() || '3.0',
+    http_url: document.getElementById('httpUrl').value.trim(),
+    http_subdir: document.getElementById('httpSubdir').value.trim(),
+    http_token: document.getElementById('httpToken').value.trim(),
+    http_timeout_sec: parseInt(document.getElementById('httpTimeout').value) || 10,
+    save_mode: document.getElementById('saveMode').value,
+    pass_sample_n: parseInt(document.getElementById('passSampleN').value) || 100,
+    save_raw: document.getElementById('saveRaw').checked,
+    save_result: document.getElementById('saveResult').checked,
+    jpeg_quality: parseInt(document.getElementById('jpegQuality').value) || 85,
+    retain_days: parseInt(document.getElementById('retainDays').value) || 0,
+    max_gb: parseFloat(document.getElementById('maxGb').value) || 0,
+    cleanup_interval_results: parseInt(document.getElementById('cleanupInterval').value) || 100,
+  };
+}
+function _fmtBytes(n) {
+  n = Number(n || 0);
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return i === 0 ? `${Math.round(n)} ${units[i]}` : `${n.toFixed(1)} ${units[i]}`;
+}
+function _setBar(id, pct, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  pct = Math.max(0, Math.min(100, Number(pct || 0)));
+  el.style.width = `${pct}%`;
+  el.style.background = color || (pct >= 90 ? 'var(--fail)' : pct >= 80 ? 'var(--warn)' : 'var(--accent)');
+}
+async function refreshStorageStatus(showLoading=false) {
+  if (showLoading) _setStorageMsg('讀取容量狀態…');
+  try {
+    const r = await fetch(`${C.inferUrl()}/storage-status`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const archive = d.archive_usage || {};
+    const quota = d.quota || {};
+    const fsu = d.fs_usage || d.usage || {};
+    const warnings = d.warnings || [];
+    const badge = document.getElementById('storageStatusBadge');
+    const warn = document.getElementById('storageWarning');
+    const detail = document.getElementById('storageStatusDetail');
+
+    const quotaPct = Number(quota.used_percent || 0);
+    const fsPct = Number(fsu.used_percent || 0);
+    document.getElementById('archiveUsageText').textContent = `${archive.human || _fmtBytes(archive.bytes)} / ${quota.max_human || '未限制'}${quota.max_bytes ? ` (${quotaPct}%)` : ''}`;
+    document.getElementById('fsUsageText').textContent = fsu.total_human ? `${fsu.used_human} / ${fsu.total_human} (${fsPct}%)` : '—';
+    _setBar('archiveUsageBar', quota.max_bytes ? quotaPct : 0);
+    _setBar('fsUsageBar', fsPct);
+
+    if (warnings.length) {
+      warn.style.display = '';
+      warn.textContent = '⚠ ' + warnings.join('　');
+    } else {
+      warn.style.display = 'none';
+      warn.textContent = '';
+    }
+    badge.style.color = d.ok ? 'var(--pass)' : 'var(--fail)';
+    badge.textContent = d.ok ? '可用' : '異常';
+    detail.textContent = `有效路徑：${d.effective_root || '-'}｜檔案數：${archive.files || 0}｜磁碟可用：${fsu.free_human || '-'}｜Rotate：保留 ${d.rotate?.retain_days ?? 0} 天，最大 ${d.rotate?.max_gb ?? 0} GB，每 ${d.rotate?.cleanup_interval_results ?? 100} 筆自動清理`;
+    if (showLoading) _setStorageMsg('容量狀態已更新', 'var(--pass)');
+  } catch(e) {
+    document.getElementById('storageStatusBadge').style.color = 'var(--fail)';
+    document.getElementById('storageStatusBadge').textContent = '讀取失敗';
+    if (showLoading) _setStorageMsg('✘ 讀取容量狀態失敗', 'var(--fail)');
+  }
+}
+async function applyStorageConfig() {
+  _setStorageMsg('套用中…');
+  try {
+    const r = await fetch(`${C.inferUrl()}/storage-config`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(storageConfigBody()), signal: AbortSignal.timeout(5000),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      _setStorageMsg('✔ 套用成功，下一筆推論立即生效', 'var(--pass)');
+      showToast('✅ 記錄/存圖設定已套用', 'var(--pass)', 2500);
+      refreshStorageStatus(false);
+      setTimeout(closeStoragePanel, 500);
+    } else {
+      _setStorageMsg(`✘ ${d.error || '套用失敗'}`, 'var(--fail)');
+    }
+  } catch(e) {
+    _setStorageMsg('✘ 推論端無回應', 'var(--fail)');
+  }
+}
+
+async function stopStorageConfig() {
+  const ok = confirm('確定要停止存資料？\n\n這會同時關閉 DB 檢測記錄與歷史圖片保存。\n已經保存的舊資料不會自動刪除；如需刪舊圖，請再按「手動清理」或到 PC 端刪除。');
+  if (!ok) return;
+  document.getElementById('logEnabled').checked = false;
+  document.getElementById('imageEnabled').checked = false;
+  toggleStorageImageFields();
+  _setStorageMsg('正在停止存資料…');
+  try {
+    const r = await fetch(`${C.inferUrl()}/storage-config`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(storageConfigBody()), signal: AbortSignal.timeout(5000),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      _setStorageMsg('✔ 已停止 DB 記錄與圖片保存', 'var(--pass)');
+      showToast('✅ 已停止存資料', 'var(--pass)', 2500);
+      refreshStorageStatus(false);
+      setTimeout(closeStoragePanel, 500);
+    } else {
+      _setStorageMsg(`✘ ${d.error || '停止失敗'}`, 'var(--fail)');
+    }
+  } catch(e) {
+    _setStorageMsg('✘ 推論端無回應，無法停止', 'var(--fail)');
+  }
+}
+
+async function testStorageConfig() {
+  _setStorageMsg('先套用設定並測試寫入…');
+  try {
+    let r = await fetch(`${C.inferUrl()}/storage-config`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(storageConfigBody()), signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) throw new Error('設定保存失敗');
+    r = await fetch(`${C.inferUrl()}/storage-test`, {method:'POST', signal:AbortSignal.timeout(20000)});
+    const d = await r.json();
+    if (d.ok) _setStorageMsg(`✔ 連線/寫入/讀取測試成功：${d.root_path || d.url || 'OK'}`, 'var(--pass)');
+    else _setStorageMsg(`✘ 寫入失敗：${d.error || 'unknown'}`, 'var(--fail)');
+    refreshStorageStatus(false);
+  } catch(e) {
+    _setStorageMsg(`✘ 測試失敗：${e.message || e}`, 'var(--fail)');
+  }
+}
+async function cleanupStorage() {
+  _setStorageMsg('清理中…');
+  try {
+    const r = await fetch(`${C.inferUrl()}/storage-cleanup`, {method:'POST', signal:AbortSignal.timeout(15000)});
+    const d = await r.json();
+    const mb = ((d.freed_bytes||0)/1024/1024).toFixed(1);
+    _setStorageMsg(`✔ 清理完成：刪除 ${d.deleted_files||0} 檔，釋放 ${mb} MB`, 'var(--pass)');
+    refreshStorageStatus(false);
+  } catch(e) {
+    _setStorageMsg('✘ 清理失敗或推論端無回應', 'var(--fail)');
+  }
+}
+
+function showToast(msg, color='var(--text)', duration=3000) {
+  const el=document.getElementById('snapToast');
+  el.textContent=msg; el.style.color=color; el.style.display='block'; el.style.opacity='1';
+  clearTimeout(el._timer);
+  el._timer=setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.style.display='none',300);},duration);
+}
+
+// ══════════════════════════════════════════════════
+// Boot
+// ══════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', async () => {
+  applyDefaultEndpoints();
+  resizeChart();
+  window.addEventListener('resize', resizeChart);
+  ['backendUser', 'backendPass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitBackendLogin();
+    });
+  });
+
+  await loadMonitorConfig();
+  bindMonitorConfigAutosave();
+
+  await loadProducts();
+  await syncCurrentProductFromInfer();
+  loadLogs();
+  setInterval(loadProducts, 30000);
+  setInterval(syncCurrentProductFromInfer, 3000);
+  setInterval(loadLogs, 10000);
+  startPolling();
+
+  document.getElementById('pollInterval').addEventListener('change', () => {
+    if (!ST.paused) { stopPolling(); startPolling(); }
+  });
+});
+</script>
+</body>
+</html>

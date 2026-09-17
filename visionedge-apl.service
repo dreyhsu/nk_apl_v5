@@ -1,0 +1,17 @@
+[Unit]
+Description=VisionEdge NK APL Template Matching Station
+After=network-online.target mediamtx.service
+Wants=network-online.target mediamtx.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/rootdirs/opt/VisionEdge_APL
+Environment=APL_DMZ_MODE=disabled
+ExecStart=/bin/sh /var/rootdirs/opt/VisionEdge_APL/run_apl.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+
+[Install]
+WantedBy=multi-user.target

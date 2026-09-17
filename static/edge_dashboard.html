@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VisionEdge APL · Inspection</title>
+<style>
+:root{
+  --bg:#0b1020;--panel:#111827;--panel2:#0d1524;--line:#26354f;
+  --text:#eef4ff;--muted:#91a3bd;--green:#36d58a;--red:#ff6675;
+  --amber:#f6c453;--blue:#66b8ff;--shadow:0 18px 42px #0003;
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(150deg,#08101e,#0c1322 52%,#09101c);color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
+button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 18px;background:#09111fef;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}
+.brand{font-size:18px;font-weight:850;letter-spacing:.25px;margin-right:5px}.brand small{font-size:11px;font-weight:650;color:var(--muted);margin-left:6px}
+.topnav{display:flex;align-self:stretch;gap:2px;margin-left:8px}.topnav button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:0 12px;font-size:13px;font-weight:760}.topnav button:hover{color:var(--text)}.topnav button.on{color:#fff;border-bottom-color:var(--blue)}
+.grow{flex:1}.chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:5px 10px;border:1px solid #31425f;border-radius:999px;color:var(--muted);font-size:12px;background:#101a2b}.chip strong{color:var(--text)}
+.dot{width:8px;height:8px;border-radius:50%;background:#667085}.dot.live{background:var(--green);box-shadow:0 0 12px #36d58a99}.dot.rec{background:var(--red);box-shadow:0 0 12px #ff667599}.dot.warn{background:var(--amber)}
+.navbtn{border:1px solid #354764;background:#162238;color:var(--text);border-radius:9px;padding:8px 11px;text-decoration:none;font-size:12px;font-weight:760}
+.wrap{max-width:1760px;margin:auto;padding:16px}.page{display:none}.page.active{display:block}
+.layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(360px,.75fr);gap:14px}
+.card{background:linear-gradient(180deg,#111a2b,#0f1726);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+.cardhead{display:flex;align-items:center;gap:9px;min-height:49px;padding:10px 13px;border-bottom:1px solid var(--line)}.cardhead h2{font-size:14px;margin:0}.subtle{font-size:12px;color:var(--muted)}
+.viewerTools{display:flex;align-items:center;gap:7px}.toolLabel{font-size:11px;color:var(--muted)}
+.viewer{position:relative;aspect-ratio:16/9;background:#050911;display:grid;place-items:center;overflow:hidden}.viewer img,.viewer video{width:100%;height:100%;object-fit:contain;grid-area:1/1}.viewer.empty img,.viewer.empty video{display:none}.viewer video{display:none}.viewer .emptyText{grid-area:1/1;padding:60px 20px}.viewer canvas{display:none}
+.emptyText{display:none;text-align:center;color:var(--muted);font-size:13px;line-height:1.7}.viewer.empty .emptyText{display:block}
+.overlay{position:absolute;bottom:12px;left:12px;display:flex;gap:7px;z-index:2}.overlay.right{left:auto;right:12px;bottom:auto;top:12px}.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px;background:#07101ddd;border:1px solid #33435d;font-size:11px;font-weight:800}.badge.live{color:#a9f3ce;border-color:#277354}.badge.rec{color:#ffd0d5;border-color:#8c3444}.badge.warn{color:#ffe0a0;border-color:#7a6026}
+.segment{display:inline-flex;border:1px solid #344762;border-radius:8px;overflow:hidden}.segment button{border:0;border-right:1px solid #344762;border-radius:0;background:#111d30;color:var(--muted);padding:6px 10px;font-size:11px;font-weight:730}.segment button:last-child{border-right:0}.segment button.on{background:#24415e;color:#fff}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px}.metric{padding:9px 10px;background:#0c1523;border:1px solid #24334b;border-radius:9px}.metric span{font-size:11px;color:var(--muted)}.metric strong{display:block;font-size:18px;margin-top:3px}
+.controlPanel{padding:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.controlGroup{border:1px solid #26354f;border-radius:11px;padding:11px;background:#0d1625}.controlTitleRow{display:flex;align-items:center;gap:8px;margin-bottom:9px}.controlTitle{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}.controlState{margin-left:auto;font-size:10px;font-weight:850;color:var(--muted)}
+.buttonRow{display:flex;gap:7px;flex-wrap:wrap}.action{border:1px solid #3a4d6c;background:#17243a;color:var(--text);border-radius:8px;padding:8px 11px;font-weight:780;min-height:38px}.action.primary{background:#123a2e;border-color:#247856}.action.danger{background:#431d26;border-color:#8b3546}.action.blue{background:#14314e;border-color:#2c6294}.action.record{background:#451b25;border-color:#a0384b}.action.wide{flex:1}.recordingPulse{animation:pulse 1.3s infinite}@keyframes pulse{50%{box-shadow:0 0 0 4px #ff667522}}
+.controlHint{margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45}.recordMode{width:100%;margin-bottom:8px;background:#141f32;color:var(--text);border:1px solid #354864;border-radius:8px;padding:8px}.recInfo{margin-top:7px;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.statusList{padding:10px 12px}.statusRow{display:grid;grid-template-columns:105px 1fr auto;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid #1f2d43}.statusRow:last-child{border-bottom:0}.statusName{font-size:12px;color:var(--muted)}.statusValue{font-size:12px;font-weight:760;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.state{font-size:11px;font-weight:850;border-radius:999px;padding:4px 8px;border:1px solid #354762}.state.good{color:#a9f3ce;border-color:#28775a}.state.bad{color:#ffc0c7;border-color:#8c3344}.state.warn{color:#ffe0a0;border-color:#765c24}.state.idle{color:#b5c1d3}
+.flow{padding:10px 12px 14px;max-height:430px;overflow:auto}.alarmbox{display:none;margin:10px 12px 0;padding:9px 10px;background:#431d26;border:1px solid #893342;border-radius:8px;color:#ffd1d6;font-size:12px}.alarmbox.on{display:block}.flow-row{position:relative}.flow-row:not(:last-child):after{content:"";position:absolute;left:17px;top:38px;bottom:-8px;width:2px;background:#30415b}.flow-row.done:not(:last-child):after{background:#28775a}.flow-node{position:relative;z-index:1;display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;margin:7px 0;padding:8px;border:1px solid #2c3b55;border-radius:9px;background:#101a2a}.flow-node.current{border-color:#8a6a26}.flow-node.done{border-color:#28775a}.flow-node.alarm{border-color:#8c3344}.flow-dot{width:27px;height:27px;border-radius:50%;display:grid;place-items:center;background:#27364f;font-size:11px;font-weight:850}.done .flow-dot{background:#195c45}.flow-name{font-size:12px;font-weight:760}.flow-sub{font-size:10px;color:var(--muted);margin-top:2px}.flow-state{font-size:10px;font-weight:850;color:#b8c6da}.sopActions{padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:7px;flex-wrap:wrap}
+.mediaToolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}.tabs{display:flex;border:1px solid #344761;border-radius:8px;overflow:hidden}.tabs button{border:0;border-right:1px solid #344761;background:#111d30;color:var(--muted);padding:7px 11px}.tabs button:last-child{border:0}.tabs button.on{background:#24415e;color:#fff}.mediaCount{font-size:11px;color:var(--muted)}
+.mediaTable{width:100%;border-collapse:collapse}.mediaTable th,.mediaTable td{padding:11px 12px;border-bottom:1px solid #1d2b40;text-align:left;font-size:12px}.mediaTable th{color:var(--muted);font-weight:650;background:#0e1726;position:sticky;top:0}.mediaName{max-width:620px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mediaType{font-size:10px;font-weight:850;border:1px solid #3b4b63;border-radius:6px;padding:3px 6px;color:#c4d1e5}.mediaActions{display:flex;justify-content:flex-end;gap:6px}.mini{border:1px solid #354764;background:#152238;color:var(--text);border-radius:7px;padding:5px 8px;font-size:11px;text-decoration:none}.mini.del{border-color:#7f3040;background:#3a1a22;color:#ffc0c7}.mini:disabled{opacity:.4;cursor:not-allowed}.mediaScroll{max-height:calc(100vh - 220px);overflow:auto}.emptyMedia{padding:36px;text-align:center;color:var(--muted);font-size:12px}
+.settingsIntro{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;margin-bottom:14px;border:1px solid #2a3b56;border-radius:12px;background:#0e1726}.settingsIntro strong{font-size:13px}.settingsIntro p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+.settingsGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.settingsCard{padding:0}.settingsBody{padding:14px}.settingsSectionHint{font-size:11px;color:var(--muted);margin:-2px 0 12px;line-height:1.5}.fieldGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field label{display:block;font-size:11px;color:#bdc9da;margin:0 0 6px;font-weight:700}.field select,.field input{width:100%;background:#111d30;color:var(--text);border:1px solid #354864;border-radius:8px;padding:9px 10px;min-height:40px}.field select:disabled,.field input:disabled{opacity:.55}.fieldNote{margin-top:5px;font-size:10px;color:var(--muted);line-height:1.4}
+.toggleLine{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #2b3b55;border-radius:9px;padding:10px 11px;background:#101a2a}.toggleCopy strong{display:block;font-size:12px}.toggleCopy span{display:block;margin-top:3px;font-size:10px;color:var(--muted)}.switch{position:relative;width:44px;height:24px;flex:none}.switch input{display:none}.slider{position:absolute;inset:0;background:#314058;border-radius:999px;transition:.2s}.slider:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#d9e2ef;border-radius:50%;transition:.2s}.switch input:checked+.slider{background:#246f53}.switch input:checked+.slider:before{transform:translateX(20px)}
+.settingsFooter{position:sticky;bottom:0;z-index:5;margin-top:14px;display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid #2a3b56;border-radius:12px;background:#0b1422ee;backdrop-filter:blur(10px)}.settingsFooter .hint{font-size:11px;color:var(--muted);line-height:1.4}.settingsFooter .action{min-width:128px}
+.devCard{grid-column:1/-1}.devFields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.diagnostics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.diag{border:1px solid #2b3b55;border-radius:9px;padding:9px;background:#0c1523}.diag span{display:block;font-size:10px;color:var(--muted)}.diag strong{display:block;margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hidden{display:none!important}
+.toast{position:fixed;right:18px;bottom:18px;z-index:100;max-width:min(560px,calc(100vw - 36px));padding:10px 13px;border:1px solid #344762;border-radius:10px;background:#101a2bea;color:var(--text);font-size:12px;box-shadow:0 16px 38px #0006;opacity:0;transform:translateY(8px);pointer-events:none;transition:.18s}.toast.show{opacity:1;transform:none}.toast.err{border-color:#8c3344;color:#ffc0c7}.toast.warn{border-color:#765c24;color:#ffe0a0}.toast.ok{border-color:#28775a;color:#a9f3ce}
+.stationPanel{margin-bottom:14px}.stationBody{padding:14px}.stationNotice{border:1px solid #765c24;background:#302817;color:#ffe0a0;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;margin-bottom:12px}.stationNotice.good{border-color:#28775a;background:#123a2e;color:#a9f3ce}.stationNotice.bad{border-color:#8c3344;background:#431d26;color:#ffc0c7}.stationSN{font-size:27px;letter-spacing:1px;font-weight:800;overflow-wrap:anywhere;margin:3px 0 11px}.stationLabel{font-size:11px;color:var(--muted)}.scanRow{display:flex;gap:8px;margin:8px 0}.scanRow input{width:100%;min-width:0;border:1px solid #456082;background:#091322;color:var(--text);border-radius:8px;padding:10px 12px;font-family:Consolas,monospace}.scanRow input:focus{outline:2px solid var(--blue);outline-offset:2px}.stationActions{display:grid;gap:8px;margin-top:12px}.stationActions .action{min-height:46px}.stationMeta{font-size:11px;color:var(--muted);line-height:1.8;overflow-wrap:anywhere}.stationError{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0;color:#ffc0c7;font-size:12px}.stationError:empty{display:none}.matchLabels{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-top:1px solid var(--line);font:12px Consolas,monospace;color:#c5d6ed}.connectionStrip{margin:0 0 12px;border:1px solid #765c24;border-radius:8px;padding:9px 12px;color:#ffe0a0;background:#302817;font-size:12px}.connectionStrip.good{border-color:#28775a;color:#a9f3ce;background:#0e2b22}.stationHistory{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);line-height:1.65;overflow-wrap:anywhere}.stationHistory:empty{display:none}.stateTitle{font-size:13px;font-weight:800}.streamWarning{position:absolute;bottom:10px;left:10px;right:10px;background:#07101deb;border:1px solid #765c24;color:#ffe0a0;border-radius:6px;padding:7px 9px;font-size:11px;z-index:3}.streamWarning:empty{display:none}
+.scannerPanel{display:grid;grid-template-columns:12px 1fr;gap:10px;align-items:center;margin-bottom:12px;padding:10px 12px;border:1px solid #3b4b63;border-radius:9px;background:#101a2a}.scannerPanel.good{border-color:#28775a;background:#123a2e}.scannerPanel.warn{border-color:#765c24;background:#302817}.scannerPanel.manual{border-color:#456082;background:#10243a}.scannerDot{width:10px;height:10px;border-radius:50%;background:#667085;box-shadow:0 0 0 3px #66708522}.scannerPanel.good .scannerDot{background:var(--green);box-shadow:0 0 12px #36d58a99}.scannerPanel.warn .scannerDot{background:var(--amber);box-shadow:0 0 12px #f6c45366}.scannerPanel.manual .scannerDot{background:var(--blue);box-shadow:0 0 12px #66b8ff66}.scannerCopy strong{display:block;font-size:12px}.scannerCopy span{display:block;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.45;overflow-wrap:anywhere}.scannerPanel.good .scannerCopy strong{color:#a9f3ce}.scannerPanel.warn .scannerCopy strong{color:#ffe0a0}
+@media(max-width:1100px){.layout{grid-template-columns:1fr}.settingsGrid{grid-template-columns:1fr}.devCard{grid-column:auto}}
+@media(max-width:760px){.topbar{padding:8px;flex-wrap:wrap}.brand small,.chip.optional{display:none}.topnav{order:3;width:100%;height:38px;margin:0;border-top:1px solid #1d2a40}.topnav button{flex:1}.wrap{padding:8px}.controlPanel{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr 1fr}.fieldGrid,.devFields,.diagnostics{grid-template-columns:1fr}.viewerTools .toolLabel{display:none}.settingsFooter{flex-wrap:wrap}.settingsFooter .grow{display:none}.mediaTable th:nth-child(3),.mediaTable td:nth-child(3){display:none}}
+.inputToolbar{padding:12px 13px;border-bottom:1px solid var(--line);background:#0c1523}.inputHeader{display:flex;justify-content:space-between;gap:8px;margin-bottom:9px}.inputName{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.inputName.test{color:var(--amber)}.inputActions{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.inputActions .subtle{font-size:10px}.videoFileMeta{flex:1;min-width:260px;padding-left:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flow-name{overflow-wrap:anywhere}.flow-node.current{background:#302817;border-color:var(--amber)}.flow-node.current .flow-dot{color:var(--amber)}.flow-node.current .flow-state{color:var(--amber)}.flow-node.done{background:#0e2b22}.flow-node.done .flow-state{color:var(--green)}.flow-sub{min-height:14px}.stationActions{grid-template-columns:1fr 1fr}.stationActions .action{font-size:12px}.stationMeta{font-size:9px}.statusRow{grid-template-columns:110px 1fr auto}
+.stationActions #captureInspect{grid-column:1/-1}.stationActions #terminateInspection{background:#431d26;border-color:#8b3546}.sifiWarn{color:#ffe0a0}.sifiGood{color:#a9f3ce}.videoControls{display:grid;grid-template-columns:auto auto minmax(180px,1fr) auto auto;align-items:center;gap:8px;width:100%;margin-top:4px;padding:9px 10px;border:1px solid #293a55;border-radius:10px;background:linear-gradient(180deg,#111d30,#0c1625)}.videoControlButton{min-width:42px;height:34px;border:1px solid #3b506f;border-radius:8px;background:#16243a;color:#dce9fb;font-size:12px;font-weight:780}.videoControlButton:hover:not(:disabled){border-color:#5d82ae;background:#1c304d}.videoControlButton.primary{min-width:88px;border-color:#376c98;background:#173957;color:#fff}.videoTimeline{width:100%;height:18px;margin:0;appearance:none;background:transparent;cursor:pointer}.videoTimeline:disabled{cursor:not-allowed}.videoTimeline::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--blue) 0,var(--blue) var(--video-progress,0%),#34445b var(--video-progress,0%),#34445b 100%)}.videoTimeline::-webkit-slider-thumb{appearance:none;width:16px;height:16px;margin-top:-5px;border:3px solid #dcecff;border-radius:50%;background:var(--blue);box-shadow:0 2px 8px #0008}.videoTimeline::-moz-range-track{height:6px;border:0;border-radius:999px;background:#34445b}.videoTimeline::-moz-range-progress{height:6px;border-radius:999px;background:var(--blue)}.videoTimeline::-moz-range-thumb{width:11px;height:11px;border:3px solid #dcecff;border-radius:50%;background:var(--blue)}.videoTime{min-width:82px;text-align:center;color:#c8d6e9;font:11px Consolas,monospace;white-space:nowrap}.historyFilters{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px;border-bottom:1px solid var(--line)}.historyFilters label{display:grid;gap:5px;color:var(--muted);font-size:11px}.historyFilters input,.historyFilters select{min-width:190px;background:#111d30;color:var(--text);border:1px solid #354864;border-radius:8px;padding:8px 10px}.historyDetail{margin-top:14px;padding:14px}.historyDetail:empty{display:none}.historyDetailHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}.historyDetailHead span,.historyAttempt span{color:var(--muted);font-size:11px}.historyAttempt{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,.7fr) auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+@media(max-width:760px){.videoFileMeta{width:100%;flex-basis:100%;padding:3px 0}.videoControls{grid-template-columns:auto auto 1fr auto}.videoTime{grid-column:1/-1;grid-row:2;justify-self:center}.videoControlButton.primary{min-width:76px}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">VisionEdge <small>NK APL</small></div>
+  <nav class="topnav" aria-label="VisionEdge pages">
+    <button id="pageLiveBtn" class="on" onclick="switchPage('live')">Live</button>
+    <button id="pageMediaBtn" onclick="switchPage('media')">Media</button>
+    <button id="pageHistoryBtn" onclick="switchPage('history')">History</button>
+    <button id="pageSettingsBtn" onclick="switchPage('settings')">Settings</button>
+  </nav>
+  <span class="grow"></span>
+  <span class="chip"><span id="topCameraDot" class="dot"></span>Camera <strong id="topCamera">STOPPED</strong></span>
+  <span class="chip optional"><span id="topRecDot" class="dot"></span>Record <strong id="topRec">IDLE</strong></span>
+  <span class="chip optional">AI <strong id="topAI">CAMERA ONLY</strong></span>
+  <a id="flowStudioLink" class="navbtn" href="../flow-studio">Flow Studio</a>
+</header>
+
+<main class="wrap">
+  <section id="pageLive" class="page active">
+    <div id="connectionStrip" class="connectionStrip" role="status">Connecting to station...</div>
+    <div class="layout">
+      <section class="card">
+        <div class="cardhead">
+          <h2>Live Camera</h2>
+          <span id="modeChip" class="chip">Camera only</span>
+          <span class="grow"></span>
+          <div class="viewerTools">
+            <span class="toolLabel">Display</span>
+            <div class="segment" aria-label="Live view source">
+              <button id="viewRaw" onclick="setView('raw')">Raw</button>
+              <button id="viewResult" class="on" onclick="setView('result')">AI Overlay</button>
+            </div>
+          </div>
+          <span id="verdict" class="state idle">WAIT</span>
+        </div>
+
+        <div id="videoTestToolbar" class="inputToolbar hidden">
+          <div class="inputHeader"><strong id="inputSourceName" class="inputName">Live Camera</strong></div>
+          <div class="inputActions">
+            <input id="videoFile" type="file" accept=".mp4,video/mp4" aria-label="MP4 test video" onchange="chooseBrowserVideo()" hidden>
+            <button id="uploadVideo" class="mini" onclick="$('videoFile').value='';$('videoFile').click()">Choose Test Video</button>
+            <button id="startVideo" class="mini" onclick="selectBrowserInput(false)" disabled>Start Browser Test</button>
+            <button id="cameraInput" class="mini" onclick="selectBrowserInput(true)" disabled>Use Live Camera</button>
+            <span id="videoFileName" class="subtle videoFileMeta">1920 × 1080 MP4 · played locally · file stays on this PC</span>
+            <div class="videoControls" aria-label="Test video playback controls">
+              <button id="videoBack" class="videoControlButton" onclick="skipBrowserVideo(-5)" aria-label="Back 5 seconds" title="Back 5 seconds" disabled>−5s</button>
+              <button id="videoPlayPause" class="videoControlButton primary" onclick="toggleBrowserVideo()" disabled>▶ Play</button>
+              <input id="videoSeek" class="videoTimeline" type="range" min="0" max="0" step="0.001" value="0" aria-label="Test video position" oninput="previewVideoSeek(this.value)" onchange="seekVideo(this.value)" disabled>
+              <span id="videoPosition" class="videoTime">0:00 / 0:00</span>
+              <button id="videoForward" class="videoControlButton" onclick="skipBrowserVideo(5)" aria-label="Forward 5 seconds" title="Forward 5 seconds" disabled>+5s</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="viewer" class="viewer empty">
+          <img id="live" alt="VisionEdge live view">
+          <video id="liveVideo" autoplay muted playsinline aria-label="Live inspection video"></video>
+          <video id="testVideo" muted playsinline preload="metadata" aria-label="Browser test video"></video>
+          <img id="testResult" alt="Browser video inspection result">
+          <canvas id="testFrameCanvas" aria-hidden="true"></canvas>
+          <div id="emptyText" class="emptyText">Waiting for video.</div>
+          <div class="overlay"><span id="liveBadge" class="badge">STOPPED</span></div>
+          <div class="overlay right"><span id="recBadge" class="badge rec" style="display:none">● REC <span id="recTimer">00:00</span></span></div>
+          <div id="streamWarning" class="streamWarning"></div>
+        </div>
+        <div class="matchLabels"><span>Stable: <b id="stableLabel">UNKNOWN</b></span><span>Raw: <b id="rawLabel">UNKNOWN</b></span></div>
+
+        <div class="metrics">
+          <div class="metric"><span>Stream FPS · actual</span><strong id="srcFps">0.0</strong></div>
+          <div class="metric"><span>AI FPS · actual</span><strong id="inferFps">—</strong></div>
+          <div class="metric"><span>Uptime</span><strong id="uptime">0:00</strong></div>
+        </div>
+
+        <div class="controlPanel">
+          <div class="controlGroup">
+            <div class="controlTitleRow"><div class="controlTitle">Camera</div><span id="cameraQuickState" class="controlState">STOPPED</span></div>
+            <div class="buttonRow">
+              <button id="cameraToggle" class="action primary wide" onclick="toggleCamera()">▶ Start Camera</button>
+              <button id="snapshotBtn" class="action blue wide" onclick="snapshotCurrent()" disabled> Take Snapshot</button>
+            </div>
+            <div class="controlHint" id="cameraHint">Camera is stopped.</div>
+          </div>
+
+          <div class="controlGroup">
+            <div class="controlTitleRow"><div class="controlTitle">Recording</div><span id="recordQuickState" class="controlState">IDLE</span></div>
+            <select id="recordMode" class="recordMode" aria-label="Recording source">
+              <option id="recordModeRaw" value="raw">Raw video</option>
+              <option id="recordModeResult" value="result">AI overlay video</option>
+            </select>
+            <button id="recordToggle" class="action record wide" onclick="toggleRecording()">● Start Recording</button>
+            <div id="recordPath" class="recInfo">Not recording.</div>
+          </div>
+        </div>
+      </section>
+
+      <aside>
+        <section class="card stationPanel">
+          <div class="cardhead"><h2>Serial Number</h2><span class="grow"></span><span id="stationState" class="state idle">Connecting</span></div>
+          <div class="stationBody">
+            <div id="scannerPanel" class="scannerPanel" role="status" aria-live="polite">
+              <span class="scannerDot" aria-hidden="true"></span>
+              <div class="scannerCopy"><strong id="scannerTitle">Checking scanner</strong><span id="scannerDetail">Scan or type a serial number.</span></div>
+            </div>
+            
+            <div id="stationInstruction" class="stateTitle" role="status" aria-live="polite">Waiting for station</div>
+            <div class="scanRow"><input id="snInput" aria-label="Scan or enter SN" lang="en-US" inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" placeholder="Scan or enter serial number" readonly disabled><button id="scanSubmit" class="action blue" onclick="submitSN()" disabled>Use SN</button></div>
+            <div class="controlHint">The browser reads physical US-key positions so the SN is independent of the active input language. Press Enter to start inspection.</div>
+            <div style="margin-top:13px" class="stationLabel">Current SN</div><div id="stationSN" class="stationSN">—</div>
+            <div id="stationCycle" class="stationMeta">Cycle: —</div>
+            <div id="sifiStatus" class="stationMeta sifiWarn">SIFI not configured</div>
+            <div class="stationActions"><button id="captureInspect" class="action blue" onclick="captureInspection()" disabled>Capture &amp; Inspect</button><button id="confirmResult" class="action primary" onclick="stationAction('confirm-result')" disabled>Confirm PASS &amp; Upload to SIFI</button><button id="terminateInspection" class="action" onclick="stationAction('terminate')" disabled>Terminate Inspection</button></div>
+            <div id="stationError" class="stationError" role="alert"></div><div id="lastResult" class="stationHistory"></div>
+          </div>
+        </section>
+        <section class="card" id="sopPanel">
+          <div class="cardhead"><h2>Live SOP Flow</h2><span class="grow"></span><span id="flowCount" class="chip">0 / 0</span><span id="flowPct" class="chip">0%</span></div>
+          <div id="alarm" class="alarmbox"></div>
+          <div id="flow" class="flow"><div class="subtle">No inspection product selected. Camera-only mode is active.</div></div>
+          <div class="sopActions subtle">One captured image must show both the closed cover and the installed MCIO card.</div>
+        </section>
+
+        <section class="card" style="margin-top:14px">
+          <div class="cardhead"><h2>System Status</h2><span class="grow"></span><span id="lastUpdate" class="subtle">--</span></div>
+          <div class="statusList">
+            <div class="statusRow"><span id="temperatureLabel" class="statusName">Temperature</span><span id="temperatureValue" class="statusValue">Unavailable</span><span id="temperatureState" class="state idle">N/A</span></div>
+            <div class="statusRow"><span class="statusName">Camera</span><span id="cameraStatusText" class="statusValue">Stopped</span><span id="cameraState" class="state idle">STOPPED</span></div>
+            <div class="statusRow"><span class="statusName">Recording</span><span id="recordStatusText" class="statusValue">Idle</span><span id="recordState" class="state idle">IDLE</span></div>
+            <div class="statusRow"><span class="statusName">Inspection</span><span id="inferStatusText" class="statusValue">Camera only</span><span id="inferState" class="state idle">OFF</span></div>
+            <div class="statusRow"><span class="statusName">Storage</span><span id="storageStatusText" class="statusValue">Checking…</span><span id="storageState" class="state idle">--</span></div>
+          </div>
+        </section>
+
+      </aside>
+    </div>
+  </section>
+
+  <section id="pageMedia" class="page">
+    <section class="card">
+      <div class="cardhead"><h2>Local Media</h2><span class="grow"></span><span id="mediaStorage" class="subtle">Storage --</span><span id="mediaSummary" class="subtle">0 files</span><button class="mini" onclick="loadMedia(true)">Refresh</button></div>
+      <div class="mediaToolbar">
+        <div class="tabs"><button id="tabAll" class="on" onclick="setMediaTab('all')">All</button><button id="tabRecordings" onclick="setMediaTab('recording')">Recordings</button><button id="tabPhotos" onclick="setMediaTab('photo')">Photos</button></div>
+        <span class="mediaCount">A recording must be stopped before it can be opened, downloaded, or deleted.</span>
+      </div>
+      <div class="mediaScroll">
+        <table class="mediaTable">
+          <thead><tr><th>Type</th><th>Name</th><th>Modified</th><th>Size</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="mediaBody"><tr><td colspan="5" class="emptyMedia">No local media.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  <section id="pageHistory" class="page">
+    <section class="card">
+      <div class="cardhead"><h2>Inspection History</h2><span class="grow"></span><span id="historyCount" class="subtle">0 inspections</span><button id="historyRefresh" class="mini" onclick="loadHistory()">Refresh</button></div>
+      <div class="historyFilters">
+        <label>Serial Number<input id="historySN" placeholder="Search SN" onkeydown="if(event.key==='Enter')loadHistory()"></label>
+        <label>Visual Result<select id="historyResult"><option value="">All results</option><option value="OK">OK</option><option value="NOT_MATCHED">Not Matched</option></select></label>
+        <button class="action blue" onclick="loadHistory()">Search</button>
+      </div>
+      <div class="mediaScroll"><table class="mediaTable"><thead><tr><th>Updated</th><th>Serial Number</th><th>Visual Result</th><th>Cycle Status</th><th>Source</th><th>Attempts</th><th>Evidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="7" class="emptyMedia">Select History to load saved inspections.</td></tr></tbody></table></div>
+    </section>
+    <section id="historyDetail" class="card historyDetail"></section>
+  </section>
+
+  <section id="pageSettings" class="page">
+    <div class="settingsIntro">
+      <div></div>
+      <div><strong>Device Settings</strong><p>Daily camera and recording controls stay on Live. Change device behavior here, then apply once. The live camera is restarted automatically only when configuration needs to be reloaded.</p></div>
+    </div>
+
+    <div class="settingsGrid">
+      <section class="card settingsCard">
+        <div class="cardhead"><h2>Camera</h2><span class="grow"></span><span class="subtle">Sensor / capture</span></div>
+        <div class="settingsBody">
+          <div class="settingsSectionHint">VisionEdge uses validated camera modes. The camera target is 30 FPS; actual speed depends on processing load.</div>
+          <div class="fieldGrid">
+            <div class="field"><label for="camera">Camera</label><select id="camera"><option value="0">Camera 0</option></select><div class="fieldNote">Physical camera index.</div></div>
+            <div class="field"><label for="resolution">Resolution</label><select id="resolution"><option value="1920x1080">1920 × 1080</option><option value="3840x2160">3840 × 2160</option></select><div class="fieldNote">Changing resolution restarts the camera pipeline.</div></div>
+            <div class="field"><label for="rotation">Rotation</label><select id="rotation"><option value="0">0°</option><option value="180">180°</option></select></div>
+          </div>
+          <div style="margin-top:12px" class="toggleLine">
+            <div class="toggleCopy"><strong>Lens distortion correction (LDC)</strong><span>Use Qualcomm ISP correction when the deployed lens requires it.</span></div>
+            <label class="switch" aria-label="Lens distortion correction"><input type="checkbox" id="ldc"><span class="slider"></span></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settingsCard">
+        <div class="cardhead"><h2>AI & Inspection</h2><span class="grow"></span><span class="subtle">Inspection profile</span></div>
+        <div class="settingsBody">
+          <div class="settingsSectionHint">Scanning an SN starts one inspection. Capture one image after closing the cover and installing the MCIO card. Flow Studio is a separate template editing workspace.</div>
+          <div class="fieldGrid">
+            <div class="field" style="grid-column:1/-1"><label for="product">Inspection workflow</label><select id="product" disabled><option value="1">NK APL · Four-step inspection</option></select><div class="fieldNote">Station configuration: config/apl_workflow.json</div></div>
+            <div class="field"><label for="infer_fps">AI Analysis Rate</label><select id="infer_fps"><option value="2">Low load · 2 FPS</option><option value="5" selected>Balanced · 5 FPS (recommended)</option><option value="10">Fast · 10 FPS</option></select><div id="inferRateNote" class="fieldNote">Target analysis rate. Live status shows the actual measured AI FPS.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settingsCard">
+        <div class="cardhead"><h2>Recording & Storage</h2><span class="grow"></span><span class="subtle">Local media safety</span></div>
+        <div class="settingsBody">
+          <div class="settingsSectionHint">Recording stays independent from the live display. Automatic bitrate follows SmartCam's resolution-based policy.</div>
+          <div class="fieldGrid">
+            <div class="field"><label for="recording_bitrate">Recording bitrate</label><select id="recording_bitrate"><option value="0">Automatic · 8 Mbps 1080p / 16 Mbps 4K</option><option value="8000000">8 Mbps</option><option value="16000000">16 Mbps</option><option value="24000000">24 Mbps</option></select><div class="fieldNote">Automatic is recommended unless a deployment requires a fixed bitrate.</div></div>
+            <div class="field"><label for="min_free_mb">Storage safety reserve</label><select id="min_free_mb"><option value="5120">Keep 5 GB free</option><option value="10240" selected>Keep 10 GB free (recommended)</option><option value="20480">Keep 20 GB free</option></select><div class="fieldNote">VisionEdge stops/refuses recording before the device partition reaches this reserve.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settingsCard devCard">
+        <div class="cardhead"><h2>Developer / Compatibility</h2><span class="grow"></span><span class="subtle">Normally leave unchanged on the AI Camera</span></div>
+        <div class="settingsBody">
+          <div class="devFields">
+            <div class="field"><label for="backend">Camera backend</label><select id="backend" onchange="updateBackendFields()"><option value="auto">Auto</option><option value="qti">Qualcomm QTI</option><option value="opencv">OpenCV fallback</option></select><div class="fieldNote">Use QTI for validated production cameras; Auto keeps Windows / host fallback available.</div></div>
+            <div id="sourceField" class="field"><label for="source">OpenCV source</label><input id="source" value="0"><div class="fieldNote">Used only when backend is OpenCV.</div></div>
+          </div>
+          <div class="diagnostics" aria-label="Runtime diagnostics">
+            <div class="diag"><span>Actual backend</span><strong id="diagBackend">--</strong></div>
+            <div class="diag"><span>Hardware recording</span><strong id="diagHardware">--</strong></div>
+            <div class="diag"><span>Frame sequence</span><strong id="diagFrames">0</strong></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="settingsFooter">
+      <span id="settingsStatus" class="hint">No unsaved changes.</span>
+      <span class="grow"></span>
+      <button id="discardSettingsBtn" class="action" onclick="loadConfig(true)" disabled>Discard Changes</button>
+      <button id="applySettingsBtn" class="action primary" onclick="applySettings()" disabled>Apply Settings</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const APP_BASE=location.pathname.replace(/\/(?:static\/edge_dashboard\.html|edge|edge\/)$/,'').replace(/\/$/,'');
+const A=APP_BASE+'/api/edge';
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+let lastStatus={},viewMode='result',cameraBusy=false,recordBusy=false,settingsBusy=false,mediaVersion=-1,mediaTab='all',mediaRows=[],recSince=null,toastTimer=null,currentPage='live',settingsBaseline='',settingsDirty=false,lastWarning='',lastMediaRefresh=0;
+
+async function req(url,opt={}){const controller=new AbortController(),{timeoutMs=15000,...rest}=opt,timer=setTimeout(()=>controller.abort(),timeoutMs);try{const r=await fetch(url,{cache:'no-store',signal:controller.signal,...rest}),t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch{throw Error('Invalid API response ('+r.status+')')}if(!r.ok)throw Error(d.error||r.statusText);return d}finally{clearTimeout(timer)}}
+function message(s,kind=''){const x=$('toast');if(!s){x.className='toast';return}x.textContent=s;x.className='toast show '+kind;clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.className='toast',4200)}
+function fmtDuration(sec){sec=Math.max(0,Math.floor(Number(sec)||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`}
+function fsize(n){n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';if(n<1073741824)return(n/1048576).toFixed(1)+' MB';return(n/1073741824).toFixed(2)+' GB'}
+function fmtGb(mb){if(mb===null||mb===undefined||Number.isNaN(Number(mb)))return'--';return (Number(mb)/1024).toFixed(Number(mb)>=10240?1:2).replace(/\.0$/,'')+' GB'}
+function mediaUrl(path,download=false){return `${A}/media/${String(path).split('/').map(encodeURIComponent).join('/')}${download?'?download=1':''}`}
+function switchPage(page){currentPage=page;for(const p of ['live','media','history','settings']){$('page'+p[0].toUpperCase()+p.slice(1)).classList.toggle('active',p===page);$('page'+p[0].toUpperCase()+p.slice(1)+'Btn').classList.toggle('on',p===page)}if(page==='media')loadMedia(false);if(page==='history')loadHistory()}
+
+function setView(mode){viewMode=mode==='result'?'result':'raw';$('viewRaw').classList.toggle('on',viewMode==='raw');$('viewResult').classList.toggle('on',viewMode==='result');updateSnapshotLabel();reloadStream()}
+function updateSnapshotLabel(){$('snapshotBtn').textContent=viewMode==='result'?' Snapshot AI Overlay':' Take Snapshot'}
+function reloadStream(){syncStream(true)}
+
+async function toggleCamera(){if(cameraBusy)return;if(lastStatus.recording){message('Stop recording before stopping the camera.','warn');return}cameraBusy=true;renderStatus(lastStatus);try{const running=!!lastStatus.running;message(running?'Stopping camera…':'Starting camera…');const d=await req(`${A}/${running?'stop':'start'}`,{method:'POST'});if(d.success===false)throw Error(d.error||'Camera action failed');if(!running)setTimeout(reloadStream,250);else $('live').removeAttribute('src');message(running?'Camera stopped.':'Camera starting…','ok');await pollOnce()}catch(e){message(e.message,'err')}finally{cameraBusy=false;renderStatus(lastStatus)}}
+async function snapshotCurrent(){return snapshot(viewMode)}
+async function snapshot(mode){try{const d=await req(`${A}/snapshot`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});if(!d.success)throw Error(d.error||'Snapshot failed');message(`Snapshot saved: ${d.path}`,'ok');await loadMedia(true)}catch(e){message(e.message,'err')}}
+async function toggleRecording(){if(recordBusy)return;recordBusy=true;renderStatus(lastStatus);try{if(lastStatus.recording){message('Finalizing recording…');const d=await req(`${A}/record/stop`,{method:'POST'});if(!d.success)throw Error(d.error||'Stop recording failed');message(`Recording saved: ${d.relative_path||d.path||''}`,'ok');recSince=null}else{const mode=$('recordMode').value;message(`Starting ${mode==='raw'?'raw':'AI overlay'} recording…`);const d=await req(`${A}/record/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});if(!d.success)throw Error(d.error||'Start recording failed');message('Recording started.','ok');recSince=Date.now()}await pollOnce();await loadMedia(true)}catch(e){message(e.message,'err')}finally{recordBusy=false;renderStatus(lastStatus)}}
+
+function stateClass(status){status=String(status||'').toUpperCase();if(status==='LIVE'||status==='ON'||status==='RECORDING'||status==='PASS'||status==='COMPLETE')return'good';if(status==='ERROR'||status==='ALARM')return'bad';if(status==='STARTING'||status==='STOPPING'||status==='RECONNECTING'||status==='RUNNING'||status==='PREVIEW')return'warn';return'idle'}
+function renderStatus(d={}){
+  lastStatus=d;const status=String(d.status||'STOPPED').toUpperCase(),running=!!d.running,recording=!!d.recording,hasFrame=!!d.has_raw,aiConfigured=!!d.station||Number(d.product_id||0)>0,aiActive=aiConfigured&&running,actualAI=Number(d.infer_fps||0),storageOK=d.storage_ok!==false;
+  $('topCamera').textContent=status;$('topCameraDot').className='dot '+(status==='LIVE'?'live':(status==='STARTING'||status==='RECONNECTING'?'warn':''));$('topRec').textContent=recording?'RECORDING':'IDLE';$('topRecDot').className='dot '+(recording?'rec':'');$('topAI').textContent=aiConfigured?(running?(actualAI.toFixed(1)+' FPS'):'READY'):'CAMERA ONLY';
+  const productLabel=d.station?'NK APL':aiConfigured?(d.product?.serial||d.product?.name||`Product ${d.product_id}`):'Camera only';$('modeChip').textContent=aiConfigured?`Inspection · ${productLabel}`:'Camera only';const snapshotState=d.station?.state,verdictText=d.station?(snapshotState==='PASS_CONFIRM'?'OK':snapshotState==='NOT_MATCHED'?'NOT MATCHED':snapshotState):aiConfigured?(running?(d.verdict||'RUNNING'):'READY'):(running?'CAMERA ONLY':status);$('verdict').textContent=verdictText;$('verdict').className='state '+stateClass(snapshotState==='PASS_CONFIRM'?'COMPLETE':snapshotState==='NOT_MATCHED'||snapshotState==='RECOVERY_REQUIRED'?'ALARM':aiConfigured&&running?d.verdict:status);
+  $('srcFps').textContent=Number(d.source_fps||0).toFixed(1);$('inferFps').textContent=aiActive?actualAI.toFixed(1):'—';$('uptime').textContent=fmtDuration(d.uptime_sec||0);
+  const viewer=$('viewer');viewer.classList.toggle('empty',!running||!hasFrame);$('liveBadge').textContent=status;$('liveBadge').className='badge '+(status==='LIVE'?'live':(status==='ERROR'?'warn':''));$('recBadge').style.display=recording?'inline-flex':'none';if(recording&&recSince===null)recSince=Date.now();if(!recording)recSince=null;if(recording&&recSince)$('recTimer').textContent=fmtDuration((Date.now()-recSince)/1000);
+  $('viewResult').disabled=!aiConfigured;if(!aiConfigured&&viewMode==='result'){viewMode='raw';$('viewRaw').classList.add('on');$('viewResult').classList.remove('on');updateSnapshotLabel();if(running)reloadStream()}
+  const camBtn=$('cameraToggle');camBtn.disabled=cameraBusy||status==='STARTING'||status==='STOPPING'||(running&&recording);camBtn.textContent=running?'■ Stop Camera':'▶ Start Camera';camBtn.className='action wide '+(running?'danger':'primary');$('cameraQuickState').textContent=status;$('cameraHint').textContent=recording?'Recording is active · stop recording before stopping the camera.':running?(status==='LIVE'?`Streaming · ${Number(d.source_fps||0).toFixed(1)} FPS actual`:`Camera ${status.toLowerCase()}…`):'Camera is stopped.';$('snapshotBtn').disabled=!hasFrame||cameraBusy;
+  const recBtn=$('recordToggle');recBtn.disabled=!running||!hasFrame||recordBusy||status==='STOPPING';recBtn.textContent=recording?'■ Stop Recording':'● Start Recording';recBtn.className='action wide '+(recording?'danger recordingPulse':'record');$('recordMode').disabled=recording||recordBusy;$('recordModeResult').disabled=!aiConfigured;if(!aiConfigured&&!recording&&$('recordMode').value==='result')$('recordMode').value='raw';$('recordModeRaw').textContent='Raw video';$('recordModeResult').textContent='AI overlay video';$('recordQuickState').textContent=recording?'RECORDING':'IDLE';$('recordPath').textContent=recording?(d.record_path||'Recording in progress…'):'Not recording.';
+  $('cameraStatusText').textContent=running?`Streaming · ${Number(d.source_fps||0).toFixed(1)} FPS actual`:'Camera is stopped';$('cameraState').textContent=status;$('cameraState').className='state '+stateClass(status);$('recordStatusText').textContent=recording?(d.record_path||'Recording in progress'):'No active recording';$('recordState').textContent=recording?'RECORDING':'IDLE';$('recordState').className='state '+(recording?'bad':'idle');$('inferStatusText').textContent=aiConfigured?(running?`${productLabel} · ${actualAI.toFixed(1)} FPS actual`:`${productLabel} · ready`):'No inspection product selected';$('inferState').textContent=aiConfigured?(running?'ACTIVE':'READY'):'OFF';$('inferState').className='state '+(aiConfigured?(running?'good':'idle'):'idle');
+  $('storageStatusText').textContent=d.storage_free_mb==null?'Storage status unavailable':`${fmtGb(d.storage_free_mb)} free · keep ${fmtGb(d.storage_reserve_mb||0)}`;$('storageState').textContent=d.storage_free_mb==null?'UNKNOWN':storageOK?'OK':'LOW';$('storageState').className='state '+(d.storage_free_mb==null?'warn':storageOK?'good':'bad');$('mediaStorage').textContent=d.storage_free_mb==null?'Storage --':`${fmtGb(d.storage_free_mb)} free`;
+  $('diagBackend').textContent=`${d.backend_requested||'--'} → ${d.backend||'--'}`;$('diagHardware').textContent=d.backend_status?.hardware_recording?'Available':'Software / unavailable';$('diagFrames').textContent=d.frame_seq||0;
+  $('lastUpdate').textContent=new Date().toLocaleTimeString('en-GB');renderFlow(d.station?.sop||d.sop);renderStation(d.station);renderStreamStatus();updateSettingsActionState();
+  if(d.warning&&d.warning!==lastWarning){lastWarning=d.warning;message(d.warning,'warn')}if(d.error)message(d.error,'err')
+}
+
+function stateLabel(s){return({PENDING:'PENDING',DETECTING:'DETECTING',DONE:'DONE',TIMEOUT:'TIMEOUT'})[s]||s}
+function nodeClass(x,sop){const s=String(x.status||'PENDING').toUpperCase(),cur=Number(x.id)===Number(sop?.current_step_id||0);return `${s==='DONE'?'done':s==='TIMEOUT'?'alarm':''} ${cur&&s==='PENDING'?'current':''}`}
+function rowClass(x,sop){const s=String(x.status||'PENDING').toUpperCase();return s==='DONE'?'done':s==='TIMEOUT'||(sop?.alarm?.active&&Number(sop?.alarm?.step_id)===Number(x.id))?'alarm':''}
+function renderFlow(sop){if(!sop){$('flow').innerHTML='<div class="subtle">No inspection product selected. Camera-only mode is active.</div>';$('flowCount').textContent='0 / 0';$('flowPct').textContent='0%';$('alarm').classList.remove('on');return}const alarm=sop.alarm||{};$('alarm').classList.toggle('on',!!alarm.active);$('alarm').textContent=alarm.active?''+(alarm.message||'Alarm'):'';$('flowCount').textContent=`${sop.done_count||0} / ${sop.total_required||0}`;$('flowPct').textContent=`${Number(sop.progress_pct||0).toFixed(0)}%`;const steps=sop.steps||[];$('flow').innerHTML=steps.length?steps.map(x=>{const st=String(x.status||'PENDING').toUpperCase(),sub=[];if(x.matched_label)sub.push(esc(x.matched_label));if(Number(x.last_score||0)>0)sub.push(`score ${Number(x.last_score).toFixed(3)}`);if(st==='DETECTING')sub.push(`hit ${x.consecutive_hits||0}/${x.min_consecutive_hits||1}`);return `<div class="flow-row ${rowClass(x,sop)}"><div class="flow-node ${nodeClass(x,sop)}"><div class="flow-dot">${st==='DONE'?'✓':esc(x.step_no)}</div><div><div class="flow-name">${esc(x.label||x.name)}${x.required?'':' · optional'}</div><div class="flow-sub">${sub.length?sub.join(' · '):st==='DONE'?'Confirmed':Number(x.id)===Number(sop.current_step_id)?'Waiting for stable match':'Waiting for previous steps'}</div></div><div class="flow-state">${Number(x.id)===Number(sop.current_step_id)&&st==='PENDING'?'CURRENT':stateLabel(st)}</div></div></div>`}).join(''):'<div class="subtle">No SOP flow configured.</div>'}
+
+function setMediaTab(tab){mediaTab=tab;for(const [id,val] of [['tabAll','all'],['tabRecordings','recording'],['tabPhotos','photo']])$(id).classList.toggle('on',val===tab);renderMedia()}
+function renderMedia(){const rows=mediaRows.filter(x=>mediaTab==='all'||x.kind===mediaTab),body=$('mediaBody');$('mediaSummary').textContent=`${mediaRows.length} files · ${mediaRows.filter(x=>x.kind==='recording').length} recordings · ${mediaRows.filter(x=>x.kind==='photo').length} photos`;if(!rows.length){body.innerHTML='<tr><td colspan="5" class="emptyMedia">No media in this view.</td></tr>';return}body.innerHTML=rows.map(x=>{const active=!!x.active,open=active?'<button class="mini" disabled title="Available after recording stops">Open</button>':`<a class="mini" href="${mediaUrl(x.path)}" target="_blank" rel="noopener">Open</a>`,download=active?'<button class="mini" disabled title="Available after recording stops">Download</button>':`<a class="mini" href="${mediaUrl(x.path,true)}">Download</a>`;return `<tr data-path="${esc(x.path)}"><td><span class="mediaType">${x.kind==='recording'?'VIDEO':'PHOTO'}${active?' · ACTIVE':''}</span></td><td class="mediaName" title="${esc(x.name)}">${esc(x.name)}</td><td>${new Date(Number(x.mtime)*1000).toLocaleString('en-GB')}</td><td>${fsize(x.size)}</td><td><div class="mediaActions">${open}${download}<button class="mini del" ${active?'disabled title="Stop recording before delete"':''} onclick='deleteMedia(${JSON.stringify(x.path)})'>Delete</button></div></td></tr>`}).join('')}
+async function loadMedia(force=false){try{const d=await req(`${A}/media?v=${Date.now()}`);lastMediaRefresh=Date.now();mediaVersion=Number(d.version??mediaVersion);mediaRows=[...(d.recordings||[]),...(d.photos||[])].sort((a,b)=>Number(b.mtime)-Number(a.mtime));renderMedia()}catch(e){if(force)message('Media: '+e.message,'err')}}
+async function deleteMedia(path){const name=String(path).split('/').pop();if(!confirm(`Delete ${name}?\n\nThis cannot be undone.`))return;try{const d=await req(`${A}/media/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});if(!d.success)throw Error(d.error||'Delete failed');mediaRows=mediaRows.filter(x=>x.path!==path);mediaVersion=Number(d.media_version??mediaVersion);renderMedia();await loadMedia(true);message(`Deleted: ${name}`,'ok')}catch(e){message(e.message,'err');await loadMedia(true)}}
+
+function ensureOption(select,value,label){value=String(value);let opt=[...select.options].find(o=>o.value===value);for(const o of [...select.options])if(o.dataset.dynamic==='1'&&o.value!==value)o.remove();if(!opt){opt=document.createElement('option');opt.value=value;opt.textContent=label||value;opt.dataset.dynamic='1';select.appendChild(opt)}select.value=value}
+function updateBackendFields(){const opencv=$('backend').value==='opencv';$('sourceField').classList.toggle('hidden',!opencv);markSettingsDirty()}
+function updateAiFields(){$('infer_fps').disabled=false;$('inferRateNote').textContent='The camera preview rate is shown on Live. Template matching runs only when Capture & Inspect is selected.'}
+function settingsFormValue(){return JSON.stringify({camera:$('camera').value,resolution:$('resolution').value,rotation:$('rotation').value,ldc:$('ldc').checked,product:$('product').value,infer_fps:$('infer_fps').value,recording_bitrate:$('recording_bitrate').value,min_free_mb:$('min_free_mb').value,backend:$('backend').value,source:$('source').value})}
+function captureSettingsBaseline(){settingsBaseline=settingsFormValue();settingsDirty=false;updateSettingsActionState()}
+function markSettingsDirty(){if(!settingsBaseline)return;settingsDirty=settingsFormValue()!==settingsBaseline;updateSettingsActionState()}
+function updateSettingsActionState(){const activeCycle=(lastStatus.station&&lastStatus.station.state!=='WAITING_SN')||lastStatus.input?.mode==='video',blocked=!!lastStatus.recording||settingsBusy||!!activeCycle||!stationFresh();$('applySettingsBtn').disabled=!settingsDirty||blocked;$('discardSettingsBtn').disabled=!settingsDirty||settingsBusy;$('pageSettingsBtn').textContent=settingsDirty?'Settings •':'Settings';if(settingsBusy)$('settingsStatus').textContent='Applying settings…';else if(activeCycle)$('settingsStatus').textContent='Terminate or complete this inspection and return to the live camera before applying settings.';else if(lastStatus.recording&&settingsDirty)$('settingsStatus').textContent='Unsaved changes · stop recording before applying.';else $('settingsStatus').textContent=settingsDirty?'Unsaved changes.':'No unsaved changes.'}
+async function loadConfig(showToast=false){
+  try{const d=await req(`${A}/config`),c=d.config||{};ensureOption($('camera'),c.camera??0,`Camera ${c.camera??0} · current`);ensureOption($('resolution'),`${c.width||1920}x${c.height||1080}`,`${c.width||1920} × ${c.height||1080} · current`);$('rotation').value=String(c.rotation??0);$('ldc').checked=!!c.ldc;$('product').value=String(c.product_id||0);ensureOption($('infer_fps'),Number(c.infer_fps||5),`${Number(c.infer_fps||5)} FPS · current`);ensureOption($('recording_bitrate'),Number(c.recording_bitrate??0),Number(c.recording_bitrate??0)===0?'Automatic · current':`${(Number(c.recording_bitrate)/1000000).toFixed(1).replace(/\.0$/,'')} Mbps · current`);ensureOption($('min_free_mb'),Number(c.min_free_mb??10240),`${fmtGb(c.min_free_mb??10240)} · current`);$('backend').value=c.backend||'auto';$('source').value=c.source??'0';$('recordMode').value=c.record_source==='raw'?'raw':'result';updateBackendFields();updateAiFields();captureSettingsBaseline();if(showToast)message('Changes discarded; device settings reloaded.','ok')}catch(e){$('settingsStatus').textContent='Unable to load settings.';message('Settings: '+e.message,'err')}
+}
+async function loadProducts(){updateAiFields()}
+async function applySettings(){
+  if(settingsBusy||!settingsDirty)return;if(lastStatus.recording){message('Stop recording before applying settings.','warn');return}settingsBusy=true;updateSettingsActionState();
+  try{const res=String($('resolution').value).split('x'),width=Number(res[0]),height=Number(res[1]);if(!width||!height)throw Error('Invalid resolution selection');const data={restart:!!lastStatus.running,backend:$('backend').value,source:$('source').value,camera:Number($('camera').value),rotation:Number($('rotation').value),width,height,infer_fps:Number($('infer_fps').value),recording_bitrate:Number($('recording_bitrate').value),min_free_mb:Number($('min_free_mb').value),ldc:$('ldc').checked,product_id:Number($('product').value)};const wasRunning=!!lastStatus.running;const d=await req(`${A}/config`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(!d.success)throw Error(d.error||'Apply failed');message(wasRunning?'Settings applied · camera restarting…':'Settings saved.','ok');if(wasRunning)setTimeout(reloadStream,700);await pollOnce();await loadConfig(false)}catch(e){message(e.message,'err')}finally{settingsBusy=false;updateSettingsActionState()}
+}
+
+async function pollOnce(){if(statusPollBusy)return;statusPollBusy=true;try{const d=await req(`${A}/status?t=${Date.now()}`,{timeoutMs:4500});lastStatusAt=Date.now();statusPollError='';renderStatus(d);syncStream();if(Number(d.media_version??-1)!==mediaVersion||(d.recording&&Date.now()-lastMediaRefresh>2500))loadMedia(false)}catch(e){statusPollError=e.name==='AbortError'?'Station status request timed out':e.message;renderStation(lastStatus.station);renderStreamStatus();$('topCameraDot').className='dot';$('topCamera').textContent='API ERROR'}finally{statusPollBusy=false}}
+async function pollLoop(){await pollOnce();setTimeout(pollLoop,800)}
+setInterval(()=>{if(lastStatus.recording&&recSince)$('recTimer').textContent=fmtDuration((Date.now()-recSince)/1000)},500);
+window.addEventListener('beforeunload',e=>{if(settingsDirty){e.preventDefault();e.returnValue=''}});
+for(const evt of ['change','input'])document.addEventListener(evt,e=>{if(e.target&&e.target.closest&&e.target.closest('#pageSettings'))markSettingsDirty()});
+</script>
+<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20260914-3-video-feature-gate';document.body.appendChild(aplScript);</script>
+</body>
+</html>

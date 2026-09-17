@@ -1,0 +1,70 @@
+# Python bytecode, test, and tooling caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments and local environment variables
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Runtime data and user uploads
+runtime_data/
+uploads/
+
+# Local databases and their journal files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Credentials and private certificate material
+*.key
+*.pem
+*.p12
+*.pfx
+*.cert
+*.crt
+*.cer
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Large local video/test media
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Local runtime snapshots and backup archives
+docs/archive/runtime_backups/
+*.tar
+*.tar.gz
+*.tgz
+
+# Editor and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

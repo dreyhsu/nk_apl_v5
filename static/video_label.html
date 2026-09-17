@@ -1,0 +1,2131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TM-Inspect Video Label Studio</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --accent: #f0a500; --accent2: #2ea043; --danger: #da3633;
+    --text: #e6edf3; --text-dim: #8b949e; --input-bg: #0d1117;
+    --radius: 6px; --font-mono: 'Courier New', monospace;
+    --font-ui: 'Segoe UI', system-ui, sans-serif;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+               font-family: var(--font-ui); font-size: 14px; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 0 16px;
+           height: 48px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .logo { font-size: 13px; font-weight: 700; letter-spacing: 2px;
+          color: var(--accent); font-family: var(--font-mono); }
+  .tab-bar { display: flex; gap: 2px; background: var(--bg); border-radius: var(--radius); padding: 2px; }
+  .tab-btn { padding: 5px 14px; border: none; background: transparent; color: var(--text-dim);
+             cursor: pointer; border-radius: 4px; font-size: 12px; font-weight: 600; transition: all .15s; }
+  .tab-btn.active { background: var(--accent); color: #000; }
+  .tab-btn:hover:not(.active) { background: var(--border); color: var(--text); }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  .sidebar { width: 240px; flex-shrink: 0; background: var(--panel);
+             border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .sidebar-head { padding: 10px 12px; border-bottom: 1px solid var(--border);
+                  display: flex; align-items: center; gap: 8px; }
+  .sidebar-head span { font-size: 11px; font-weight: 700; letter-spacing: 1px;
+                       color: var(--text-dim); text-transform: uppercase; }
+  .product-list { flex: 1; overflow-y: auto; padding: 6px; }
+  .product-item { padding: 8px 10px; border-radius: var(--radius); cursor: pointer;
+                  display: flex; align-items: center; margin-bottom: 2px;
+                  border: 1px solid transparent; transition: all .12s; }
+  .product-item:hover { background: var(--border); }
+  .product-item.selected { background: rgba(240,165,0,.12); border-color: rgba(240,165,0,.4); }
+  .p-serial { font-family: var(--font-mono); font-size: 12px; color: var(--accent); font-weight: 700; }
+  .p-name   { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+  .p-hint   { font-size: 10px; color: var(--accent2); margin-top: 1px; }
+  .del-btn  { margin-left: auto; width: 20px; height: 20px; border: none; background: transparent;
+              color: var(--text-dim); cursor: pointer; font-size: 14px; border-radius: 3px;
+              display: none; align-items: center; justify-content: center; flex-shrink: 0; }
+  .product-item:hover .del-btn { display: flex; }
+  .del-btn:hover { background: var(--danger); color: #fff; }
+
+  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .toolbar { padding: 8px 12px; border-bottom: 1px solid var(--border);
+             display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+             background: var(--panel); flex-shrink: 0; }
+
+  #videoControls { display: none; padding: 5px 12px; gap: 8px; align-items: center;
+                   background: #0f1318; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  #videoControls.show { display: flex; }
+  #videoSeek { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  #videoTimecode { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); min-width: 96px; }
+
+  .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
+                 overflow: hidden; position: relative;
+                 background: repeating-conic-gradient(#1a1f27 0% 25%, #161b22 0% 50%) 0 0 / 20px 20px; }
+  .canvas-container { position: relative; display: inline-block; }
+  #labelVideo    { display: none; max-width: none; max-height: none; }
+  #mainCanvas    { display: block; }
+  #overlayCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #drawCanvas    { position: absolute; top: 0; left: 0; cursor: crosshair; }
+  .no-img-msg { position: absolute; text-align: center; color: var(--text-dim); pointer-events: none; }
+  .no-img-msg .icon { font-size: 48px; margin-bottom: 8px; }
+  .no-img-msg p { font-size: 13px; }
+
+  .region-panel { height: 190px; flex-shrink: 0; border-top: 1px solid var(--border);
+                  background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+  .region-panel-head { padding: 6px 12px; border-bottom: 1px solid var(--border);
+                       display: flex; align-items: center; gap: 8px;
+                       font-size: 11px; font-weight: 700; letter-spacing: 1px;
+                       color: var(--text-dim); text-transform: uppercase; }
+  .region-table-wrap { flex: 1; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { padding: 4px 8px; text-align: left; font-size: 10px; font-weight: 700;
+             letter-spacing: .8px; text-transform: uppercase; color: var(--text-dim);
+             border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  tbody td { padding: 3px 8px; font-size: 12px; border-bottom: 1px solid rgba(48,54,61,.5); }
+  tbody tr:hover td { background: rgba(255,255,255,.03); }
+  tbody tr.rsel td { background: rgba(240,165,0,.08); }
+
+  .btn { padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border);
+         background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px;
+         font-weight: 600; transition: all .12s; display: inline-flex; align-items: center; gap: 5px; }
+  .btn:hover { border-color: var(--text-dim); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #000; }
+  .btn.success { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .btn.danger  { background: var(--danger);  border-color: var(--danger);  color: #fff; }
+  .btn.sm { padding: 3px 8px; font-size: 11px; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  input[type=text], input[type=number], select {
+    background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: var(--radius);
+    font-size: 12px; outline: none; font-family: inherit; }
+  input[type=text]:focus, input[type=number]:focus, select:focus { border-color: var(--accent); }
+  input[type=number] { width: 64px; }
+  input[type=text]   { width: 120px; }
+
+  .src-pills { display: flex; gap: 4px; }
+  .src-pill { padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border);
+              background: transparent; color: var(--text-dim); cursor: pointer;
+              font-size: 11px; font-weight: 600; transition: all .12s; }
+  .src-pill.active { background: rgba(240,165,0,.18); border-color: var(--accent); color: var(--accent); }
+
+  #inferTab { display: flex; height: 100%; }
+  .infer-left { width: 300px; flex-shrink: 0; border-right: 1px solid var(--border);
+                background: var(--panel); padding: 16px; display: flex; flex-direction: column;
+                gap: 14px; overflow-y: auto; }
+  .infer-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 11px; font-weight: 700; letter-spacing: .8px;
+                      text-transform: uppercase; color: var(--text-dim); }
+  .form-group select, .form-group input { width: 100%; }
+  .result-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
+                  border-radius: 20px; font-size: 14px; font-weight: 800; letter-spacing: 2px; }
+  .result-badge.pass { background: rgba(46,160,67,.15); color: #3fb950; border: 1px solid rgba(46,160,67,.4); }
+  .result-badge.fail { background: rgba(218,54,51,.15); color: #f85149; border: 1px solid rgba(218,54,51,.4); }
+  .result-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+                border-bottom: 1px solid rgba(48,54,61,.5); font-size: 12px; }
+  .score-bar-bg { flex: 1; height: 6px; background: var(--border); border-radius: 3px; }
+  .score-bar    { height: 100%; border-radius: 3px; }
+  .infer-canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
+                       overflow: hidden; position: relative;
+                       background: repeating-conic-gradient(#1a1f27 0% 25%, #161b22 0% 50%) 0 0 / 20px 20px; }
+  #inferResultImg { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
+  #inferVideoControls { display: none; padding: 5px 12px; gap: 8px; align-items: center;
+                        background: #0f1318; border-top: 1px solid var(--border); flex-shrink: 0; }
+  #inferVideoControls.show { display: flex; }
+  #inferSeek { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  #inferTimecode { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); min-width: 96px; }
+  .live-badge { display: none; align-items: center; gap: 4px; font-size: 11px; font-weight: 700;
+                color: #f85149; letter-spacing: 1px; background: rgba(218,54,51,.15);
+                border: 1px solid rgba(218,54,51,.35); border-radius: 20px; padding: 2px 8px; }
+  .live-badge.show { display: flex; }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #f85149; animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  #logsTab { padding: 16px; overflow-y: auto; }
+  .log-table { width: 100%; border-collapse: collapse; }
+  .log-table th { padding: 6px 10px; text-align: left; font-size: 10px; font-weight: 700;
+                  letter-spacing: .8px; text-transform: uppercase; color: var(--text-dim);
+                  border-bottom: 1px solid var(--border); }
+  .log-table td { padding: 6px 10px; font-size: 12px; border-bottom: 1px solid rgba(48,54,61,.4); }
+  .badge-pass { color: #3fb950; font-weight: 700; }
+  .badge-fail { color: #f85149; font-weight: 700; }
+
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.7);
+              display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 24px; min-width: 320px; }
+  .modal h3 { margin-bottom: 16px; font-size: 14px; font-weight: 700; }
+  .modal .fg { margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .modal .fg label { font-size: 11px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
+  .modal .fg input { width: 100%; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+  .statusbar { padding: 3px 12px; background: var(--panel); border-top: 1px solid var(--border);
+               font-size: 11px; color: var(--text-dim); display: flex; gap: 16px; flex-shrink: 0; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">▣ VIDEO LABEL STUDIO</div>
+  <div style="flex:1"></div>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('editor')">✏ Video Label</button>
+    <button class="tab-btn" onclick="switchTab('infer')">▶ Video Inference</button>
+    <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
+  </div>
+  <button class="btn sm" onclick="openVisionPanel()">🎛 Image / Zoom</button>
+  <button class="btn sm" onclick="location.href='./'">⌂ Home</button><button class="btn sm" onclick="location.href='./offline-infer'">▶ SOP Run</button><button class="btn sm" onclick="location.href='./multi-stream'">▦ Streams</button>
+  <button class="btn sm" onclick="window.open('./sop-config','_blank')">⇄ SOP Flow</button>
+</header>
+
+<div class="main">
+
+<!-- ══════ EDITOR TAB ══════ -->
+<div id="editorTab" style="display:flex;flex:1;overflow:hidden;">
+
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <span>Products</span>
+      <div style="flex:1"></div>
+      <button class="btn sm" onclick="openAddProduct()">＋</button>
+    </div>
+    <div class="product-list" id="productList"></div>
+  </div>
+
+  <div class="content">
+    <div class="toolbar">
+      <span id="modeLabel" style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+        padding:3px 10px;border-radius:20px;background:rgba(48,54,61,.8);color:var(--text-dim);">Browse Mode</span>
+      <span id="visionBadge" style="font-size:10px;color:var(--text-dim);border:1px solid var(--border);border-radius:20px;padding:2px 8px;">Zoom 1.0x</span>
+      <button class="btn" id="editModeBtn" onclick="toggleEditMode()">✏ Edit</button>
+
+      <div style="width:1px;height:20px;background:var(--border);margin:0 4px;"></div>
+
+      <div id="editControls" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="src-pills">
+          <button class="src-pill" id="pillImg" onclick="setSrcMode('image')" style="display:none">🖼 Image</button>
+          <button class="src-pill active" id="pillVid" onclick="setSrcMode('video')">🎞 Load Video</button>
+        </div>
+        <label class="btn">
+          📁 Load
+          <input type="file" id="mediaInput" accept="video/*" onchange="onMediaPicked(event)" style="display:none">
+        </label>
+        <div style="width:1px;height:20px;background:var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-dim);">Label</span>
+        <input type="text" id="lblName" placeholder="Region name" style="width:96px;">
+        <span style="font-size:11px;color:var(--text-dim);">Threshold</span>
+        <input type="number" id="lblThresh" value="0.8" min="0" max="1" step="0.05" style="width:56px;">
+        <span style="font-size:11px;color:var(--text-dim);">Type</span>
+        <select id="lblHint" title="Template library candidate type; final OK/NG role is chosen in Monitor rule groups." style="width:96px;">
+          <option value="OK" selected>OK 候選</option>
+          <option value="NG">NG 候選</option>
+          <option value="NEUTRAL">一般</option>
+        </select>
+        <span style="font-size:11px;color:var(--text-dim);font-style:italic;">Drag to draw</span>
+      </div>
+
+      <div style="flex:1"></div>
+      <div id="saveControls" style="display:none;gap:8px;">
+        <button class="btn" onclick="cancelEdit()">✕ Cancel</button>
+        <button class="btn success" onclick="saveRegions()">💾 Save</button>
+      </div>
+    </div>
+
+    <!-- Video seek bar (shown in edit mode when video is ready) -->
+    <div id="videoControls">
+      <button class="btn sm" id="vidPlayBtn" onclick="toggleLabelPlay()">▶</button>
+      <input type="range" id="videoSeek" min="0" value="0" step="0.001"
+             oninput="onVideoSeekInput(this.value)">
+      <span id="videoTimecode">00:00 / 00:00</span>
+      <button class="btn sm" onclick="captureFrame()" title="Capture this frame as reference">📷 Capture Frame</button>
+      <button class="btn sm" onclick="pinCurrentFrame()" title="Keep this frame in the workspace so you can label another frame afterwards without losing it">📌 Pin to workspace</button>
+      <button class="btn sm" id="backToLiveBtn" onclick="backToLiveVideo()" style="display:none" title="Resume scrubbing the video">🎬 Back to video</button>
+    </div>
+
+    <div id="captureStrip" style="display:none;gap:8px;align-items:center;padding:6px 4px;overflow-x:auto;">
+      <span style="font-size:11px;color:var(--muted,#7590a4);white-space:nowrap;">Workspace frames:</span>
+      <div id="captureStripItems" style="display:flex;gap:6px;"></div>
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="no-img-msg" id="noImgMsg">
+        <div class="icon">🖼</div>
+        <p>Select a product, then load an image or video</p>
+      </div>
+      <div class="canvas-container" id="canvasCtr" style="display:none;">
+        <video id="labelVideo" muted playsinline preload="metadata"
+               style="display:none;pointer-events:none;background:#000;"></video>
+        <canvas id="mainCanvas"></canvas>
+        <canvas id="overlayCanvas"></canvas>
+        <canvas id="drawCanvas"></canvas>
+      </div>
+    </div>
+
+    <div class="region-panel">
+      <div class="region-panel-head">
+        <span>Regions</span>
+        <div style="flex:1"></div>
+        <span id="regionCount" style="font-weight:400;font-size:11px;text-transform:none;letter-spacing:0;"></span>
+      </div>
+      <div class="region-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Thumb</th><th>Label</th><th>Type</th><th>X</th><th>Y</th><th>W</th><th>H</th>
+              <th>Threshold</th>
+              <th title="Search margin: 0=full image, >0=search within ROI ±N px">Margin</th>
+              <th id="thDel">Action</th>
+            </tr>
+          </thead>
+          <tbody id="regionBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div><!-- /editorTab -->
+
+<!-- ══════ INFER TAB ══════ -->
+<div id="inferTab" style="display:none;flex:1;">
+  <div class="infer-left">
+    <div class="form-group">
+      <label>Select Product</label>
+      <select id="inferProduct"><option value="">-- Select --</option></select>
+    </div>
+    <div class="form-group">
+      <label>Method<label>
+      <select id="inferMethod">
+        <option value="TM_CCOEFF_NORMED">TM_CCOEFF_NORMED (recommended)</option>
+        <option value="TM_CCORR_NORMED">TM_CCORR_NORMED</option>
+        <option value="TM_SQDIFF_NORMED">TM_SQDIFF_NORMED</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Test Source<label>
+      <div class="src-pills">
+        <button class="src-pill" id="inferPillImg" onclick="setInferSrc('image')" style="display:none">🖼 Image</button>
+        <button class="src-pill active" id="inferPillVid" onclick="setInferSrc('video')">🎞 Video</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="btn" style="width:100%;justify-content:center;">
+        📁 Load Media
+        <input type="file" id="inferMediaInput" accept="video/*" onchange="onInferMediaPicked(event)" style="display:none">
+      </label>
+    </div>
+    <div id="inferThumb" style="display:none;">
+      <img id="inferThumbImg" style="width:100%;border-radius:4px;border:1px solid var(--border);">
+      <div id="inferThumbInfo" style="margin-top:4px;font-size:11px;color:var(--text-dim);"></div>
+    </div>
+    <div id="inferVideoOpts" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+        <span style="color:var(--text-dim);">Infer Rate</span>
+        <select id="inferFpsSelect" style="flex:1;">
+          <option value="0">Native fps (all frames)</option>
+          <option value="1">1 fps</option>
+          <option value="2" selected>2 fps</option>
+          <option value="5">5 fps</option>
+          <option value="10">10 fps</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn primary" style="width:100%;justify-content:center;" id="runBtn" onclick="runInference()">▶ Run Inference</button>
+    <div id="inferResults"></div>
+  </div>
+  <div class="infer-right">
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--panel);
+                border-bottom:1px solid var(--border);flex-shrink:0;">
+      <span style="font-size:11px;color:var(--text-dim);font-weight:700;letter-spacing:.8px;text-transform:uppercase;">Result Image</span>
+      <div style="flex:1"></div>
+      <span id="frameInfo" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);"></span>
+      <div class="live-badge" id="liveBadge"><div class="live-dot"></div>LIVE</div>
+    </div>
+    <div class="infer-canvas-wrap">
+      <div class="no-img-msg" id="inferNoMsg"><div class="icon">🔍</div><p>Run inference to see results</p></div>
+      <img id="inferResultImg">
+    </div>
+    <div id="inferVideoControls">
+      <button class="btn sm" id="inferPlayBtn" onclick="toggleInferPlay()" title="Play / Pause">▶</button>
+      <button class="btn sm" id="inferStepBtn" onclick="inferStep()" title="Step +1 frame">▶|</button>
+      <input type="range" id="inferSeek" min="0" value="0" step="0.001">
+      <span id="inferTimecode">00:00 / 00:00</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ LOGS TAB ══════ -->
+<div id="logsTab" style="display:none;flex:1;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+    <span style="font-size:13px;font-weight:700;">Inference Logs</span>
+    <div style="flex:1"></div>
+    <button class="btn sm" onclick="loadLogs()">↻ Refresh</button>
+  </div>
+  <table class="log-table">
+    <thead><tr><th>#</th><th>Serial</th><th>Name</th><th>Result</th><th>Time</th></tr></thead>
+    <tbody id="logsBody"></tbody>
+  </table>
+</div>
+
+</div><!-- /main -->
+
+<div class="statusbar">
+  <span id="statusMsg">Ready</span>
+  <div style="flex:1"></div>
+  <span id="cursorPos" style="font-family:var(--font-mono);"></span>
+</div>
+</div><!-- /app -->
+
+<div class="modal-bg" id="addModal">
+  <div class="modal">
+    <h3>Add Product</h3>
+    <div class="fg">
+      <label>Product <span style="color:var(--danger)">*</span></label>
+      <input type="text" id="newSerial" placeholder="e.g. SN-001">
+    </div>
+    <div class="fg">
+      <label>Serial <span style="color:var(--danger)">*</span></label>
+      <input type="text" id="newName" placeholder="e.g. Board Type A">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitAdd()">Add</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Shared vision / zoom settings -->
+<div class="modal-bg" id="visionModalBg" onclick="closeVisionPanel()" style="display:none;">
+  <div class="modal" onclick="event.stopPropagation()" style="min-width:420px;max-width:520px;">
+    <h3>影像 / Digital Zoom 設定</h3>
+    <div class="fg">
+      <label><input type="checkbox" id="vzEnabled"> 啟用數位變焦</label>
+    </div>
+    <div class="fg">
+      <label>Zoom 倍率 1.0 ~ 4.0</label>
+      <input type="number" id="vzFactor" min="1" max="4" step="0.1" value="1.0">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="fg" style="flex:1;">
+        <label>中心 X 0.05 ~ 0.95</label>
+        <input type="number" id="vzCenterX" min="0.05" max="0.95" step="0.01" value="0.5">
+      </div>
+      <div class="fg" style="flex:1;">
+        <label>中心 Y 0.05 ~ 0.95</label>
+        <input type="number" id="vzCenterY" min="0.05" max="0.95" step="0.01" value="0.5">
+      </div>
+    </div>
+    <div style="font-size:12px;line-height:1.55;color:var(--text-dim);border:1px solid var(--border);padding:8px;border-radius:6px;margin-top:8px;">
+      這份設定會同時影響：標註端參考圖、monitor live preview、infer_runner 推論與存圖。<br>
+      <b style="color:var(--accent);">改變 zoom 後，請重新擷取參考圖並重新標註 ROI/template。</b>
+    </div>
+    <div id="visionMsg" style="font-size:12px;color:var(--text-dim);min-height:16px;margin-top:10px;"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeVisionPanel()">Cancel</button>
+      <button class="btn primary" onclick="saveVisionConfig()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden video element for frame capture -->
+<script>
+// ══════════════════════════════════════════════════════════════
+// Design principle:
+//  state.regions x/y/w/h are always original pixel coords
+//  (as stored in DB, not scaled)
+//  Only multiply by scale when drawing; never write back to state.regions
+// ══════════════════════════════════════════════════════════════
+// Use the TM-Inspect namespace when the UI is mounted behind firmware nginx.
+// /tm-app/api/... is stripped by nginx and reaches Flask as /api/...
+const APP_BASE = location.pathname === '/tm-app' || location.pathname.startsWith('/tm-app/')
+  ? '/tm-app'
+  : '';
+const API = APP_BASE;
+
+const S = {           // state
+  products: [],
+  selectedPid: null,
+  editMode: false,
+  // regions[i] = { id?, label, sample_hint, x, y, w, h, threshold, search_margin, _sel }
+  // coords = original pixels, no scale
+  regions: [],
+  scale: 1,
+  imgLoaded: false,
+  srcB64: null,          // original-resolution b64, used for template crop on save
+  // Pinned captures: lets one labeling session safely hold boxes drawn on more than
+  // one frame (same or different videos) without them contaminating each other.
+  // Each entry: { id, b64, thumb, label, ts }. Optional — if the user never pins
+  // anything, behavior is unchanged from before (single implicit frame).
+  captures: [],
+  activeCaptureId: null,
+  activeCaptureB64: null,
+  drawing: false, drawStart: null, drawCur: null,
+  srcMode: 'video',      // PC video-only build
+  lblVideoReady: false,
+  lblVideoName: '',
+  lblVideoError: '',
+  lblFallbackFile: null,
+  lblFallbackTimer: 0,
+  lblFallbackStarting: false,
+  lblServerMode: false,
+  lblServerToken: null,
+  lblServerDuration: 0,
+  lblServerFps: 25,
+  lblServerTime: 0,
+  lblServerPlaying: false,
+  lblServerFrameB64: '',
+  lblServerReqSeq: 0,
+  lblServerBusy: false,
+  lblServerPlayWall: 0,
+  lblServerPlayStart: 0,
+  inferSrcMode: 'video',
+  inferSrcB64: null,
+  inferVideoToken: null,
+  inferVideoDuration: 0,
+  inferVideoFps: 25,
+  inferVideoReady: false,
+  inferEs: null,
+  inferPlaying: false,
+  vision: { digital_zoom_enabled:false, digital_zoom:1.0, zoom_center_x:0.5, zoom_center_y:0.5 },
+};
+
+let MC, OC, DC, Mctx, Octx, Dctx;
+let LV;   // label video element
+let labelUiRaf = 0;
+
+// ──────────────────────────────────────────────
+// INIT
+// ──────────────────────────────────────────────
+function init() {
+  MC = document.getElementById('mainCanvas');
+  OC = document.getElementById('overlayCanvas');
+  DC = document.getElementById('drawCanvas');
+  Mctx = MC.getContext('2d');
+  Octx = OC.getContext('2d');
+  Dctx = DC.getContext('2d');
+  LV = document.getElementById('labelVideo');
+
+  DC.addEventListener('mousedown', drawStart);
+  DC.addEventListener('mousemove', drawMove);
+  DC.addEventListener('mouseup',   drawEnd);
+  DC.addEventListener('mouseleave', drawEnd);
+  DC.addEventListener('mousemove', updateCursor);
+
+  // ── Label video events ──────────────────────────
+  LV.addEventListener('loadedmetadata', () => {
+    clearTimeout(S.lblFallbackTimer);
+    S.lblServerMode = false;
+    S.lblVideoReady = Number.isFinite(LV.duration) && LV.videoWidth > 0 && LV.videoHeight > 0;
+    document.getElementById('videoSeek').max = Number.isFinite(LV.duration) ? LV.duration : 0;
+    document.getElementById('videoSeek').value = 0;
+    _layoutLabelVideo();
+    _updateLblTimecode();
+    if (S.editMode && S.lblVideoReady) showVideoBar(true);
+    setStatus(`Video ready: ${S.lblVideoName || 'local file'}  ${LV.videoWidth}×${LV.videoHeight}  Duration: ${fmt(LV.duration)}`);
+  });
+  // loadedmetadata does not guarantee that the first frame is decodable. Capture only
+  // after loadeddata/canplay so the page never stays blank after a valid video is chosen.
+  LV.addEventListener('loadeddata', () => {
+    clearTimeout(S.lblFallbackTimer);
+    if (!S.lblVideoReady || S.lblServerMode) return;
+    _captureToCanvas();
+  });
+  LV.addEventListener('timeupdate', () => {
+    if (!S.lblVideoReady || !LV.paused) return;
+    document.getElementById('videoSeek').value = LV.currentTime;
+    _updateLblTimecode();
+  });
+  LV.addEventListener('seeked', () => {
+    if (S.lblVideoReady && LV.paused) _captureToCanvas();
+  });
+  LV.addEventListener('play', () => {
+    _showMovingLabelVideo(true);
+    _startLabelUiLoop();
+    setStatus(`Playing ${S.lblVideoName || 'video'} — pause or Capture Frame before drawing ROI.`);
+  });
+  LV.addEventListener('pause', () => {
+    _stopLabelUiLoop();
+    document.getElementById('vidPlayBtn').textContent = '▶';
+  });
+  LV.addEventListener('ended', () => {
+    _stopLabelUiLoop();
+    _captureToCanvas();
+    setStatus(`Video ended @ ${fmt(LV.currentTime)}. Final frame captured.`);
+  });
+  LV.addEventListener('error', () => {
+    if (S.lblServerMode || S.lblFallbackStarting) return;
+    _stopLabelUiLoop();
+    const code = LV.error ? LV.error.code : 0;
+    S.lblVideoError = `Browser cannot decode this video (MediaError ${code || 'unknown'}).`;
+    if (S.lblFallbackFile) {
+      setStatus(`${S.lblVideoError} Switching to server-frame compatibility mode…`);
+      _startServerLabelFallback(S.lblFallbackFile);
+    } else {
+      S.lblVideoReady = false;
+      showVideoBar(false);
+      setStatus(`${S.lblVideoError} Convert to MP4/H.264 or WebM/VP8-VP9, then reload.`);
+    }
+  });
+
+  loadVisionConfig().finally(() => {
+    loadProducts();
+    applyEditModeUI();
+  });
+}
+
+// ──────────────────────────────────────────────
+// TAB
+// ──────────────────────────────────────────────
+function switchTab(tab) {
+  if (tab !== 'editor' && LV && !LV.paused) { LV.pause(); _captureToCanvas(); }
+  document.getElementById('editorTab').style.display = tab==='editor' ? 'flex' : 'none';
+  document.getElementById('inferTab').style.display  = tab==='infer'  ? 'flex' : 'none';
+  document.getElementById('logsTab').style.display   = tab==='logs'   ? 'flex' : 'none';
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>
+    b.classList.toggle('active', ['editor','infer','logs'][i]===tab));
+  if (tab==='infer') refreshInferList();
+  if (tab==='logs')  loadLogs();
+}
+
+// ──────────────────────────────────────────────
+// PRODUCTS
+// ──────────────────────────────────────────────
+async function loadProducts() {
+  const r = await fetch(`${API}/api/products`);
+  S.products = await r.json();
+  renderProductList();
+  refreshInferList();
+}
+
+function renderProductList() {
+  const el = document.getElementById('productList');
+  el.innerHTML = '';
+  S.products.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'product-item' + (S.selectedPid===p.id ? ' selected' : '');
+    d.innerHTML = `
+      <div style="flex:1;min-width:0;">
+        <div class="p-serial">${esc(p.serial)}</div>
+        <div class="p-name">${esc(p.name||'—')}</div>
+        ${p.has_ref_img ? '<div class="p-hint">✓ Ref image saved</div>' : ''}
+      </div>
+      <button class="del-btn" onclick="delProduct(event,${p.id})">✕</button>`;
+    d.addEventListener('click', ()=>selectProduct(p));
+    el.appendChild(d);
+  });
+}
+
+function openAddProduct() {
+  document.getElementById('newSerial').value='';
+  document.getElementById('newName').value='';
+  document.getElementById('addModal').classList.add('open');
+  setTimeout(()=>document.getElementById('newSerial').focus(), 50);
+}
+function closeModal() { document.getElementById('addModal').classList.remove('open'); }
+
+async function submitAdd() {
+  const serial = document.getElementById('newSerial').value.trim();
+  const name   = document.getElementById('newName').value.trim();
+  if (!serial) { alert('Serial number is required'); return; }
+  const r = await fetch(`${API}/api/products`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({serial, name})
+  });
+  const d = await r.json();
+  if (!r.ok) { alert(d.error); return; }
+  closeModal();
+  await loadProducts();
+  const found = S.products.find(p=>p.id===d.id);
+  if (found) selectProduct(found);
+}
+
+async function delProduct(e, pid) {
+  e.stopPropagation();
+  if (!confirm('Delete this product and all its regions?')) return;
+  await fetch(`${API}/api/products/${pid}`, {method:'DELETE'});
+  if (S.selectedPid===pid) resetAll();
+  await loadProducts();
+}
+
+// ──────────────────────────────────────────────
+// SELECT PRODUCT
+// Flow: reset → fetch regions (original coords) → restore ref image → draw overlay
+// ──────────────────────────────────────────────
+async function selectProduct(p) {
+  if (S.selectedPid === p.id) return;   // same product, skip
+  S.selectedPid = p.id;
+  S.editMode = false;
+  resetAll();
+  renderProductList();
+  applyEditModeUI();
+
+  // 1. Restore ref image first, as the baseline (matches pre-capture-group
+  //    behavior for products that have never used the multi-frame workflow).
+  await restoreRefImg(p.id);
+
+  // 2. Fetch regions + persisted capture groups. If this product has capture
+  //    groups, this deliberately overrides the canvas again to show the first
+  //    group's frame instead — must run AFTER restoreRefImg(), otherwise
+  //    restoreRefImg's reference-image display would silently win and leave
+  //    S.activeCaptureId pointing at a group whose frame isn't what's on screen.
+  await fetchRegions(p.id);
+
+  setStatus(`Selected: ${p.serial} ${p.name||''}`);
+}
+
+// Fetch regions only, store original coords
+async function fetchRegions(pid) {
+  const r = await fetch(`${API}/api/products/${pid}/regions`);
+  const rows = await r.json();
+  // capture_group_id (persisted) becomes _captureId, the same field the live pin
+  // session already uses for filtering — this is what lets a reloaded product's
+  // regions stay correctly separated by source frame instead of all collapsing
+  // into "no group" and showing overlaid together.
+  S.regions = rows.map(r => ({...r, sample_hint: cleanSampleHint(r.sample_hint), _sel: false,
+                               _captureId: r.capture_group_id || null}));
+
+  // Load persisted capture groups (if this product has used the multi-frame
+  // workflow before) so the capture strip, canvas, and overlay all agree on
+  // which frame's regions are currently being shown.
+  S.captures = [];
+  S.activeCaptureId = null;
+  S.activeCaptureB64 = null;
+  try {
+    const gr = await fetch(`${API}/api/products/${pid}/capture-groups`);
+    const groups = await gr.json();
+    S.captures = groups.map(g => ({
+      id: g.id,
+      b64: g.thumb_b64 || '',
+      ts: g.label || `畫面 #${g.id}`,
+    }));
+    if (S.captures.length) {
+      // Default to the first captured frame so there's something to see right
+      // away, instead of an empty canvas until the user picks one manually.
+      S.activeCaptureId = S.captures[0].id;
+      S.activeCaptureB64 = S.captures[0].b64;
+      if (S.activeCaptureB64) {
+        S.srcB64 = S.activeCaptureB64;
+        S.imgLoaded = true;
+        displayImg(S.activeCaptureB64);
+      }
+      document.getElementById('backToLiveBtn').style.display = 'inline-block';
+    }
+  } catch (e) { /* no persisted groups yet (or an old product) — fine, falls back to legacy ungrouped view */ }
+  renderCaptureStrip();
+
+  renderTable();
+  // If image is already shown, redraw overlay immediately
+  if (S.imgLoaded) drawOverlay();
+  // Regions loaded from the server were saved in a past session — they never
+  // went through drawEnd(), so they have no _thumbB64 yet. Fetch each one's
+  // already-saved template image (not a fresh crop, so it's always exactly
+  // right regardless of which frame it originally came from) and fill it in.
+  try {
+    const tr = await fetch(`${API}/api/products/${pid}/regions/thumbs`);
+    const thumbs = await tr.json();
+    let changed = false;
+    S.regions.forEach(reg => {
+      if (reg.id && thumbs[reg.id]) {
+        const b64 = thumbs[reg.id];
+        reg._thumbB64 = b64.startsWith('data:') ? b64 : ('data:image/png;base64,' + b64);
+        changed = true;
+      }
+    });
+    if (changed) renderTable();
+  } catch (e) { /* thumbnails are a display nicety; don't block loading regions over this */ }
+}
+
+
+// ──────────────────────────────────────────────
+// SHARED VISION CONFIG / DIGITAL ZOOM
+// ──────────────────────────────────────────────
+function _clamp(v, lo, hi, def) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(lo, Math.min(hi, n));
+}
+function normalizeVision(v) {
+  v = v || {};
+  return {
+    digital_zoom_enabled: !!v.digital_zoom_enabled,
+    digital_zoom: Math.round(_clamp(v.digital_zoom ?? 1.0, 1, 4, 1) * 100) / 100,
+    zoom_center_x: Math.round(_clamp(v.zoom_center_x ?? 0.5, 0.05, 0.95, 0.5) * 1000) / 1000,
+    zoom_center_y: Math.round(_clamp(v.zoom_center_y ?? 0.5, 0.05, 0.95, 0.5) * 1000) / 1000,
+  };
+}
+async function loadVisionConfig() {
+  try {
+    const r = await fetch(`${API}/api/vision-config`);
+    if (r.ok) S.vision = normalizeVision(await r.json());
+  } catch (_) {}
+  updateVisionUI();
+}
+function updateVisionUI() {
+  const v = S.vision = normalizeVision(S.vision);
+  const badge = document.getElementById('visionBadge');
+  if (badge) {
+    badge.textContent = v.digital_zoom_enabled ? `Zoom ${v.digital_zoom}x` : 'Zoom OFF';
+    badge.style.color = v.digital_zoom_enabled ? 'var(--accent)' : 'var(--text-dim)';
+    badge.style.borderColor = v.digital_zoom_enabled ? 'rgba(240,165,0,.5)' : 'var(--border)';
+  }
+  ['vzEnabled','vzFactor','vzCenterX','vzCenterY'].forEach(id => { if (!document.getElementById(id)) return; });
+  if (document.getElementById('vzEnabled')) {
+    document.getElementById('vzEnabled').checked = v.digital_zoom_enabled;
+    document.getElementById('vzFactor').value = v.digital_zoom;
+    document.getElementById('vzCenterX').value = v.zoom_center_x;
+    document.getElementById('vzCenterY').value = v.zoom_center_y;
+  }
+}
+function openVisionPanel() {
+  updateVisionUI();
+  document.getElementById('visionModalBg').style.display = 'flex';
+}
+function closeVisionPanel() { document.getElementById('visionModalBg').style.display = 'none'; }
+async function saveVisionConfig() {
+  const cfg = normalizeVision({
+    digital_zoom_enabled: document.getElementById('vzEnabled').checked,
+    digital_zoom: document.getElementById('vzFactor').value,
+    zoom_center_x: document.getElementById('vzCenterX').value,
+    zoom_center_y: document.getElementById('vzCenterY').value,
+  });
+  const msg = document.getElementById('visionMsg');
+  msg.textContent = 'Saving…';
+  try {
+    const r = await fetch(`${API}/api/vision-config`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || `HTTP ${r.status}`);
+    S.vision = normalizeVision(d);
+    updateVisionUI();
+    msg.style.color = 'var(--accent2)';
+    msg.textContent = '已套用。請重新擷取參考圖並重新標註 ROI/template。';
+    setStatus('Vision config updated. Re-capture reference image before production inspection.');
+    setTimeout(closeVisionPanel, 600);
+  } catch (e) {
+    msg.style.color = 'var(--danger)';
+    msg.textContent = '保存失敗：' + e.message;
+  }
+}
+function applyDigitalZoomToCanvas(srcCanvas) {
+  const v = normalizeVision(S.vision);
+  if (!v.digital_zoom_enabled || v.digital_zoom <= 1.001) return srcCanvas;
+  const w = srcCanvas.width, h = srcCanvas.height;
+  const cropW = Math.max(2, Math.round(w / v.digital_zoom));
+  const cropH = Math.max(2, Math.round(h / v.digital_zoom));
+  const cx = Math.round(v.zoom_center_x * w);
+  const cy = Math.round(v.zoom_center_y * h);
+  const x1 = Math.max(0, Math.min(w - cropW, cx - Math.floor(cropW / 2)));
+  const y1 = Math.max(0, Math.min(h - cropH, cy - Math.floor(cropH / 2)));
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  out.getContext('2d').drawImage(srcCanvas, x1, y1, cropW, cropH, 0, 0, w, h);
+  return out;
+}
+function transformImageB64(b64) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const out = applyDigitalZoomToCanvas(c);
+      resolve(out.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(b64);
+    img.src = b64;
+  });
+}
+
+// ──────────────────────────────────────────────
+// RESTORE REF IMAGE
+// ──────────────────────────────────────────────
+async function restoreRefImg(pid) {
+  try {
+    const r = await fetch(`${API}/api/products/${pid}/refimg`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.image_b64) {
+      S.srcB64 = d.image_b64;   // Restore here so re-editing does not require reloading
+      await displayImg(d.image_b64);
+    }
+  } catch(_) {}
+}
+
+// ──────────────────────────────────────────────
+// DISPLAY IMAGE
+// Accept base64, compute scale, draw to mainCanvas,
+// draw overlay using S.regions (original coords) × scale.
+// Never mutate S.regions coords.
+// ──────────────────────────────────────────────
+function displayImg(b64) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const wrap = document.getElementById('canvasWrap');
+      const maxW = wrap.clientWidth  - 24;
+      const maxH = wrap.clientHeight - 24;
+      S.scale = Math.min(1, maxW / img.width, maxH / img.height);
+      const dW = Math.round(img.width  * S.scale);
+      const dH = Math.round(img.height * S.scale);
+      [MC, OC, DC].forEach(c => { c.width=dW; c.height=dH; });
+      Mctx.drawImage(img, 0, 0, dW, dH);
+      S.imgLoaded = true;
+      document.getElementById('canvasCtr').style.display = 'inline-block';
+      document.getElementById('noImgMsg').style.display = 'none';
+      renderTable();   // redraw table (shows original pixel coords)
+      drawOverlay();
+      setStatus(`Image: ${img.width}×${img.height}px  Scale: ${(S.scale*100).toFixed(0)}%`);
+      resolve();
+    };
+    img.onerror = resolve;
+    img.src = b64;
+  });
+}
+
+// ──────────────────────────────────────────────
+// SAVE REGIONS
+// Send S.regions (original coords) and current canvas (scaled view)
+// Backend stores reference_img_b64 and template crops
+// ──────────────────────────────────────────────
+async function saveRegions() {
+  if (S.lblVideoReady && S.lblServerMode && S.lblServerPlaying) { await _pauseServerLabel(true); }
+  else if (S.lblVideoReady && LV && !LV.paused) { LV.pause(); _captureToCanvas(); }
+  if (!S.selectedPid)   { alert('Please select a product first'); return; }
+  if (!S.imgLoaded)     { alert('Please load a reference image first'); return; }
+  if (!S.srcB64)        { alert('Please reload the image before saving (missing original resolution)'); return; }
+
+  // Capture groups created live this session (via Pin / auto-pin-on-first-draw)
+  // only exist in the browser so far — they have a synthetic "cap_..." id, not a
+  // real database id. Any such group actually used by at least one region needs
+  // to become a real capture_groups row on save, so "which frame was this drawn
+  // on" survives a page reload instead of only lasting for this one session.
+  const usedSyntheticIds = new Set(
+    S.regions.filter(r => typeof r._captureId === 'string' && r._captureId.startsWith('cap_'))
+             .map(r => r._captureId)
+  );
+  const newGroups = {};
+  for (const capId of usedSyntheticIds) {
+    const cap = S.captures.find(c => c.id === capId);
+    if (!cap) continue;
+    // Store the capture at full resolution, not a downscaled preview. Region
+    // coordinates are saved in the ORIGINAL frame's pixel space; if the group's
+    // stored image were smaller, re-displaying it later computes S.scale against
+    // the wrong (smaller) dimensions and every box renders in the wrong place at
+    // the wrong size — that's the "labels are all skewed" bug this replaces.
+    // The capture strip's small icons are fine either way since the browser
+    // scales them down for display via CSS regardless of the source size.
+    newGroups[capId] = { label: cap.ts || '', thumb_b64: cap.b64 };
+  }
+
+  const payload = {
+    regions: S.regions.map(r => {
+      const out = {
+        id:            r.id,
+        label:         r.label,
+        x:             Math.round(r.x),
+        y:             Math.round(r.y),
+        w:             Math.round(r.w),
+        h:             Math.round(r.h),
+        threshold:     r.threshold,
+        search_margin: r.search_margin || 0,
+        sample_hint:   cleanSampleHint(r.sample_hint),
+      };
+      // Only regions drawn/recaptured in THIS session carry their own source
+      // frame. Already-saved regions (loaded from the server, never touched
+      // this session) send no source_image_b64 at all — the backend then keeps
+      // their existing template exactly as stored, instead of re-cropping them
+      // from whatever frame happens to be on screen right now.
+      if (r._srcB64) out.source_image_b64 = r._srcB64;
+      // Tell the backend which capture group this region belongs to: an existing
+      // persisted group (numeric id, loaded from the server) or one being created
+      // fresh in this same save (synthetic "cap_..." id, resolved via newGroups
+      // above). A region with neither stays ungrouped, same as before this feature.
+      if (typeof r._captureId === 'string' && r._captureId.startsWith('cap_')) {
+        out.capture_group_temp_key = r._captureId;
+      } else if (r._captureId) {
+        out.capture_group_id = r._captureId;
+      }
+      return out;
+    }),
+    image_b64: S.srcB64,   // sets the product's reference/display image; also the
+                            // fallback crop source for any legacy caller that omits
+                            // per-region source_image_b64
+    new_capture_groups: newGroups,
+  };
+
+  const res = await fetch(`${API}/api/products/${S.selectedPid}/regions`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const d = await res.json();
+  if (res.ok) {
+    const warnMsg = (d.warnings && d.warnings.length) ? `（${d.warnings.length} 個樣板被略過，見主控台）` : '';
+    if (d.warnings && d.warnings.length) console.warn('Save warnings:', d.warnings);
+    setStatus(`✅ Saved — ${d.count} region(s) ${warnMsg}`);
+    S.editMode = false;
+    applyEditModeUI();
+    // Re-fetch regions (ids updated) but keep srcB64 and imgLoaded
+    await fetchRegions(S.selectedPid);
+    await loadProducts();
+    renderProductList();
+  } else {
+    alert('Save failed: ' + (d.error||''));
+  }
+}
+
+function cancelEdit() {
+  S.editMode = false;
+  applyEditModeUI();
+  if (S.selectedPid) fetchRegions(S.selectedPid);
+}
+
+function delRegion(i) {
+  S.regions.splice(i, 1);
+  renderTable();
+  drawOverlay();
+}
+
+// ──────────────────────────────────────────────
+// EDIT MODE UI
+// ──────────────────────────────────────────────
+function toggleEditMode() {
+  if (!S.selectedPid) { alert('Please select a product first'); return; }
+  S.editMode = !S.editMode;
+  applyEditModeUI();
+}
+
+function applyEditModeUI() {
+  const em = S.editMode;
+  document.getElementById('editModeBtn').textContent = em ? '👁 Browse' : '✏ Edit';
+  document.getElementById('editModeBtn').className   = 'btn' + (em ? ' primary' : '');
+  document.getElementById('modeLabel').textContent   = em ? 'Edit Mode' : 'Browse Mode';
+  document.getElementById('modeLabel').style.background = em ? 'rgba(240,165,0,.18)' : 'rgba(48,54,61,.8)';
+  document.getElementById('modeLabel').style.color   = em ? 'var(--accent)' : 'var(--text-dim)';
+  document.getElementById('editControls').style.display = em ? 'flex' : 'none';
+  document.getElementById('saveControls').style.display = em ? 'flex' : 'none';
+  document.getElementById('thDel').style.display = '';
+  // Show video bar only in edit mode when video is ready
+  showVideoBar(em && S.lblVideoReady);
+  if (DC) DC.style.pointerEvents = em && !(S.lblServerMode ? S.lblServerPlaying : (LV && !LV.paused)) ? 'auto' : 'none';
+  renderTable();
+}
+
+// ──────────────────────────────────────────────
+// SOURCE MODE (label)
+// ──────────────────────────────────────────────
+function setSrcMode(mode) {
+  S.srcMode = mode;
+  document.getElementById('pillImg').classList.toggle('active', mode==='image');
+  document.getElementById('pillVid').classList.toggle('active', mode==='video');
+  document.getElementById('mediaInput').accept = mode==='image' ? 'image/*' : 'video/*';
+  if (mode==='image') showVideoBar(false);
+  else if (S.lblVideoReady && S.editMode) showVideoBar(true);
+}
+
+function showVideoBar(on) {
+  document.getElementById('videoControls').classList.toggle('show', on);
+}
+
+function onMediaPicked(e) {
+  const f = e.target.files[0]; if (!f) return;
+  e.target.value = '';
+  if (S.srcMode==='image') _loadImageFile(f);
+  else                      _loadLabelVideo(f);
+}
+
+// ──────────────────────────────────────────────
+// IMAGE FILE
+// ──────────────────────────────────────────────
+function _loadImageFile(file) {
+  const rd = new FileReader();
+  rd.onload = async ev => {
+    const b64 = await transformImageB64(ev.target.result);
+    S.srcB64 = b64;   // transformed full-resolution image for template crop on save
+    displayImg(b64);
+    if (S.vision.digital_zoom_enabled) setStatus(`Image loaded with digital zoom ${S.vision.digital_zoom}x. Save/re-label before production.`);
+  };
+  rd.readAsDataURL(file);
+}
+
+// ──────────────────────────────────────────────
+// LABEL VIDEO
+// ──────────────────────────────────────────────
+function _loadLabelVideo(file) {
+  _stopLabelUiLoop();
+  _stopServerLabelPlay();
+  _cleanupLabelServerToken();
+  clearTimeout(S.lblFallbackTimer);
+  S.lblFallbackFile = file;
+  S.lblFallbackStarting = true;
+  S.lblServerMode = false;
+  S.lblVideoReady = false;
+  S.lblVideoError = '';
+  S.lblVideoName = file.name || '';
+  S.srcB64 = null;          // never allow a new video to save the previous captured frame
+  S.imgLoaded = false;
+  if (MC) {
+    Mctx.clearRect(0, 0, MC.width, MC.height);
+    Octx.clearRect(0, 0, OC.width, OC.height);
+    Dctx.clearRect(0, 0, DC.width, DC.height);
+    MC.style.display = 'block';
+  }
+  document.getElementById('canvasCtr').style.display = 'none';
+  document.getElementById('noImgMsg').style.display = '';
+  showVideoBar(false);
+  document.getElementById('vidPlayBtn').textContent = '▶';
+
+  try { LV.pause(); } catch (_) {}
+  LV.removeAttribute('src');
+  LV.load();
+  if (LV._objUrl) {
+    URL.revokeObjectURL(LV._objUrl);
+    LV._objUrl = '';
+  }
+  LV._objUrl = URL.createObjectURL(file);
+  LV.src = LV._objUrl;
+  setStatus(`Loading video: ${file.name}…`);
+  LV.load();
+  S.lblFallbackStarting = false;
+  // Some browsers neither decode nor emit an immediate error for unsupported containers.
+  // Fall back to backend frame extraction after a bounded wait.
+  S.lblFallbackTimer = setTimeout(() => {
+    if (!S.imgLoaded && S.lblFallbackFile && !S.lblFallbackStarting && !S.lblServerMode) {
+      setStatus('Browser decoder did not become ready. Switching to server-frame compatibility mode…');
+      _startServerLabelFallback(S.lblFallbackFile);
+    }
+  }, 4500);
+}
+
+async function _cleanupLabelServerToken() {
+  const old = S.lblServerToken;
+  S.lblServerToken = null;
+  if (!old) return;
+  try {
+    await fetch(`${API}/api/video/delete`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({token: old}), keepalive: true,
+    });
+  } catch (_) {}
+}
+
+async function _startServerLabelFallback(file) {
+  if (!file || S.lblFallbackStarting) return;
+  S.lblFallbackStarting = true;
+  clearTimeout(S.lblFallbackTimer);
+  try {
+    S.lblVideoReady = false;
+    showVideoBar(false);
+    try { LV.pause(); } catch (_) {}
+    LV.style.display = 'none';
+    LV.removeAttribute('src');
+    LV.load();
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch(`${API}/api/video/upload`, {method:'POST', body:fd});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.token) throw new Error(d.error || `HTTP ${r.status}`);
+    S.lblServerMode = true;
+    S.lblServerToken = d.token;
+    S.lblServerDuration = Number(d.duration) || 0;
+    S.lblServerFps = Number(d.fps) || 25;
+    S.lblServerTime = 0;
+    S.lblServerPlaying = false;
+    S.lblVideoReady = true;
+    document.getElementById('videoSeek').max = S.lblServerDuration;
+    document.getElementById('videoSeek').value = 0;
+    document.getElementById('vidPlayBtn').textContent = '▶';
+    if (S.editMode) showVideoBar(true);
+    await _fetchServerLabelFrame(0, true);
+    setStatus(`Compatibility mode: ${file.name}  ${d.width}×${d.height}  ${Number(d.fps||0).toFixed(1)}fps  ${fmt(S.lblServerDuration)}. Preview is server-decoded.`);
+  } catch (err) {
+    S.lblServerMode = false;
+    S.lblVideoReady = false;
+    showVideoBar(false);
+    setStatus(`Video cannot be decoded in browser or server: ${err?.message || err}`);
+  } finally {
+    S.lblFallbackStarting = false;
+  }
+}
+
+async function _fetchServerLabelFrame(timeSec, capture=false) {
+  if (!S.lblServerMode || !S.lblServerToken) return false;
+  const target = Math.max(0, Math.min(S.lblServerDuration || 0, Number(timeSec) || 0));
+  const seq = ++S.lblServerReqSeq;
+  S.lblServerBusy = true;
+  try {
+    const r = await fetch(`${API}/api/video/frame?token=${encodeURIComponent(S.lblServerToken)}&time=${encodeURIComponent(target)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.image_b64) throw new Error(d.error || `HTTP ${r.status}`);
+    if (seq !== S.lblServerReqSeq) return false;
+    const b64 = await transformImageB64(d.image_b64);
+    if (seq !== S.lblServerReqSeq) return false;
+    S.lblServerTime = target;
+    S.lblServerFrameB64 = b64;
+    S.srcB64 = b64;
+    _clearActivePin();
+    S.imgLoaded = true;
+    await displayImg(b64);
+    document.getElementById('videoSeek').value = target;
+    _updateLblTimecode();
+    if (capture) setStatus(`Frame captured @ ${fmt(target)}  (server compatibility mode)`);
+    return true;
+  } catch (err) {
+    setStatus(`Server frame read failed: ${err?.message || err}`);
+    return false;
+  } finally {
+    if (seq === S.lblServerReqSeq) S.lblServerBusy = false;
+  }
+}
+
+function _stopServerLabelPlay() {
+  S.lblServerPlaying = false;
+  _stopLabelUiLoop();
+  document.getElementById('vidPlayBtn')?.replaceChildren(document.createTextNode('▶'));
+  if (DC) DC.style.pointerEvents = S.editMode ? 'auto' : 'none';
+}
+
+async function _pauseServerLabel(capture=true) {
+  if (!S.lblServerMode) return false;
+  S.lblServerPlaying = false;
+  _stopLabelUiLoop();
+  document.getElementById('vidPlayBtn').textContent = '▶';
+  if (DC) DC.style.pointerEvents = S.editMode ? 'auto' : 'none';
+  return capture ? await _fetchServerLabelFrame(S.lblServerTime, true) : true;
+}
+
+function _startServerLabelPlay() {
+  if (!S.lblServerMode || !S.lblVideoReady) return;
+  S.lblServerPlaying = true;
+  S.lblServerPlayWall = performance.now();
+  S.lblServerPlayStart = S.lblServerTime;
+  document.getElementById('vidPlayBtn').textContent = '⏸';
+  if (DC) DC.style.pointerEvents = 'none';
+  const tick = async () => {
+    if (!S.lblServerPlaying || !S.lblServerMode) return;
+    const elapsed = (performance.now() - S.lblServerPlayWall) / 1000;
+    const target = S.lblServerPlayStart + elapsed;
+    if (target >= S.lblServerDuration) {
+      S.lblServerTime = S.lblServerDuration;
+      await _pauseServerLabel(true);
+      setStatus('Compatibility-mode video ended. Final frame captured.');
+      return;
+    }
+    S.lblServerTime = target;
+    document.getElementById('videoSeek').value = target;
+    _updateLblTimecode();
+    if (!S.lblServerBusy) await _fetchServerLabelFrame(target, false);
+    if (S.lblServerPlaying) labelUiRaf = requestAnimationFrame(tick);
+  };
+  labelUiRaf = requestAnimationFrame(tick);
+  setStatus(`Playing ${S.lblVideoName || 'video'} in server compatibility mode — pause before drawing ROI.`);
+}
+
+function _layoutLabelVideo() {
+  if (!LV || !LV.videoWidth || !LV.videoHeight) return;
+  const wrap = document.getElementById('canvasWrap');
+  const maxW = Math.max(1, wrap.clientWidth - 24);
+  const maxH = Math.max(1, wrap.clientHeight - 24);
+  S.scale = Math.min(1, maxW / LV.videoWidth, maxH / LV.videoHeight);
+  const dW = Math.max(1, Math.round(LV.videoWidth * S.scale));
+  const dH = Math.max(1, Math.round(LV.videoHeight * S.scale));
+  LV.style.width = dW + 'px';
+  LV.style.height = dH + 'px';
+  [MC, OC, DC].forEach(c => { c.width = dW; c.height = dH; });
+  document.getElementById('canvasCtr').style.display = 'inline-block';
+  document.getElementById('noImgMsg').style.display = 'none';
+  drawOverlay();
+}
+
+function _showMovingLabelVideo(on) {
+  if (!LV || !MC) return;
+  _layoutLabelVideo();
+  LV.style.display = on ? 'block' : 'none';
+  MC.style.display = on ? 'none' : 'block';
+  if (DC) DC.style.pointerEvents = S.editMode && !on ? 'auto' : 'none';
+  drawOverlay();
+}
+
+function _startLabelUiLoop() {
+  _stopLabelUiLoop();
+  const tick = () => {
+    if (!LV || LV.paused || LV.ended || !S.lblVideoReady) {
+      labelUiRaf = 0;
+      return;
+    }
+    document.getElementById('videoSeek').value = LV.currentTime;
+    _updateLblTimecode();
+    labelUiRaf = requestAnimationFrame(tick);
+  };
+  labelUiRaf = requestAnimationFrame(tick);
+}
+
+function _stopLabelUiLoop() {
+  if (labelUiRaf) cancelAnimationFrame(labelUiRaf);
+  labelUiRaf = 0;
+}
+
+function _updateLblTimecode() {
+  const cur = S.lblServerMode ? S.lblServerTime : LV.currentTime;
+  const dur = S.lblServerMode ? S.lblServerDuration : (LV.duration || 0);
+  document.getElementById('videoTimecode').textContent = fmt(cur) + ' / ' + fmt(dur);
+}
+
+function onVideoSeekInput(val) {
+  if (!S.lblVideoReady) return;
+  if (S.lblServerMode) {
+    _stopServerLabelPlay();
+    const target = Math.max(0, Math.min(S.lblServerDuration || 0, parseFloat(val) || 0));
+    S.lblServerTime = target;
+    _updateLblTimecode();
+    clearTimeout(document.getElementById('videoSeek')._previewTimer);
+    document.getElementById('videoSeek')._previewTimer = setTimeout(() => _fetchServerLabelFrame(target, true), 120);
+    return;
+  }
+  const target = Math.max(0, Math.min(Number(LV.duration) || 0, parseFloat(val) || 0));
+  LV.currentTime = target;
+  _updateLblTimecode();
+}
+
+async function toggleLabelPlay() {
+  if (!S.lblVideoReady) {
+    setStatus(S.lblVideoError || 'Video is not ready.');
+    return;
+  }
+  const btn = document.getElementById('vidPlayBtn');
+  if (S.lblServerMode) {
+    if (S.lblServerPlaying) await _pauseServerLabel(true);
+    else _startServerLabelPlay();
+    return;
+  }
+  if (LV.paused) {
+    try {
+      await LV.play();
+      btn.textContent = '⏸';
+    } catch (err) {
+      btn.textContent = '▶';
+      setStatus(`Unable to play video: ${err?.message || err}`);
+    }
+  } else {
+    LV.pause();
+    btn.textContent = '▶';
+    _captureToCanvas();
+  }
+}
+
+async function captureFrame() {
+  if (!S.lblVideoReady) return;
+  if (S.lblServerMode) { await _pauseServerLabel(true); return; }
+  if (!LV.paused) LV.pause();
+  document.getElementById('vidPlayBtn').textContent = '▶';
+  _captureToCanvas();
+}
+
+// Draw current LV frame to mainCanvas and update the exact full-resolution frame used by Save.
+function _captureToCanvas() {
+  const vw = LV.videoWidth, vh = LV.videoHeight;
+  if (!vw || !vh || LV.readyState < 2) return false;
+  // A genuinely new frame is being captured — any previously pinned frame is no
+  // longer "what's on screen", so stop tagging new boxes to it.
+  _clearActivePin();
+  const tmp = document.createElement('canvas');
+  tmp.width = vw; tmp.height = vh;
+  try {
+    tmp.getContext('2d').drawImage(LV, 0, 0, vw, vh);
+  } catch (err) {
+    setStatus(`Frame capture failed: ${err?.message || err}`);
+    return false;
+  }
+  const out = applyDigitalZoomToCanvas(tmp);
+  const b64 = out.toDataURL('image/png');
+  S.srcB64 = b64;
+  S.imgLoaded = true;
+  _showMovingLabelVideo(false);
+  const capturedAt = LV.currentTime;
+  const ztxt = S.vision.digital_zoom_enabled ? `  Zoom ${S.vision.digital_zoom}x` : '';
+  displayImg(b64).then(() => {
+    setStatus(`Frame captured @ ${fmt(capturedAt)}  (${vw}×${vh})${ztxt}`);
+  });
+  return true;
+}
+
+// ──────────────────────────────────────────────
+// PINNED CAPTURES
+// Optional safety net for labeling more than one frame in a single session.
+// Not used at all unless the user clicks "Pin to workspace" — the default,
+// single-frame workflow behaves exactly as before.
+// ──────────────────────────────────────────────
+function _clearActivePin() {
+  S.activeCaptureId = null;
+  S.activeCaptureB64 = null;
+  const btn = document.getElementById('backToLiveBtn');
+  if (btn) btn.style.display = 'none';
+  renderCaptureStrip();
+}
+
+// Current position within whatever media is loaded, as "M:SS" — used to label
+// each region with *which second of the video* it was drawn on. Returns '' for
+// a still image (no timeline) rather than a misleading 0:00.
+function currentVideoTimeLabel() {
+  let t = null;
+  if (S.lblServerMode) t = S.lblServerTime;
+  else if (LV && S.lblVideoReady) t = LV.currentTime;
+  if (t === null || !isFinite(t)) return '';
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// Crops (x,y,w,h) out of a full-frame data URL into a small thumbnail data URL.
+
+function makeThumb(srcB64, x, y, w, h, maxSize = 64) {
+  return new Promise(resolve => {
+    if (!srcB64) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(maxSize / w, maxSize / h, 4);
+      const tw = Math.max(1, Math.round(w * scale)), th = Math.max(1, Math.round(h * scale));
+      const c = document.createElement('canvas');
+      c.width = tw; c.height = th;
+      const ctx = c.getContext('2d');
+      try {
+        ctx.drawImage(img, x, y, w, h, 0, 0, tw, th);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      } catch (e) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = srcB64;
+  });
+}
+
+// Creates a capture entry for the current frame if one isn't already active —
+// used so every region always resolves to a real, concrete capture rather than
+// a "null means whatever's live right now" state whose meaning silently shifts
+// the moment the user pins something else later.
+function _ensureActiveCapture() {
+  if (S.activeCaptureId) return S.activeCaptureId;
+  if (!S.srcB64) return null;
+  const id = 'cap_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const timeLabel = currentVideoTimeLabel();
+  S.captures.push({ id, b64: S.srcB64, ts: timeLabel || new Date().toLocaleTimeString() });
+  S.activeCaptureId = id;
+  S.activeCaptureB64 = S.srcB64;
+  document.getElementById('backToLiveBtn').style.display = 'inline-block';
+  renderCaptureStrip();
+  return id;
+}
+
+function pinCurrentFrame() {
+  if (!S.srcB64) { alert('Load or capture a frame first'); return; }
+  const id = 'cap_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const timeLabel = currentVideoTimeLabel();
+  S.captures.push({ id, b64: S.srcB64, ts: timeLabel || new Date().toLocaleTimeString() });
+  S.activeCaptureId = id;
+  S.activeCaptureB64 = S.srcB64;
+  document.getElementById('backToLiveBtn').style.display = 'inline-block';
+  renderCaptureStrip();
+  setStatus(timeLabel
+    ? `📌 Pinned frame @ ${timeLabel} — draw boxes here, then scrub/capture another frame and Pin again to add more.`
+    : `📌 Pinned frame — draw boxes here, then scrub/capture another frame and Pin again to add more.`);
+}
+
+function selectCapture(id) {
+  const cap = S.captures.find(c => c.id === id);
+  if (!cap) return;
+  S.activeCaptureId = id;
+  S.activeCaptureB64 = cap.b64;
+  S.srcB64 = cap.b64;
+  S.imgLoaded = true;
+  displayImg(cap.b64);
+  document.getElementById('backToLiveBtn').style.display = 'inline-block';
+  renderCaptureStrip();
+}
+
+function removeCapture(id, ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const cap = S.captures.find(c => String(c.id) === String(id));
+  if (!cap) return;
+  const boxCount = S.regions.filter(r => String(r._captureId || '') === String(id)).length;
+  const msg = boxCount
+    ? `Remove this workspace frame and its ${boxCount} label(s)?\nThe deletion is committed when you press Save.`
+    : 'Remove this empty workspace frame?';
+  if (!confirm(msg)) return;
+
+  S.regions = S.regions.filter(r => String(r._captureId || '') !== String(id));
+  S.captures = S.captures.filter(c => String(c.id) !== String(id));
+  const removedActive = String(S.activeCaptureId || '') === String(id);
+  if (removedActive) {
+    S.activeCaptureId = null;
+    S.activeCaptureB64 = null;
+    if (S.captures.length) {
+      selectCapture(S.captures[0].id);
+    } else {
+      document.getElementById('backToLiveBtn').style.display = 'none';
+      if (S.selectedPid) restoreRefImg(S.selectedPid);
+    }
+  }
+  renderCaptureStrip();
+  renderTable();
+  drawOverlay();
+  setStatus(boxCount
+    ? `Workspace frame removed with ${boxCount} label(s). Press Save to commit.`
+    : 'Empty workspace frame removed.');
+}
+
+function backToLiveVideo() {
+  _clearActivePin();
+  setStatus('Back to live video — scrub or play to find another frame.');
+}
+
+function renderCaptureStrip() {
+  const strip = document.getElementById('captureStrip');
+  const wrap = document.getElementById('captureStripItems');
+  if (!strip || !wrap) return;
+  if (!S.captures.length) { strip.style.display = 'none'; wrap.innerHTML = ''; return; }
+  strip.style.display = 'flex';
+  wrap.innerHTML = S.captures.map((c, i) => {
+    const active = c.id === S.activeCaptureId;
+    const boxCount = S.regions.filter(r => r._captureId === c.id).length;
+    return `<div onclick="selectCapture('${c.id}')" title="${esc(c.ts)}"
+      style="cursor:pointer;border:2px solid ${active ? '#f0a500' : 'transparent'};border-radius:6px;overflow:hidden;position:relative;width:64px;height:64px;flex-shrink:0;background:#000;">
+      <img src="${c.b64}" style="width:100%;height:100%;object-fit:cover;display:block;">
+      <span style="position:absolute;left:2px;top:2px;font-size:9px;background:rgba(0,0,0,.65);color:#fff;padding:1px 4px;border-radius:3px;max-width:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.ts)}</span>
+      ${S.editMode ? `<button type="button" onclick="removeCapture('${c.id}',event)" title="Remove workspace frame"
+        style="position:absolute;right:2px;top:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(180,35,35,.9);color:#fff;font:bold 12px/18px sans-serif;cursor:pointer;padding:0;">×</button>` : ''}
+      <span style="position:absolute;left:2px;bottom:2px;font-size:9px;background:rgba(0,0,0,.65);color:#fff;padding:1px 4px;border-radius:3px;">#${i + 1}${boxCount ? ' · ' + boxCount : ''}</span>
+    </div>`;
+  }).join('');
+}
+
+// ──────────────────────────────────────────────
+// ASSIGN A SAVED REGION DIRECTLY TO A STEP
+// Collapses the old two-page round trip (Video Label -> save -> SOP Designer ->
+// find the region -> attach) into one action on this page.
+// ──────────────────────────────────────────────
+let _stepsCache = null;
+async function _loadStepsForAssign() {
+  if (!S.selectedPid) return [];
+  try {
+    const r = await fetch(`${API}/api/products/${S.selectedPid}/inspection-items`);
+    _stepsCache = await r.json();
+  } catch (e) { _stepsCache = []; }
+  return _stepsCache;
+}
+
+async function assignRegionToStep(regionId) {
+  if (!regionId) { alert('Save this region first — a new, unsaved box has no server id yet.'); return; }
+  const steps = await _loadStepsForAssign();
+  const existingOptions = steps.map(s => `${s.id}::${s.name} (${(s.samples||[]).length} samples)`).join('\n');
+  const choice = prompt(
+    `Assign to which Step?\n\nType an existing Step's exact name to add to it, or type a brand-new name to create one.\n\nExisting steps:\n${steps.map(s => '- ' + s.name).join('\n') || '(none yet)'}`,
+    steps[0] ? steps[0].name : ''
+  );
+  if (choice === null || !choice.trim()) return;
+  const roleChoice = (prompt('Role — type OK or NG', 'OK') || 'OK').trim().toUpperCase();
+  const role = roleChoice === 'NG' ? 'NG' : 'OK';
+  const matched = steps.find(s => s.name === choice.trim());
+  const body = matched
+    ? { step_id: matched.id, sample_role: role }
+    : { step_name: choice.trim(), sample_role: role };
+  try {
+    const r = await fetch(`${API}/api/products/${S.selectedPid}/regions/${regionId}/attach-to-step`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    _stepsCache = null;
+    setStatus(`✅ Added to Step "${d.step.name}" as ${role} sample. Open the SOP Designer to fine-tune ordering/timing.`);
+  } catch (e) {
+    alert('Assign failed: ' + (e.message || e));
+  }
+}
+
+
+function getPos(e) {
+  const r = DC.getBoundingClientRect();
+  return { x: e.clientX-r.left, y: e.clientY-r.top };
+}
+function drawStart(e) {
+  if (!S.editMode || !S.imgLoaded || (S.lblServerMode ? S.lblServerPlaying : (LV && !LV.paused))) return;
+  S.drawing=true; S.drawStart=getPos(e);
+}
+function drawMove(e) {
+  if (!S.drawing) return;
+  S.drawCur = getPos(e);
+  drawOverlay();
+  const {x:sx,y:sy}=S.drawStart, {x:ex,y:ey}=S.drawCur;
+  Dctx.clearRect(0,0,DC.width,DC.height);
+  Dctx.strokeStyle='#f0a500'; Dctx.lineWidth=1.5;
+  Dctx.setLineDash([5,3]); Dctx.strokeRect(sx,sy,ex-sx,ey-sy); Dctx.setLineDash([]);
+}
+function drawEnd() {
+  if (!S.drawing) return;
+  S.drawing=false;
+  Dctx.clearRect(0,0,DC.width,DC.height);
+  if (!S.drawStart||!S.drawCur) return;
+  const {x:sx,y:sy}=S.drawStart, {x:ex,y:ey}=S.drawCur;
+  // Convert to original pixel coords before storing
+  const x=Math.round(Math.min(sx,ex)/S.scale);
+  const y=Math.round(Math.min(sy,ey)/S.scale);
+  const w=Math.round(Math.abs(ex-sx)/S.scale);
+  const h=Math.round(Math.abs(ey-sy)/S.scale);
+  if (w<3||h<3) return;
+  const label = document.getElementById('lblName').value.trim() || `Region-${S.regions.length+1}`;
+  const thr   = parseFloat(document.getElementById('lblThresh').value)||0.8;
+  const hint  = cleanSampleHint(document.getElementById('lblHint')?.value || 'OK');
+  // Every region belongs to a real, concrete capture — auto-create one from the
+  // current frame if the user never explicitly clicked "Pin". This is what keeps
+  // captureId filtering in drawOverlay() correct no matter whether the user pinned
+  // frames deliberately or just drew straight away.
+  const captureId = _ensureActiveCapture();
+  const srcB64 = S.activeCaptureB64 || S.srcB64;
+  // Stamp the exact frame this box was drawn on, right now — not "whatever S.srcB64
+  // happens to be when Save is eventually clicked". This is what makes it safe to
+  // keep drawing on a second/third frame later in the same session: each region
+  // always carries its own correct source image, independent of what's on screen
+  // at save time.
+  const region = {
+    label, sample_hint:hint, x, y, w, h, threshold:thr, search_margin:0, _sel:false,
+    _srcB64: srcB64,
+    _captureId: captureId,
+    _videoTimeLabel: currentVideoTimeLabel(),
+    _thumbB64: null,
+  };
+  S.regions.push(region);
+  document.getElementById('lblName').value='';
+  renderTable();
+  drawOverlay();
+  makeThumb(srcB64, x, y, w, h).then(thumb => {
+    region._thumbB64 = thumb;
+    renderTable();
+  });
+}
+
+function updateCursor(e) {
+  const {x,y}=getPos(e);
+  document.getElementById('cursorPos').textContent =
+    S.imgLoaded ? `X:${Math.round(x/S.scale)}  Y:${Math.round(y/S.scale)}` : '';
+}
+
+// ──────────────────────────────────────────────
+// OVERLAY
+// All coords = S.regions original pixels × S.scale
+// ──────────────────────────────────────────────
+function drawOverlay() {
+  if (!S.imgLoaded) return;
+  Octx.clearRect(0,0,OC.width,OC.height);
+  // Only draw boxes that belong to whichever frame is currently on screen.
+  // Without this filter, every box ever drawn in this session — across every
+  // pinned frame — gets rendered on top of the current frame, making every
+  // frame look like it has the same boxes.
+  const visible = S.regions.filter(r => (r._captureId || null) === (S.activeCaptureId || null));
+  const placedLabels = []; // already-placed label rects, so a cluster of boxes doesn't
+                            // end up with every label text stacked illegibly in one spot
+  visible.forEach((r,i)=>{
+    const cx=r.x*S.scale, cy=r.y*S.scale, cw=r.w*S.scale, ch=r.h*S.scale;
+    const mg=(r.search_margin||0)*S.scale;
+    const sel=r._sel;
+    const hint=cleanSampleHint(r.sample_hint);
+    const clr=sel?'#f0a500':(hint==='NG'?'#f85149':(hint==='NEUTRAL'?'#8b949e':(S.editMode?'#58a6ff':'#3fb950')));
+
+    // Search margin dashed box
+    if (mg>0) {
+      Octx.save();
+      Octx.strokeStyle='rgba(180,180,60,.75)'; Octx.lineWidth=1;
+      Octx.setLineDash([4,3]);
+      Octx.strokeRect(cx-mg+.5, cy-mg+.5, cw+mg*2, ch+mg*2);
+      Octx.setLineDash([]);
+      Octx.fillStyle='rgba(180,180,60,.05)';
+      Octx.fillRect(cx-mg+.5, cy-mg+.5, cw+mg*2, ch+mg*2);
+      Octx.font='bold 10px monospace'; Octx.fillStyle='rgba(180,180,60,.9)';
+      Octx.fillText(`±${r.search_margin}px`, cx-mg+3, cy-mg+11);
+      Octx.restore();
+    }
+    // ROI box
+    Octx.strokeStyle=clr; Octx.lineWidth=sel?2:1.5;
+    Octx.strokeRect(cx+.5, cy+.5, cw, ch);
+    Octx.fillStyle=sel?'rgba(240,165,0,.08)':'rgba(88,166,255,.06)';
+    Octx.fillRect(cx+.5, cy+.5, cw, ch);
+    // Label tag — when several boxes overlap, showing every one's full text stacks
+    // into an unreadable pile (exactly what happened before this fix). Unselected
+    // boxes in a cluster get a compact "N" badge instead of the full label; the
+    // selected box still gets the full text. Either way, if the chosen spot would
+    // collide with a label already placed this frame, nudge it down until it doesn't.
+    const compact = !sel && visible.length > 1;
+    const prefix = hint==='NG' ? '[NG] ' : (hint==='NEUTRAL' ? '[GEN] ' : '');
+    const txt = compact ? `${i+1}` : `${i+1}. ${prefix}${r.label}`;
+    Octx.font='bold 11px monospace';
+    const tw=Octx.measureText(txt).width;
+    const tx=cx;
+    let ty=cy>16?cy-2:cy+ch+13;
+    let guard=0;
+    while (guard++<12 && placedLabels.some(p => tx < p.x+p.w && tx+tw+6 > p.x && ty-11 < p.y+3 && ty+3 > p.y-11)) {
+      ty += 15;
+    }
+    placedLabels.push({x:tx, y:ty, w:tw+6});
+    Octx.fillStyle='rgba(0,0,0,.7)'; Octx.fillRect(tx, ty-11, tw+6, 14);
+    Octx.fillStyle=clr; Octx.fillText(txt, tx+3, ty);
+  });
+}
+
+// ──────────────────────────────────────────────
+// REGION TABLE
+// Display original pixel coords (S.regions stores them directly)
+// ──────────────────────────────────────────────
+function renderTable() {
+  const tb = document.getElementById('regionBody');
+  tb.innerHTML='';
+  const em=S.editMode;
+  const multiCapture = S.captures.length > 1;
+  S.regions.forEach((r,i)=>{
+    const tr=document.createElement('tr');
+    tr.className=r._sel?'rsel':'';
+    const capIdx = r._captureId ? S.captures.findIndex(c=>c.id===r._captureId) : -1;
+    const capBadge = (multiCapture && capIdx>=0)
+      ? ` <span title="Drawn on workspace frame #${capIdx+1}" style="font-size:9px;color:var(--accent,#f0a500);border:1px solid currentColor;border-radius:3px;padding:0 3px;">#${capIdx+1}</span>`
+      : '';
+    const timeBadge = r._videoTimeLabel
+      ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">@ ${esc(r._videoTimeLabel)}</div>` : '';
+    const thumbCell = r._thumbB64
+      ? `<img src="${r._thumbB64}" style="width:44px;height:44px;object-fit:cover;border-radius:4px;border:1px solid var(--border,#333);display:block;">`
+      : `<div style="width:44px;height:44px;border-radius:4px;border:1px dashed var(--border,#333);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim);">…</div>`;
+    tr.innerHTML=`
+      <td style="color:var(--text-dim)">${i+1}</td>
+      <td>${thumbCell}</td>
+      <td>${em
+        ?`<input type="text" value="${esc(r.label)}" style="width:90px"
+            onchange="S.regions[${i}].label=this.value;drawOverlay();">`
+        :esc(r.label)}${capBadge}${timeBadge}</td>
+      <td>${em
+        ?`<select style="width:92px;font-size:11px" title="候選用途；實際 OK/NG 判定仍在 Monitor 規則群組決定"
+            onchange="S.regions[${i}].sample_hint=cleanSampleHint(this.value);drawOverlay();renderTable();">
+            <option value="OK" ${cleanSampleHint(r.sample_hint)==='OK'?'selected':''}>OK候選</option>
+            <option value="NG" ${cleanSampleHint(r.sample_hint)==='NG'?'selected':''}>NG候選</option>
+            <option value="NEUTRAL" ${cleanSampleHint(r.sample_hint)==='NEUTRAL'?'selected':''}>一般</option>
+          </select>`
+        :sampleHintBadge(r.sample_hint)}</td>
+      <td style="font-family:var(--font-mono)">${r.x}</td>
+      <td style="font-family:var(--font-mono)">${r.y}</td>
+      <td style="font-family:var(--font-mono)">${r.w}</td>
+      <td style="font-family:var(--font-mono)">${r.h}</td>
+      <td>${em
+        ?`<input type="number" value="${r.threshold}" min="0" max="1" step="0.05" style="width:56px"
+            onchange="S.regions[${i}].threshold=parseFloat(this.value);">`
+        :r.threshold}</td>
+      <td>${em
+        ?`<input type="number" value="${r.search_margin||0}" min="0" step="10" style="width:56px"
+            title="0=full image, >0=search within ROI ±N px"
+            onchange="S.regions[${i}].search_margin=parseInt(this.value)||0;drawOverlay();">`
+        :(r.search_margin>0
+          ?`<span style="color:var(--accent);font-family:var(--font-mono)">±${r.search_margin}</span>`
+          :`<span style="color:var(--text-dim);font-size:11px">Full</span>`)}</td>
+      <td style="white-space:nowrap">${
+        (r.id ? `<button class="btn sm" title="Add this saved template to a Step as an OK/NG sample" onclick="assignRegionToStep(${r.id})">+ Step</button>` : `<span style="font-size:10px;color:var(--text-dim)">Save first</span>`)
+        + (em ? ` <button class="btn sm danger" onclick="delRegion(${i})">Delete</button>` : '')
+      }</td>`;
+    tr.addEventListener('click', e=>{
+      if (e.target.tagName==='INPUT'||e.target.tagName==='BUTTON'||e.target.tagName==='SELECT') return;
+      S.regions.forEach((rr,ii)=>rr._sel=ii===i);
+      // Clicking a region should always let you actually see it. Without this,
+      // clicking a region that belongs to a different workspace frame than the
+      // one currently on screen does nothing visible — the row highlights, but
+      // drawOverlay() correctly filters the box out because it isn't part of the
+      // frame being displayed, so it just silently fails to appear. Jump to the
+      // region's own frame first, then it's there to see like everything else.
+      if ((r._captureId || null) !== (S.activeCaptureId || null)) {
+        if (r._captureId) {
+          selectCapture(r._captureId);
+        } else {
+          _clearActivePin();
+          restoreRefImg(S.selectedPid);
+        }
+      } else {
+        renderTable(); drawOverlay();
+      }
+    });
+    tb.appendChild(tr);
+  });
+  document.getElementById('regionCount').textContent=
+    S.regions.length ? `${S.regions.length} region(s)` : 'No regions';
+}
+
+// ──────────────────────────────────────────────
+// INFERENCE
+// ──────────────────────────────────────────────
+function refreshInferList() {
+  const sel=document.getElementById('inferProduct');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">-- Select --</option>';
+  S.products.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.id;
+    o.textContent=`${p.serial}${p.name?' — '+p.name:''}`;
+    sel.appendChild(o);
+  });
+  sel.value=cur;
+}
+
+function setInferSrc(mode) {
+  S.inferSrcMode=mode;
+  document.getElementById('inferPillImg').classList.toggle('active', mode==='image');
+  document.getElementById('inferPillVid').classList.toggle('active', mode==='video');
+  document.getElementById('inferVideoOpts').style.display=mode==='video'?'flex':'none';
+  document.getElementById('inferMediaInput').accept=mode==='image'?'image/*':'video/*';
+  stopStream();
+  _cleanupVideoToken();
+  S.inferVideoReady=false;
+  document.getElementById('inferVideoControls').classList.remove('show');
+  document.getElementById('inferResultImg').style.display='none';
+  document.getElementById('inferNoMsg').style.display='';
+  document.getElementById('frameInfo').textContent='';
+}
+
+function _cleanupVideoToken() {
+  if (S.inferVideoToken) {
+    fetch(`${API}/api/video/delete`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:S.inferVideoToken})}).catch(()=>{});
+    S.inferVideoToken=null;
+  }
+}
+
+function onInferMediaPicked(e) {
+  const f=e.target.files[0]; if (!f) return;
+  e.target.value='';
+  if (S.inferSrcMode==='image') {
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      S.inferSrcB64=ev.target.result;
+      document.getElementById('inferThumbImg').src=ev.target.result;
+      document.getElementById('inferThumb').style.display='';
+      document.getElementById('inferThumbInfo').textContent=`${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+    };
+    rd.readAsDataURL(f);
+  } else {
+    _uploadInferVideo(f);
+  }
+}
+
+async function _uploadInferVideo(file) {
+  setStatus('Uploading video…');
+  stopStream();
+  _cleanupVideoToken();
+  S.inferVideoReady=false;
+  document.getElementById('runBtn').disabled=true;
+
+  const fd=new FormData(); fd.append('file', file);
+  try {
+    const res=await fetch(`${API}/api/video/upload`,{method:'POST',body:fd});
+    const d=await res.json();
+    if (!res.ok) { alert(d.error); return; }
+
+    S.inferVideoToken    = d.token;
+    S.inferVideoDuration = d.duration;
+    S.inferVideoFps      = d.fps;
+    S.inferVideoReady    = true;
+
+    const sk=document.getElementById('inferSeek');
+    sk.max=d.duration; sk.value=0;
+    _updateInferTimecode(0);
+    document.getElementById('inferVideoControls').classList.add('show');
+    document.getElementById('inferThumb').style.display='none';
+    document.getElementById('inferNoMsg').style.display='none';
+
+    await _previewServerFrame(0);
+    setStatus(`Video uploaded: ${file.name}  ${d.width}×${d.height}  ${d.fps.toFixed(1)}fps  ${fmt(d.duration)}`);
+  } catch(err) {
+    alert('Video upload failed: '+err.message);
+  } finally {
+    document.getElementById('runBtn').disabled=false;
+  }
+}
+
+async function _previewServerFrame(t) {
+  if (!S.inferVideoToken) return;
+  try {
+    const r=await fetch(`${API}/api/video/frame?token=${S.inferVideoToken}&time=${t}`);
+    const d=await r.json();
+    if (!r.ok||!d.image_b64) return;
+    document.getElementById('inferResultImg').src=d.image_b64;
+    document.getElementById('inferResultImg').style.display='block';
+    document.getElementById('inferNoMsg').style.display='none';
+  } catch(_){}
+}
+
+function _updateInferTimecode(t) {
+  document.getElementById('inferSeek').value=t;
+  document.getElementById('inferTimecode').textContent=fmt(t)+' / '+fmt(S.inferVideoDuration||0);
+}
+
+// seek bar drag: debounce preview and pause stream
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('inferSeek').addEventListener('input', function(){
+    const t=parseFloat(this.value)||0;
+    document.getElementById('inferTimecode').textContent=fmt(t)+' / '+fmt(S.inferVideoDuration||0);
+    if (S.inferSrcMode==='video') {
+      stopStream();  // pause stream while seeking
+      clearTimeout(this._t);
+      this._t=setTimeout(()=>_previewServerFrame(t), 300);
+    }
+  });
+});
+
+// ── SSE streaming inference ────────────────────────────────────────
+// S.inferEs: current EventSource
+// S.inferPlaying: playing / paused
+
+function stopStream() {
+  if (S.inferEs) { S.inferEs.close(); S.inferEs=null; }
+  S.inferPlaying=false;
+  document.getElementById('liveBadge').classList.remove('show');
+  document.getElementById('runBtn').textContent='▶ Run Inference';
+  document.getElementById('inferPlayBtn').textContent='▶';
+}
+
+function toggleInferPlay() {
+  if (!S.inferVideoReady) return;
+  if (S.inferPlaying) {
+    // Pause: close SSE, stay on current frame
+    stopStream();
+  } else {
+    // Play from current seek position
+    _startStream(parseFloat(document.getElementById('inferSeek').value)||0);
+  }
+}
+
+function inferStep() {
+  // Step: pause then infer next frame
+  if (!S.inferVideoReady||!S.inferVideoToken) return;
+  stopStream();
+  const cur=parseFloat(document.getElementById('inferSeek').value)||0;
+  const step=1/(S.inferVideoFps||25);
+  const next=Math.min(S.inferVideoDuration||0, cur+step);
+  _updateInferTimecode(next);
+  _singleFrameInfer(next);
+}
+
+async function _singleFrameInfer(t) {
+  const pid=document.getElementById('inferProduct').value;
+  if (!pid) { alert('Please select a product'); return; }
+  const method=document.getElementById('inferMethod').value;
+  try {
+    const res=await fetch(`${API}/api/video/infer`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:S.inferVideoToken, time:t,
+                           product_id:parseInt(pid), method})
+    });
+    const d=await res.json();
+    if (!res.ok) { console.error(d.error); return; }
+    _renderInferResult(d);
+  } catch(err){ console.error(err); }
+}
+
+function _startStream(startTime) {
+  const pid=document.getElementById('inferProduct').value;
+  if (!pid) { alert('Please select a product'); return; }
+  if (!S.inferVideoReady||!S.inferVideoToken) { alert('Please upload a test video first'); return; }
+
+  stopStream();
+
+  const method   = document.getElementById('inferMethod').value;
+  const inferFps = document.getElementById('inferFpsSelect').value;
+
+  const url = `${API}/api/video/sop_stream_infer?token=${S.inferVideoToken}`
+            + `&start=${startTime}&product_id=${pid}&method=${method}&infer_fps=${inferFps}`;
+
+  const es = new EventSource(url);
+  S.inferEs = es;
+  S.inferPlaying = true;
+  document.getElementById('liveBadge').classList.add('show');
+  document.getElementById('inferPlayBtn').textContent='⏸';
+  document.getElementById('runBtn').textContent='⏹ Stop';
+
+  es.onmessage = (e) => {
+    let d;
+    try { d=JSON.parse(e.data); } catch(_){ return; }
+
+    if (d.type==='info') {
+      setStatus(`Running… ${d.fps.toFixed(1)}fps  every ${d.frame_step} frame(s)`);
+      return;
+    }
+    if (d.type==='done') {
+      stopStream();
+      setStatus('Inference complete');
+      return;
+    }
+    if (d.type==='frame') {
+      _updateInferTimecode(d.time);
+      document.getElementById('frameInfo').textContent=
+        `F${d.frame}  ${fmt(d.time)}`;
+      _renderInferResult(d);
+    }
+  };
+
+  es.onerror = () => {
+    stopStream();
+    setStatus('Stream ended or connection lost');
+  };
+}
+
+function stopContinuous() { stopStream(); }  // backward compat
+
+async function runInference() {
+  const pid=document.getElementById('inferProduct').value;
+  if (!pid) { alert('Please select a product'); return; }
+  const method=document.getElementById('inferMethod').value;
+
+  // ── Video mode: SSE streaming ──
+  if (S.inferSrcMode==='video') {
+    if (!S.inferVideoReady||!S.inferVideoToken) { alert('Please upload a test video first'); return; }
+    if (S.inferPlaying) { stopStream(); return; }
+    _startStream(parseFloat(document.getElementById('inferSeek').value)||0);
+    return;
+  }
+
+  // ── Image mode: single inference ──
+  stopStream();
+  const b64=S.inferSrcB64;
+  if (!b64) { alert('Please load a test image'); return; }
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true; btn.textContent='⏳ Running…';
+  try { await _callImageInfer(pid, b64, method); }
+  finally { btn.disabled=false; btn.textContent='▶ Run Inference'; }
+}
+
+async function _callImageInfer(pid, b64, method) {
+  try {
+    const res=await fetch(`${API}/api/infer`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({product_id:parseInt(pid), image_b64:b64, method})
+    });
+    const d=await res.json();
+    if (!res.ok) { console.error(d.error); return; }
+    _renderInferResult(d);
+  } catch(err){ console.error(err); }
+}
+
+function _renderInferResult(d) {
+  const img=document.getElementById('inferResultImg');
+  img.src=d.result_img; img.style.display='block';
+  document.getElementById('inferNoMsg').style.display='none';
+  document.getElementById('inferResults').innerHTML=`
+    <div style="margin-top:14px;">
+      <div class="result-badge ${d.pass?'pass':'fail'}">${d.pass?'✔ PASS':'✘ FAIL'}</div>
+    </div>
+    <div style="margin-top:10px;">
+      ${d.results.map(r=>`
+        <div class="result-row">
+          <div style="width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+            font-size:11px;color:var(--text-dim);" title="${esc(r.label)}">${esc(r.label)}</div>
+          ${r.score!==null?`
+            <div class="score-bar-bg">
+              <div class="score-bar" style="width:${(r.score*100).toFixed(1)}%;
+                background:${r.pass?'#2ea043':'#da3633'};"></div>
+            </div>
+            <div style="width:42px;text-align:right;font-family:var(--font-mono);font-size:11px;
+              color:${r.pass?'#3fb950':'#f85149'};">${r.score.toFixed(3)}</div>
+            <div style="width:16px;font-size:12px;">${r.pass?'✔':'✘'}</div>
+          `:`<div style="color:var(--text-dim);font-size:11px;">${r.error||'—'}</div>`}
+        </div>`).join('')}
+    </div>`;
+}
+
+// ──────────────────────────────────────────────
+// LOGS
+// ──────────────────────────────────────────────
+async function loadLogs() {
+  const r=await fetch(`${API}/api/logs?limit=100`);
+  const rows=await r.json();
+  const tb=document.getElementById('logsBody');
+  tb.innerHTML='';
+  if (!rows.length) {
+    tb.innerHTML='<tr><td colspan="5" style="color:var(--text-dim);padding:16px;text-align:center;">No records</td></tr>';
+    return;
+  }
+  rows.forEach(row=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td style="font-family:var(--font-mono);color:var(--text-dim);">${row.id}</td>
+      <td style="font-family:var(--font-mono);color:var(--accent);">${esc(row.serial||'—')}</td>
+      <td>${esc(row.name||'—')}</td>
+      <td class="${row.pass_fail==='PASS'?'badge-pass':'badge-fail'}">${row.pass_fail}</td>
+      <td style="color:var(--text-dim);font-size:11px;">${row.created_at}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+// ──────────────────────────────────────────────
+// UTILS
+// ──────────────────────────────────────────────
+function resetAll() {
+  S.regions=[]; S.imgLoaded=false; S.scale=1; S.lblVideoReady=false; S.srcB64=null;
+  S.captures=[]; S.activeCaptureId=null; S.activeCaptureB64=null;
+  const backBtn = document.getElementById('backToLiveBtn'); if (backBtn) backBtn.style.display='none';
+  renderCaptureStrip();
+  if (MC) { Mctx.clearRect(0,0,MC.width,MC.height); Octx.clearRect(0,0,OC.width,OC.height); Dctx.clearRect(0,0,DC.width,DC.height); }
+  document.getElementById('canvasCtr').style.display='none';
+  document.getElementById('noImgMsg').style.display='';
+  showVideoBar(false);
+  document.getElementById('vidPlayBtn').textContent='▶';
+  _stopLabelUiLoop();
+  _stopServerLabelPlay();
+  _cleanupLabelServerToken();
+  clearTimeout(S.lblFallbackTimer);
+  S.lblServerMode=false; S.lblFallbackFile=null; S.lblServerFrameB64='';
+  if (LV) {
+    try { LV.pause(); } catch (_) {}
+    LV.removeAttribute('src'); LV.load();
+    if (LV._objUrl) { URL.revokeObjectURL(LV._objUrl); LV._objUrl=''; }
+    LV.style.display='none';
+  }
+  if (MC) MC.style.display='block';
+}
+
+function cleanSampleHint(v) {
+  const x = String(v || '').trim().toUpperCase();
+  if (x === 'NG' || x === 'REJECT' || x === 'FAIL') return 'NG';
+  if (x === 'NEUTRAL' || x === 'NONE' || x === 'UNSPECIFIED' || x === 'GENERAL') return 'NEUTRAL';
+  return 'OK';
+}
+
+function openFrontendPage() {
+  window.open(`${API}/monitor`, '_blank', 'noopener');
+}
+
+function sampleHintBadge(v) {
+  const h = cleanSampleHint(v);
+  const color = h === 'NG' ? 'var(--danger)' : (h === 'NEUTRAL' ? 'var(--text-dim)' : 'var(--accent2)');
+  const text = h === 'NG' ? 'NG候選' : (h === 'NEUTRAL' ? '一般' : 'OK候選');
+  return `<span title="Template library candidate hint; final role is chosen in Monitor." style="display:inline-block;padding:1px 6px;border:1px solid ${color};border-radius:3px;color:${color};font-family:var(--font-mono);font-size:10px;white-space:nowrap;">${text}</span>`;
+}
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setStatus(m) { document.getElementById('statusMsg').textContent=m; }
+function fmt(s) {
+  if (!isFinite(s)) return '00:00';
+  return String(Math.floor(s/60)).padStart(2,'0')+':'+String(Math.floor(s%60)).padStart(2,'0');
+}
+
+window.addEventListener('resize', () => {
+  clearTimeout(window._tmLabelResizeTimer);
+  window._tmLabelResizeTimer = setTimeout(() => {
+    if (S.lblServerMode && S.srcB64) displayImg(S.srcB64);
+    else if (LV && !LV.paused && S.lblVideoReady) _layoutLabelVideo();
+    else if (S.srcB64) displayImg(S.srcB64);
+  }, 120);
+});
+window.addEventListener('beforeunload', () => {
+  _stopLabelUiLoop();
+  if (LV && LV._objUrl) URL.revokeObjectURL(LV._objUrl);
+  _cleanupLabelServerToken();
+  _cleanupVideoToken();
+});
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
