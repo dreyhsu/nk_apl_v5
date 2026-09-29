@@ -52,6 +52,8 @@ class APLStation:
         self.state = "WAITING_SN"
         self.cycle_id = ""
         self.sn = ""
+        self.operator = ""
+        self.cycle_operator = None
         self.source = ""
         self.step_index = 0
         self.step_times = []
@@ -119,6 +121,9 @@ class APLStation:
         self.cycle_profile = detail.get("dmz_profile") or {"mode": "unknown", "endpoint_hash": "", "label": "UNKNOWN RECOVERY"}
         self.cycle_fingerprints = detail.get("fingerprints", {})
         self.cycle_station_id = detail.get("station_id", self.config.get("station_id", "NK_APL_50"))
+        self.cycle_operator = detail.get("cycle_operator")
+        if self.cycle_operator and not self.operator:
+            self.operator = self.cycle_operator
         self.matching = detail.get("matching") or self._empty_matching()
         if self.snapshot_mode and row["state"] in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM"}:
             self.state = row["state"]
@@ -151,7 +156,7 @@ class APLStation:
                              "last_result": self.last_result, "started_at": self.started_at,
                              "completed_at": self.completed_at, "dmz_profile": self.cycle_profile,
                              "fingerprints": self.cycle_fingerprints, "station_id": self.cycle_station_id,
-                             "matching": self.matching}, ensure_ascii=False)
+                             "cycle_operator": self.cycle_operator, "matching": self.matching}, ensure_ascii=False)
         with self.db:
             self.db.execute("""INSERT INTO cycles VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(cycle_id) DO UPDATE SET source=excluded.source,
@@ -173,7 +178,8 @@ class APLStation:
     def _payload(self, result=False):
         body = {"sn": self.sn, "cycle_id": self.cycle_id,
                 "request_id": self.report_request_id if result else self.sn_request_id,
-                "station_id": str(self.cycle_station_id or self.config.get("station_id", "NK_APL_50"))}
+                "station_id": str(self.cycle_station_id or self.config.get("station_id", "NK_APL_50")),
+                "emp_no": self.cycle_operator or ""}
         if result:
             body["result"] = "PASS"
             body["started_at"] = self.started_at
@@ -185,12 +191,12 @@ class APLStation:
     def _transport_profile(self):
         if self.test_mode:
             return {'mode': 'local', 'configured': False,
-                    'label': 'BROWSER TEST - SIFI DISABLED',
+                    'label': 'BROWSER TEST - SFIS DISABLED',
                     'endpoint_hash': 'local-video'}
         if self.local_mode:
             configured = not self.snapshot_mode
             return {'mode': 'local', 'configured': configured,
-                    'label': 'SIFI NOT CONFIGURED' if self.snapshot_mode else 'LOCAL',
+                    'label': 'SFIS NOT CONFIGURED' if self.snapshot_mode else 'LOCAL',
                     'endpoint_hash': 'local-station'}
         status = self.transport.status() if hasattr(self.transport, "status") else {"mode": "test", "configured": True, "label": "TEST TRANSPORT"}
         endpoint = str(getattr(self.transport, "base_url", "injected-test-transport"))
@@ -209,6 +215,7 @@ class APLStation:
         self._clear_matching()
         self.state = "WAITING_SN"
         self.cycle_id = self.sn = self.source = ""
+        self.cycle_operator = None
         self.sn_request_id = self.report_request_id = ""
         self.step_index = 0
         self.step_times = []
@@ -245,6 +252,8 @@ class APLStation:
         dmz["configured"] = bool(current_dmz.get("configured")) and dmz["configuration_matches_cycle"]
         dmz["configured_mode"] = current_dmz.get("mode")
         return copy.deepcopy({"state": self.state, "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
+                              "operator": self.operator, "cycle_operator": self.cycle_operator,
+                              "operator_required": self._operator_required(),
                               "local_mode": self.local_mode, "test_mode": self.test_mode,
                               "step_index": self.step_index, "total_steps": len(steps), "steps": steps,
                               "matching": self.matching, "sop": sop, "dmz": dmz, "last_error": self.last_error,
@@ -253,7 +262,7 @@ class APLStation:
                               "completed_at": self.completed_at,
                               "request_in_flight": self.request_token is not None,
                               "can_confirm_sn": self.state == "SN_CONFIRM" and self.request_token is None and dmz.get("configured", False),
-                              "can_confirm_result": self.state == "RESULT_CONFIRM" and self.request_token is None and dmz["configured"] and not self.storage_error,
+                              "can_confirm_result": self.state == "RESULT_CONFIRM" and self.request_token is None and dmz["configured"] and dmz.get("step2_enabled", True) and not self.storage_error,
                               "can_reset": self.state in {"SN_CONFIRM", "RUNNING", "RECOVERY_REQUIRED"} and self.request_token is None})
 
     def _snapshot_single(self):
@@ -288,6 +297,8 @@ class APLStation:
         return copy.deepcopy({
             "inspection_mode": self.inspection_mode, "state": self.state,
             "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
+            "operator": self.operator, "cycle_operator": self.cycle_operator,
+            "operator_required": self._operator_required(),
             "local_mode": self.local_mode, "test_mode": self.test_mode,
             "step_index": 1 if passed else 0, "total_steps": 1, "steps": [step],
             "matching": self.matching, "sop": sop, "dmz": transport,
@@ -298,7 +309,7 @@ class APLStation:
             "attempt_count": attempt_count,
             "can_capture": self.state in {"WAITING_CAPTURE", "NOT_MATCHED"} and self.request_token is None and not self.storage_error,
             "can_confirm_sn": False,
-            "can_confirm_result": self.state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and not self.storage_error,
+            "can_confirm_result": self.state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and transport.get("step2_enabled", True) and not self.storage_error,
             "can_terminate": can_terminate,
             "can_reset": can_terminate,
         })
@@ -337,6 +348,42 @@ class APLStation:
         if not cycle_id or cycle_id != self.cycle_id:
             raise ValueError("Cycle ID is stale or missing")
 
+    def _operator_required(self):
+        # SFIS Step1 validates the operator + SN pair, so an operator must sign in
+        # before scanning whenever the station will actually reach Step1.
+        return self.snapshot_mode and not self.local_mode and not self.test_mode
+
+    def _is_operator_error(self, text):
+        markers = self.config.get("dmz", {}).get("operator_error_markers") or ["NO EMP"]
+        haystack = str(text or "").upper()
+        return any(str(marker).upper() in haystack for marker in markers)
+
+    def set_operator(self, emp_no):
+        if not isinstance(emp_no, str):
+            raise ValueError("Employee number must be text")
+        emp_no = emp_no.strip()
+        maximum = max(1, int(self.config.get("emp_no_max_length", 32)))
+        if not emp_no or len(emp_no) > maximum or any(ord(c) < 33 or ord(c) > 126 for c in emp_no):
+            raise ValueError("Employee number must contain printable ASCII characters without spaces")
+        with self.lock:
+            if self.closed:
+                return self._reply("Station is closed")
+            if self.storage_error:
+                return self._reply(self.storage_error)
+            if self.state != "WAITING_SN" or self.request_token is not None:
+                return self._reply("Finish the current inspection before changing the operator")
+            self.operator = emp_no
+            return self._reply()
+
+    def clear_operator(self):
+        with self.lock:
+            if self.closed:
+                return self._reply("Station is closed")
+            if self.state != "WAITING_SN" or self.request_token is not None:
+                return self._reply("Finish the current inspection before changing the operator")
+            self.operator = ""
+            return self._reply()
+
     def scan(self, sn, source="web"):
         if not isinstance(sn, str):
             raise ValueError("SN must be text")
@@ -353,23 +400,48 @@ class APLStation:
                 return self._reply()
             if self.state != "WAITING_SN":
                 return self._reply("The current SN is locked. Upload successfully or terminate the inspection before scanning another SN")
+            if self._operator_required() and not self.operator:
+                return self._reply("Enter an operator employee number before scanning")
             self.cycle_id = uuid.uuid4().hex
             self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
             self.sn, self.source = sn, str(source)[:40]
+            self.cycle_operator = self.operator or None
             self.created_at = time.time()
             self.started_at = time.time() if self.snapshot_mode else None
             self.completed_at = None
             self.cycle_profile = self._transport_profile()
             self.cycle_fingerprints = {"config_sha256": self.config_fingerprint, "templates_sha256": self.template_fingerprint}
             self.cycle_station_id = str(self.config.get("station_id", "NK_APL_50"))
-            self.state = "WAITING_CAPTURE" if self.snapshot_mode else "SN_CONFIRM"
+            auto_sfis_check = self.snapshot_mode and not self.local_mode and not self.test_mode
+            self.state = "SN_CONFIRM" if auto_sfis_check or not self.snapshot_mode else "WAITING_CAPTURE"
             self.result = None
             self.step_index, self.step_times = 0, []
             self.last_error = ""
             self._clear_matching()
             self._save("SN_SCANNED_AND_STARTED" if self.snapshot_mode else "SN_SCANNED",
                        {"source": self.source})
-            return self._reply()
+            reply = self._reply()
+            cycle_id = self.cycle_id
+        if not auto_sfis_check:
+            return reply
+        result = self._confirm(cycle_id, result=False)
+        if result.get("success"):
+            return result
+        # Step1 is a pre-inspection gate. A rejection or connection failure must
+        # not leave the scanner locked before any image has been inspected.
+        with self.lock:
+            if self.cycle_id == cycle_id and self.state == "SN_CONFIRM":
+                error = self.last_error or result.get("error") or "SFIS Step1 failed"
+                self._save("SFIS_STEP1_REJECTED", {"error": error}, state_override="TERMINATED")
+                self._clear_cycle()
+                if self._is_operator_error(error):
+                    # SFIS rejected the employee number itself; force a fresh sign-in.
+                    self.operator = ""
+                    self.last_error = "Employee number rejected by SFIS. Enter the employee number again."
+                else:
+                    self.last_error = error
+                result = self._reply(self.last_error)
+        return result
 
     def confirm_sn(self, cycle_id):
         if self.snapshot_mode:
@@ -392,9 +464,11 @@ class APLStation:
             if result and (self.result != "PASS" or self.step_index != len(self.step_names)):
                 return self._reply("Only a completed PASS can be reported")
             if result and self.test_mode:
-                return self._reply("Browser test data cannot be uploaded to SIFI")
+                return self._reply("Browser test data cannot be uploaded to SFIS")
             if result and self.snapshot_mode and self.local_mode:
-                return self._reply("SIFI not configured")
+                return self._reply("SFIS not configured")
+            if result and self._transport_profile().get("step2_enabled") is False:
+                return self._reply("SFIS Step2 is disabled by configuration")
             if self.local_mode:
                 self.last_error = ''
                 if result:
@@ -438,7 +512,7 @@ class APLStation:
                 self._save("PASS_ACKNOWLEDGED", state_override="COMPLETE", outbox=response)
                 self._clear_cycle()
             else:
-                self.state = "RUNNING"
+                self.state = "WAITING_CAPTURE" if self.snapshot_mode else "RUNNING"
                 self.started_at = time.time()
                 self._clear_matching()
                 self._save("SN_ACCEPTED")

@@ -2,7 +2,8 @@
 
 ## 專案定位
 
-本資料夾是 NK APL 產線的單張判定開發版。操作員掃描 SN 後，系統鎖定該輪，
+本資料夾是 NK APL 產線的單張判定開發版。操作員上班先輸入工號簽入，之後掃描
+SN，系統以「工號 + SN」呼叫 SFIS Step1 驗證組合、鎖定該輪，
 等待操作員按下 `Capture & Inspect`，再以同一張影像確認：
 
 1. 治具有蓋板且處於關閉狀態。
@@ -19,31 +20,42 @@ Python 程式。
 - 原圖、結果圖、JSON、SN、時間與 History 查詢已完成。
 - 影片測試可由設定完全關閉。
 - PC 回歸測試共 92 項通過。
-- SIFI 正式 endpoint、認證、payload 與成功回覆契約尚未提供。
+- SFIS Step1／Step2 呼叫已接入掃碼與檢測完成流程。
+- SFIS Step2 預設由 `step2_enabled=false` 禁止送出，須明確開啟才可使用。
 - 40 系樣本與 MCIO 插入深度／電性確認尚未納入。
 
 ## 正式操作流程
 
 ```text
+（未簽入）
+  ↓ 輸入工號簽入
 WAITING_SN
-  ↓ 掃描有效 SN
+  ↓ 掃描有效 SN（工號 + SN → SFIS Step1）
+  ├─ Step1 回 NO EMP（工號錯誤）→ 清除簽入，需重新輸入工號
+  ├─ Step1 其他 FAIL / 連線失敗 → 保留簽入，SN 釋放可重掃
+  └─ Step1 接受 ↓
 WAITING_CAPTURE
   ↓ Capture & Inspect
 JUDGING
   ├─ 不符合 → NOT_MATCHED → 調整後重新拍照
   └─ 符合   → PASS_CONFIRM
-                  ├─ SIFI 成功 → COMPLETE → 開放下一筆 SN
+                  ├─ SFIS Step2 成功 → COMPLETE → 開放下一筆 SN
                   └─ Terminate Inspection → TERMINATED → 開放下一筆 SN
 ```
 
 規則：
 
+- 必須先輸入工號簽入才能掃碼；未簽入時 SN 欄位停用，實體掃碼槍也會被站台端擋下。
+- 工號每班簽入一次，存在站台端；之後可連續掃 SN。要換人時按 `Switch operator` 重新輸入。
+- 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤，系統清除簽入並要求重新輸入工號。
+- Step2 目前 `step2_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
 - 同一輪未結束時，新掃碼不能覆蓋目前 SN。
 - 只有按下 `Capture & Inspect` 才執行正式判定。
 - `NOT_MATCHED` 可以用同一個 SN 重拍，每次證據都保留。
 - 視覺結果 OK 不代表已上傳，也不會自動解除 SN 鎖定。
-- 只有 SIFI 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
+- 掃碼後先呼叫 SFIS Step1；只有 Step1 接受才可進入拍照判定。
+- 只有 SFIS Step2 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
 
 ## 判定條件
@@ -81,7 +93,7 @@ video_test_enabled = false
 ```
 
 修改後必須重新啟動程式。關閉時，網頁隱藏整個影片工具列，影片測試 API 回覆
-HTTP 403。影片測試結果禁止上傳 SIFI。
+HTTP 403。影片測試結果禁止上傳 SFIS。
 
 開發影片保存在 `test_assets/videos/`，不屬於 Golden Samples 或產線證據。
 
@@ -141,6 +153,5 @@ PC 無法驗證 Qualcomm QTI 相機、GStreamer、MediaMTX、HDMI 與實體掃�
 - Template Matching 依賴固定視角、固定 ROI、解析度與照明。
 - 現有樣本數量不足以直接宣告量產辨識率。
 - 尚未判斷 MCIO 是否完整插到底或電性正常。
-- SIFI 尚未配置，目前 `Confirm PASS & Upload to SIFI` 不會形成正式上傳成功。
+- SFIS 內網連線與 Step2 request/response 契約仍須在現場做正式驗收。
 - `server.py` 與 `vision_core.py` 是上游 VisionEdge 相容依賴，目前仍不能移除。
-

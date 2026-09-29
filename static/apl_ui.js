@@ -5,7 +5,7 @@ let streamGeneration=0,streamKey='',streamPC=null,streamLocation='',streamReques
 let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,streamFrameSeq=null,streamFrameAt=0;
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
 const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
-const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_CAPTURE:'Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Upload PASS to SIFI or terminate this inspection.',UPLOADING:'Uploading PASS to SIFI.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_CAPTURE:'SFIS Step1 accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Send SFIS Step2 or terminate this inspection.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
 let fixedSNBuffer='';
@@ -95,11 +95,21 @@ function browserVideoActive(){return lastStatus.input?.mode==='browser_video'}
 function renderStation(station){
   const fresh=stationFresh(),available=!!station,freshStation=fresh&&available;
   const busy=stationBusy||!!station?.request_in_flight;
-  const snEditable=freshStation&&!busy&&station.state==='WAITING_SN';
+  const signedIn=!!station?.operator;
+  const operatorRequired=station?.operator_required!==false;
+  const snEditable=freshStation&&!busy&&station.state==='WAITING_SN'&&(!operatorRequired||signedIn);
   const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
   connection.classList.toggle('hidden',freshStation);
+  const canEditOperator=freshStation&&!busy&&station.state==='WAITING_SN';
+  const showSignIn=freshStation&&operatorRequired&&!signedIn;
+  $('operatorSignIn').classList.toggle('hidden',!showSignIn);
+  $('operatorBadge').classList.toggle('hidden',!signedIn);
+  $('opName').textContent=station?.operator||'—';
+  $('opInput').disabled=!canEditOperator;$('opSubmit').disabled=!canEditOperator;
+  $('opSwitch').disabled=!canEditOperator;
   $('snInput').disabled=!snEditable;$('scanSubmit').disabled=!snEditable;
+  $('snInput').placeholder=operatorRequired&&!signedIn?'Enter the employee number first':'Scan or enter serial number';
   const captureReady=browserVideoActive()?browserVideoReady&&!!videoChoice:!!lastStatus.has_raw;
   $('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;
   $('confirmResult').disabled=!freshStation||busy||station.can_confirm_result!==true;
@@ -110,11 +120,13 @@ function renderStation(station){
   $('stationInstruction').textContent=instruction;
   $('stationSN').textContent=station?.sn||'—';$('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':'Capture & Inspect';
-  $('confirmResult').textContent=station?.state==='UPLOADING'?'Uploading...':'Confirm PASS & Upload to SIFI';
+  const step2Enabled=station?.dmz?.step2_enabled!==false;
+  $('confirmResult').textContent=station?.state==='UPLOADING'?'Sending Step2...':step2Enabled?'Confirm OK & Send SFIS Step2':'SFIS Step2 disabled';
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
-  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SIFI upload disabled':sifiConfigured?'SIFI configured':'SIFI not configured';
-  $('sifiStatus').className='stationMeta '+(sifiConfigured?'sifiGood':'sifiWarn');
+  const step2Blocked=!browserVideoActive()&&!step2Enabled;
+  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiConfigured?'SFIS configured':'SFIS not configured';
+  $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked?'sifiGood':'sifiWarn');
   $('stationError').textContent=[stationLocalError,textValue(station?.last_error)].filter(Boolean).join('\n');
   const scanner=station?.scanner,panel=$('scannerPanel');
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
@@ -251,9 +263,28 @@ async function submitSN(){
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
   const sn=fixedSNBuffer;if(!sn){$('snInput').focus();return}
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn})});if(data.success===false)throw Error(data.error||'Serial number was not accepted');if(data.station)lastStatus.station=data.station;setFixedSN('');message('Inspection started. Complete the fixture, then select Capture & Inspect.','ok')}
+  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn})});if(data.success===false)throw Error(data.error||'SFIS Step1 did not accept the serial number');if(data.station)lastStatus.station=data.station;setFixedSN('');message('SFIS Step1 accepted. Complete the fixture, then select Capture & Inspect.','ok')}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Check the current serial number before retrying.':error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station)}
+}
+
+async function submitOperator(){
+  const station=lastStatus.station;
+  if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
+  const emp=$('opInput').value.trim();if(!emp){$('opInput').focus();return}
+  stationBusy=true;stationLocalError='';renderStation(station);
+  try{const data=await req(APP_BASE+'/api/apl/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_no:emp})});if(data.success===false)throw Error(data.error||'Employee number was not accepted');if(data.station)lastStatus.station=data.station;$('opInput').value='';message('Operator signed in. Scan a serial number.','ok')}
+  catch(error){stationLocalError=error.message}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('snInput').disabled)$('snInput').focus()}
+}
+
+async function switchOperator(){
+  const station=lastStatus.station;
+  if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
+  stationBusy=true;stationLocalError='';renderStation(station);
+  try{const data=await req(APP_BASE+'/api/apl/operator/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(data.success===false)throw Error(data.error||'Could not switch operator');if(data.station)lastStatus.station=data.station;message('Enter the next operator employee number.','ok')}
+  catch(error){stationLocalError=error.message}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('opInput').disabled)$('opInput').focus()}
 }
 
 async function stationAction(action){
@@ -262,7 +293,7 @@ async function stationAction(action){
   if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nThe saved inspection evidence will be retained.'))return;
   let focusNextSN=false;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?'PASS uploaded and saved. Ready for the next serial number.':'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
+  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?'SFIS Step2 accepted. Ready for the next serial number.':'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(focusNextSN&&!$('snInput').disabled)$('snInput').focus()}
 }
@@ -446,4 +477,5 @@ browserVideo.addEventListener('pause',()=>{renderInput();renderStreamStatus()});
 browserVideo.addEventListener('ended',()=>{renderInput();renderStreamStatus()});
 window.addEventListener('pagehide',()=>{closeStream();browserVideo.pause();if(browserVideoURL)URL.revokeObjectURL(browserVideoURL)});
 setInterval(()=>{renderStation(lastStatus.station);renderStreamStatus();updateSettingsActionState();checkStreamFrames();if(streamKind==='webrtc'&&streamStartedAt&&!streamRetryAt&&Date.now()-(streamDecodedAt||streamStartedAt)>15000)failStream('No video received for 15 seconds',streamGeneration);syncStream()},1000);
-(async()=>{await pollOnce();pollLoop();await Promise.all([loadConfig(false),loadMedia(false)]);updateSnapshotLabel()})().catch(error=>message(error.message,'err'));
+$('opInput').addEventListener('paste',event=>{const text=String(event.clipboardData?.getData('text/plain')||'').replace(/\s+/g,'');event.preventDefault();$('opInput').value=text.slice(0,Number($('opInput').maxLength||32))},true);
+(async()=>{await pollOnce();pollLoop();await Promise.all([loadConfig(false),loadMedia(false)]);updateSnapshotLabel();const first=!$('opInput').disabled&&!$('operatorSignIn').classList.contains('hidden')?'opInput':!$('snInput').disabled?'snInput':'';if(first)$(first).focus()})().catch(error=>message(error.message,'err'));

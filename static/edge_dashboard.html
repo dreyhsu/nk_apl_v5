@@ -49,6 +49,7 @@ button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:no
 .inputToolbar{padding:12px 13px;border-bottom:1px solid var(--line);background:#0c1523}.inputHeader{display:flex;justify-content:space-between;gap:8px;margin-bottom:9px}.inputName{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.inputName.test{color:var(--amber)}.inputActions{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.inputActions .subtle{font-size:10px}.videoFileMeta{flex:1;min-width:260px;padding-left:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flow-name{overflow-wrap:anywhere}.flow-node.current{background:#302817;border-color:var(--amber)}.flow-node.current .flow-dot{color:var(--amber)}.flow-node.current .flow-state{color:var(--amber)}.flow-node.done{background:#0e2b22}.flow-node.done .flow-state{color:var(--green)}.flow-sub{min-height:14px}.stationActions{grid-template-columns:1fr 1fr}.stationActions .action{font-size:12px}.stationMeta{font-size:9px}.statusRow{grid-template-columns:110px 1fr auto}
 .stationActions #captureInspect{grid-column:1/-1}.stationActions #terminateInspection{background:#431d26;border-color:#8b3546}.sifiWarn{color:#ffe0a0}.sifiGood{color:#a9f3ce}.videoControls{display:grid;grid-template-columns:auto auto minmax(180px,1fr) auto auto;align-items:center;gap:8px;width:100%;margin-top:4px;padding:9px 10px;border:1px solid #293a55;border-radius:10px;background:linear-gradient(180deg,#111d30,#0c1625)}.videoControlButton{min-width:42px;height:34px;border:1px solid #3b506f;border-radius:8px;background:#16243a;color:#dce9fb;font-size:12px;font-weight:780}.videoControlButton:hover:not(:disabled){border-color:#5d82ae;background:#1c304d}.videoControlButton.primary{min-width:88px;border-color:#376c98;background:#173957;color:#fff}.videoTimeline{width:100%;height:18px;margin:0;appearance:none;background:transparent;cursor:pointer}.videoTimeline:disabled{cursor:not-allowed}.videoTimeline::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--blue) 0,var(--blue) var(--video-progress,0%),#34445b var(--video-progress,0%),#34445b 100%)}.videoTimeline::-webkit-slider-thumb{appearance:none;width:16px;height:16px;margin-top:-5px;border:3px solid #dcecff;border-radius:50%;background:var(--blue);box-shadow:0 2px 8px #0008}.videoTimeline::-moz-range-track{height:6px;border:0;border-radius:999px;background:#34445b}.videoTimeline::-moz-range-progress{height:6px;border-radius:999px;background:var(--blue)}.videoTimeline::-moz-range-thumb{width:11px;height:11px;border:3px solid #dcecff;border-radius:50%;background:var(--blue)}.videoTime{min-width:82px;text-align:center;color:#c8d6e9;font:11px Consolas,monospace;white-space:nowrap}.historyFilters{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px;border-bottom:1px solid var(--line)}.historyFilters label{display:grid;gap:5px;color:var(--muted);font-size:11px}.historyFilters input,.historyFilters select{min-width:190px;background:#111d30;color:var(--text);border:1px solid #354864;border-radius:8px;padding:8px 10px}.historyDetail{margin-top:14px;padding:14px}.historyDetail:empty{display:none}.historyDetailHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}.historyDetailHead span,.historyAttempt span{color:var(--muted);font-size:11px}.historyAttempt{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,.7fr) auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 @media(max-width:760px){.videoFileMeta{width:100%;flex-basis:100%;padding:3px 0}.videoControls{grid-template-columns:auto auto 1fr auto}.videoTime{grid-column:1/-1;grid-row:2;justify-self:center}.videoControlButton.primary{min-width:76px}}
+.opSignIn{margin-bottom:12px;padding:11px 12px;border:1px solid #456082;border-radius:9px;background:#10243a}.opLabel{font-size:11px;color:var(--muted);margin-bottom:6px}.opSignIn .scanRow{margin:0}.opBadge{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:9px 12px;border:1px solid #28775a;border-radius:9px;background:#123a2e}.opBadge .opWho{font-size:12px;color:#a9f3ce}.opBadge .opWho strong{font-size:14px;letter-spacing:.5px}.opBadge .mini{border-color:#3b6f56;background:#164033}.appFooter{margin-top:14px;padding:10px 4px;color:var(--muted);font-size:11px;text-align:center}.appFooter strong{color:#c4d1e5}
 </style>
 </head>
 <body>
@@ -149,11 +150,16 @@ button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:no
         <section class="card stationPanel">
           <div class="cardhead"><h2>Serial Number</h2><span class="grow"></span><span id="stationState" class="state idle">Connecting</span></div>
           <div class="stationBody">
+            <div id="operatorSignIn" class="opSignIn">
+              <div class="opLabel">Operator employee number</div>
+              <div class="scanRow"><input id="opInput" aria-label="Operator employee number" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="Enter employee number" onkeydown="if(event.key==='Enter')submitOperator()"><button id="opSubmit" class="action blue" onclick="submitOperator()">Sign In</button></div>
+            </div>
+            <div id="operatorBadge" class="opBadge hidden"><span class="opWho">Operator <strong id="opName">—</strong></span><button id="opSwitch" class="mini" onclick="switchOperator()">Switch operator</button></div>
             <div id="scannerPanel" class="scannerPanel" role="status" aria-live="polite">
               <span class="scannerDot" aria-hidden="true"></span>
               <div class="scannerCopy"><strong id="scannerTitle">Checking scanner</strong><span id="scannerDetail">Scan or type a serial number.</span></div>
             </div>
-            
+
             <div id="stationInstruction" class="stateTitle" role="status" aria-live="polite">Waiting for station</div>
             <div class="scanRow"><input id="snInput" aria-label="Scan or enter SN" lang="en-US" inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" placeholder="Scan or enter serial number" readonly disabled><button id="scanSubmit" class="action blue" onclick="submitSN()" disabled>Use SN</button></div>
             <div class="controlHint">The browser reads physical US-key positions so the SN is independent of the active input language. Press Enter to start inspection.</div>
@@ -241,7 +247,7 @@ button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:no
       <section class="card settingsCard">
         <div class="cardhead"><h2>AI & Inspection</h2><span class="grow"></span><span class="subtle">Inspection profile</span></div>
         <div class="settingsBody">
-          <div class="settingsSectionHint">Scanning an SN starts one inspection. Capture one image after closing the cover and installing the MCIO card. Flow Studio is a separate template editing workspace.</div>
+          <div class="settingsSectionHint">Scanning an SN starts one inspection. Capture one image after closing the cover and installing the MCIO card. Flow Studio is a separate template editing workspace.<br>網頁聯絡負責人 Web contact: <strong>SMD Dre Hsu (TW031561)</strong></div>
           <div class="fieldGrid">
             <div class="field" style="grid-column:1/-1"><label for="product">Inspection workflow</label><select id="product" disabled><option value="1">NK APL · Four-step inspection</option></select><div class="fieldNote">Station configuration: config/apl_workflow.json</div></div>
             <div class="field"><label for="infer_fps">AI Analysis Rate</label><select id="infer_fps"><option value="2">Low load · 2 FPS</option><option value="5" selected>Balanced · 5 FPS (recommended)</option><option value="10">Fast · 10 FPS</option></select><div id="inferRateNote" class="fieldNote">Target analysis rate. Live status shows the actual measured AI FPS.</div></div>
@@ -283,6 +289,7 @@ button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:no
       <button id="applySettingsBtn" class="action primary" onclick="applySettings()" disabled>Apply Settings</button>
     </div>
   </section>
+  <footer class="appFooter">網頁聯絡負責人 Web contact: <strong>SMD Dre Hsu (TW031561)</strong></footer>
 </main>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>

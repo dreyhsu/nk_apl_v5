@@ -1,4 +1,4 @@
-"""Explicit DMZ transport with correlated, retry-safe request identifiers."""
+"""Explicit SFIS/DMZ transport with correlated, retry-safe requests."""
 
 import json
 import os
@@ -23,6 +23,16 @@ class DMZClient:
         self.base_url = os.environ.get("APL_DMZ_URL", cfg.get("base_url", "")).rstrip("/")
         self.timeout = max(0.1, min(60.0, float(cfg.get("timeout_seconds", 5))))
         self.allow_http = bool(cfg.get("allow_insecure_http", False))
+        self.api_style = str(cfg.get("api_style", "legacy")).strip().lower()
+        if self.api_style not in {"legacy", "sfis"}:
+            raise ValueError("dmz.api_style must be legacy or sfis")
+        self.line = str(os.environ.get("APL_SFIS_LINE", cfg.get("line", ""))).strip()
+        self.station = str(os.environ.get("APL_SFIS_STATION", cfg.get("station", ""))).strip()
+        self.employee_no = str(os.environ.get("APL_SFIS_EMP_NO", cfg.get("employee_no", ""))).strip()
+        self.step1_path = str(cfg.get("step1_path", "/Step1")).strip()
+        self.step2_path = str(cfg.get("step2_path", "/Step2")).strip()
+        self.step2_enabled = bool(cfg.get("step2_enabled", False))
+        self.step2_extra_fields = dict(cfg.get("step2_extra_fields") or {})
         if self.mode not in {"disabled", "mock", "http"}:
             raise ValueError("dmz.mode must be disabled, mock, or http")
         if self.mode == "mock" and not self.base_url:
@@ -30,11 +40,60 @@ class DMZClient:
         self.opener = urllib.request.build_opener(_NoRedirect())
 
     def status(self):
+        # The employee number is supplied per request by the signed-in operator,
+        # so station readiness no longer depends on a static config value.
+        sfis_ready = self.api_style != "sfis" or all(
+            (self.line, self.station, self.step1_path, self.step2_path)
+        )
         return {
             "mode": self.mode,
-            "configured": self.mode != "disabled" and bool(self.base_url),
-            "label": "MOCK / TEST ONLY" if self.mode == "mock" else self.mode.upper(),
+            "configured": self.mode != "disabled" and bool(self.base_url) and sfis_ready,
+            "step2_enabled": self.step2_enabled if self.api_style == "sfis" else True,
+            "label": "MOCK / TEST ONLY" if self.mode == "mock" else "SFIS" if self.api_style == "sfis" else self.mode.upper(),
         }
+
+    def _wire_request(self, path, payload):
+        if self.api_style != "sfis":
+            return path, payload
+        mapping = {"/sn/check": self.step1_path, "/result": self.step2_path}
+        if path not in mapping:
+            raise DMZError("Unsupported SFIS operation")
+        if path == "/result" and not self.step2_enabled:
+            raise DMZError("SFIS Step2 is disabled by configuration")
+        emp_no = str(payload.get("emp_no") or self.employee_no).strip()
+        if not all((self.line, self.station, emp_no)):
+            raise DMZError("SFIS line, station, and employee number must be configured")
+        body = {
+            "line": self.line,
+            "station": self.station,
+            "sn": payload["sn"],
+            "empNo": emp_no,
+        }
+        if path == "/result":
+            body.update(self.step2_extra_fields)
+        return mapping[path], body
+
+    @staticmethod
+    def _normalize_sfis_response(path, payload, response):
+        if not isinstance(response, dict):
+            raise DMZError("SFIS response must be a JSON object")
+        data = response.get("data")
+        error_code = response.get("errorCode")
+        if response.get("success") is not True or error_code not in (None, ""):
+            detail = response.get("message") or error_code or "request rejected"
+            raise DMZError("SFIS rejected request: " + str(detail))
+        if isinstance(data, str) and data.strip().upper().startswith("FAIL"):
+            raise DMZError("SFIS business validation failed: " + data.strip())
+        normalized = {
+            "accepted": True,
+            "sn": payload["sn"],
+            "cycle_id": payload["cycle_id"],
+            "request_id": payload["request_id"],
+            "sfis_response": response,
+        }
+        if path == "/result":
+            normalized["result"] = payload.get("result")
+        return normalized
 
     def send(self, path, payload):
         if self.mode == "disabled":
@@ -49,9 +108,10 @@ class DMZClient:
             raise DMZError("Mock DMZ must use loopback")
         if parsed.scheme != "https" and not local and not self.allow_http:
             raise DMZError("Remote DMZ requires HTTPS unless allow_insecure_http is explicitly enabled")
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        wire_path, wire_payload = self._wire_request(path, payload)
+        data = json.dumps(wire_payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            self.base_url + path, data=data,
+            self.base_url + wire_path, data=data,
             headers={"Content-Type": "application/json", "Idempotency-Key": payload["request_id"]},
             method="POST",
         )
@@ -63,6 +123,8 @@ class DMZClient:
                 result = json.loads(raw)
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise DMZError("DMZ request failed: " + type(exc).__name__) from exc
+        if self.api_style == "sfis":
+            result = self._normalize_sfis_response(path, payload, result)
         self.validate_response(path, payload, result)
         if self.mode == "http" and result.get("mock") is True:
             raise DMZError("Production DMZ mode rejected a mock response")

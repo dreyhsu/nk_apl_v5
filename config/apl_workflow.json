@@ -1,6 +1,6 @@
 {
   "station_id": "NK_APL_50",
-  "station_mode": "local",
+  "station_mode": "remote",
   "inspection_mode": "single_snapshot_cover_card",
   "reference_size": [1920, 1080],
   "search_roi": [751, 254, 431, 588],
@@ -15,11 +15,21 @@
   "ng_states": ["30_PRODUCT_LOADED", "30_COVER_CLOSED"],
   "removal_state": "EMPTY_FIXTURE",
   "sn_max_length": 128,
+  "emp_no_max_length": 32,
   "dmz": {
-    "mode": "disabled",
-    "base_url": "",
+    "mode": "http",
+    "api_style": "sfis",
+    "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+    "step1_path": "/Step1",
+    "step2_path": "/Step2",
+    "step2_enabled": false,
+    "line": "TEST",
+    "station": "AI-CAM",
+    "employee_no": "M031978",
+    "operator_error_markers": ["NO EMP"],
+    "step2_extra_fields": {},
     "timeout_seconds": 5,
-    "allow_insecure_http": false
+    "allow_insecure_http": true
   },
   "scanner": {
     "enabled": true,

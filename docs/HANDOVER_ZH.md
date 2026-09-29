@@ -19,12 +19,13 @@ SmartCam 直接部署慣用目錄：
 
 ## 2. 功能目標
 
-操作員掃描 SN，完成蓋板與 MCIO 小卡安裝後按下 `Capture & Inspect`。程式只判定
+操作員上班先輸入工號簽入，再掃描 SN（系統以工號 + SN 呼叫 SFIS Step1），
+完成蓋板與 MCIO 小卡安裝後按下 `Capture & Inspect`。程式只判定
 該張照片；同一張照片必須同時符合蓋板關閉及 MCIO 小卡存在，才顯示 OK。
 
 完成 OK 後由操作員選擇：
 
-- `Confirm PASS & Upload to SIFI`：只在正式 SIFI 契約配置完成後使用。
+- `Confirm OK & Send SFIS Step2`：視覺判定 OK 後回報 SFIS。
 - `Terminate Inspection`：不上傳，保存終止紀錄並開放下一筆 SN。
 
 ## 3. 核心元件
@@ -50,7 +51,8 @@ SmartCam 直接部署慣用目錄：
 
 | 狀態 | 意義 | 可用操作 |
 |---|---|---|
-| `WAITING_SN` | 等待下一筆 SN | 掃碼、選影片、切回相機 |
+| （未簽入） | 尚未輸入工號 | 輸入工號簽入；SN 欄位停用 |
+| `WAITING_SN` | 已簽入，等待下一筆 SN | 掃碼、切換操作員、選影片、切回相機 |
 | `WAITING_CAPTURE` | SN 已鎖定，等待照片 | 拍照判定、終止、開發時切影片 |
 | `JUDGING` | 正在判定與保存證據 | 等待 |
 | `NOT_MATCHED` | 未同時符合兩個條件 | 重拍、終止、開發時換影片 |
@@ -136,7 +138,7 @@ Browser Video Test 用於無法進入產線時的開發驗證：
 - `Capture & Inspect` 只傳送當下 Canvas 畫面。
 - 掃碼後仍可在 `WAITING_CAPTURE`／`NOT_MATCHED` 選擇或更換影片。
 - 切換時保留同一個 SN 與 cycle ID。
-- 測試結果禁止上傳 SIFI。
+- 測試結果禁止上傳 SFIS。
 
 正式產線務必設定：
 
@@ -159,19 +161,25 @@ video_test_enabled = false
 OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上傳；
 `TERMINATED` 不得顯示成正式 COMPLETE。
 
-## 10. SIFI 待辦
+## 10. SFIS 串接
 
-目前 `station_mode` 是 `local`，`dmz.mode` 是 `disabled`。正式串接前須取得：
+正式設定使用 `station_mode=remote` 與 `dmz.api_style=sfis`：
 
-1. Endpoint 與 HTTPS／網路要求。
-2. 認證方式及憑證管理方式。
-3. SN 與 PASS payload 欄位。
-4. 成功回覆的精確判斷條件。
-5. Request ID 去重規則。
-6. 逾時後查詢、重送及避免重複履歷的方法。
-7. 是否傳送照片或僅傳 SN 與結果。
+- 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step2 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
+- Step1：掃碼後呼叫 `/api/SFISAPI/Step1`，由 SFIS 驗證「工號 + SN」組合。
+- Step2：影像 OK 且操作員確認後呼叫 `/api/SFISAPI/Step2`。
+- Step2 有獨立安全開關 `step2_enabled`，預設為 `false`；未明確開啟時不會送出 HTTP request，畫面並會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561）。
+- 目前已確認欄位：`line`、`station`、`sn`、`empNo`（小寫，依 Swagger）；`empNo` 取簽入工號，未簽入時 fallback 設定檔 `employee_no`。
+- API 即使回覆 `success=true`，只要 `data` 以 `FAIL` 開頭仍視為業務拒絕。
+- Step1 失敗會回到 `WAITING_SN`，不允許拍照判定；若失敗訊息含 `dmz.operator_error_markers`（預設 `NO EMP`）代表工號錯誤，站台會清除簽入並要求重新輸入工號，其餘失敗則保留簽入僅釋放 SN。
+- Step2 失敗會保留 SN、cycle 與相同 request ID，供操作員重試。
+- `APL_DMZ_URL`、`APL_SFIS_LINE`、`APL_SFIS_STATION`、`APL_SFIS_EMP_NO` 可覆寫設定檔。
 
-沒有上述契約時，不可用 mock 回覆代表正式成功。
+Step2 目前依現有資料先使用與 Step1 相同的四個欄位。若 SFIS 的 Step2 Swagger
+另有結果碼或必填欄位，填入 `step2_extra_fields` 並補做現場驗收後才可視為量產完成。
+測試程式必須在自己的 client 設定中明確加入 `"step2_enabled": true`，不可依賴正式設定檔開啟。
+手動測試使用 `scripts/sfis_api_test.py --sn <SN>` 時只會呼叫 Step1；只有另外明確加入
+`--step2-test` 才會在該次測試程序中暫時允許一筆 Step2，正式設定仍維持關閉。
 
 ## 11. PC 開發驗證
 
@@ -251,13 +259,12 @@ TLS private key 必須受控，不應任意散布或放入一般交接壓縮檔�
 - [ ] OK 後只能由上傳成功或終止解除鎖定。
 - [ ] 影片測試在正式設定中不可見且 API 被拒絕。
 - [ ] 儲存空間不足時不會刪除未送出的證據。
-- [ ] SIFI 成功、失敗、逾時與重送皆依正式契約驗證。
+- [ ] SFIS 成功、失敗、逾時與重送皆依現場正式契約驗證。
 
 ## 15. 尚未完成
 
-- SIFI 正式整合與現場網路驗收。
+- SFIS Step2 schema 確認與現場網路驗收。
 - 40 系 Golden Samples。
 - MCIO 插入深度及電性狀態判定。
 - 現場不同照明、角度、手部遮擋與長時間準確率測試。
 - 從上游 `server.py`／`vision_core.py` 解耦並縮小部署檔案清單。
-

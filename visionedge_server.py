@@ -217,6 +217,18 @@ def apl_scan():
     return station_response(station().scan(json_object().get('sn', ''), source='web'))
 
 
+@app.route('/api/apl/operator', methods=['POST'])
+@station_command
+def apl_set_operator():
+    return station_response(station().set_operator(json_object().get('emp_no', '')))
+
+
+@app.route('/api/apl/operator/clear', methods=['POST'])
+@station_command
+def apl_clear_operator():
+    return station_response(station().clear_operator())
+
+
 @app.route('/api/apl/confirm-sn', methods=['POST'])
 @station_command
 def apl_confirm_sn():
