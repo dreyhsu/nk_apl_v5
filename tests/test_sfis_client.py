@@ -62,6 +62,18 @@ class SFISClientTests(unittest.TestCase):
                 "success": True, "data": "FAIL1,HS_ASSY ", "message": "", "errorCode": None,
             })
 
+    def test_step1_accepts_real_ok_response(self):
+        result, _ = self.send_with("/sn/check", {
+            "success": True, "data": "OK1,REWORK=0 RETEST=1A", "message": "", "errorCode": None,
+        })
+        self.assertTrue(result["accepted"])
+
+    def test_step1_rejects_wrong_sn_fail_response(self):
+        with self.assertRaisesRegex(DMZError, "FAIL1,PASM1"):
+            self.send_with("/sn/check", {
+                "success": True, "data": "FAIL1,PASM1 ", "message": "", "errorCode": None,
+            })
+
     def test_step2_uses_same_confirmed_fields_and_normalizes_ack(self):
         payload = {**self.payload, "result": "PASS"}
         result, request = self.send_with("/result", {

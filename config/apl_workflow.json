@@ -23,6 +23,7 @@
     "step1_path": "/Step1",
     "step2_path": "/Step2",
     "step2_enabled": false,
+    "sfis_enabled": true,
     "line": "TEST",
     "station": "AI-CAM",
     "employee_no": "M031978",

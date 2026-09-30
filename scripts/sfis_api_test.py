@@ -36,6 +36,9 @@ def main():
     # The production setting remains untouched. This process-local override is
     # possible only when the operator explicitly supplied --step2-test.
     client_config["step2_enabled"] = bool(args.step2_test)
+    # This harness exists to reach the real server, so the offline switch in
+    # the configuration file must not silence it.
+    client_config["sfis_enabled"] = True
     client = DMZClient(client_config)
     cycle_id = uuid.uuid4().hex
 

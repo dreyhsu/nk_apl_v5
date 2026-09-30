@@ -33,7 +33,16 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20260914-3-video-feature-gate', html)
+        self.assertIn('apl_ui.js?v=20260930-1-sfis-offline-switch', html)
+
+    def test_offline_sfis_mode_reads_as_intentional(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn("station?.dmz?.sfis_enabled===false", script)
+        self.assertIn("'Confirm OK & Save Locally'", script)
+        self.assertIn('SFIS off by configuration', script)
+        self.assertIn('Saved on this station. SFIS is off.', script)
+        self.assertIn("OFFLINE_HINTS", script)
 
     def test_active_browser_video_can_be_reattached_after_scanning(self):
         root = Path(__file__).resolve().parents[1]

@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from apl_matching import APLMatcher, StableStateFilter, UNKNOWN
-from dmz_client import DMZClient
+from dmz_client import DMZClient, sfis_enabled
 from inspection_store import InspectionStore
 from workflow_view import STEP_LABELS
 
@@ -46,9 +46,17 @@ class APLStation:
         self.matcher_error = ""
         self.storage_error = ""
         self.filter = StableStateFilter(self.config.get("stable_frames", 2))
-        self.local_mode = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else local_mode
+        dmz_config = self.config.get("dmz") or {}
+        self.sfis_enabled = sfis_enabled(dmz_config)
+        # Deliberate offline station (no Shopfloor network). Folded into local_mode
+        # so that no SFIS transport object exists at all. This makes
+        # status()['local_mode'] True even on a station_mode=remote box; read
+        # sfis_enabled / offline_mode for the precise reason.
+        self.offline_mode = not self.sfis_enabled
+        legacy_local = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else bool(local_mode)
+        self.local_mode = legacy_local or self.offline_mode
         self.test_mode = bool(test_mode)
-        self.transport = None if self.local_mode else transport or DMZClient(self.config.get("dmz"))
+        self.transport = None if self.local_mode else transport or DMZClient(dmz_config)
         self.state = "WAITING_SN"
         self.cycle_id = ""
         self.sn = ""
@@ -193,6 +201,14 @@ class APLStation:
             return {'mode': 'local', 'configured': False,
                     'label': 'BROWSER TEST - SFIS DISABLED',
                     'endpoint_hash': 'local-video'}
+        if self.offline_mode:
+            # Intentional offline station: the cycle can be completed and saved
+            # locally, so it counts as configured. step2_enabled True only means
+            # the OK-confirm action is available; nothing is ever posted.
+            return {'mode': 'offline', 'configured': True, 'step2_enabled': True,
+                    'sfis_enabled': False,
+                    'label': 'SFIS OFF - LOCAL RECORD ONLY',
+                    'endpoint_hash': 'sfis-disabled'}
         if self.local_mode:
             configured = not self.snapshot_mode
             return {'mode': 'local', 'configured': configured,
@@ -255,6 +271,7 @@ class APLStation:
                               "operator": self.operator, "cycle_operator": self.cycle_operator,
                               "operator_required": self._operator_required(),
                               "local_mode": self.local_mode, "test_mode": self.test_mode,
+                              "sfis_enabled": self.sfis_enabled, "offline_mode": self.offline_mode,
                               "step_index": self.step_index, "total_steps": len(steps), "steps": steps,
                               "matching": self.matching, "sop": sop, "dmz": dmz, "last_error": self.last_error,
                               "last_result": self.last_result, "result": self.result,
@@ -300,6 +317,7 @@ class APLStation:
             "operator": self.operator, "cycle_operator": self.cycle_operator,
             "operator_required": self._operator_required(),
             "local_mode": self.local_mode, "test_mode": self.test_mode,
+            "sfis_enabled": self.sfis_enabled, "offline_mode": self.offline_mode,
             "step_index": 1 if passed else 0, "total_steps": 1, "steps": [step],
             "matching": self.matching, "sop": sop, "dmz": transport,
             "last_error": self.last_error, "last_result": self.last_result,
@@ -350,7 +368,9 @@ class APLStation:
 
     def _operator_required(self):
         # SFIS Step1 validates the operator + SN pair, so an operator must sign in
-        # before scanning whenever the station will actually reach Step1.
+        # before scanning whenever the station will actually reach Step1. An offline
+        # station (dmz.sfis_enabled=false) never reaches Step1, so the employee
+        # number is optional there.
         return self.snapshot_mode and not self.local_mode and not self.test_mode
 
     def _is_operator_error(self, text):
@@ -419,7 +439,8 @@ class APLStation:
             self.last_error = ""
             self._clear_matching()
             self._save("SN_SCANNED_AND_STARTED" if self.snapshot_mode else "SN_SCANNED",
-                       {"source": self.source})
+                       {"source": self.source, "transport_mode": self.cycle_profile["mode"],
+                        "sfis_enabled": self.sfis_enabled})
             reply = self._reply()
             cycle_id = self.cycle_id
         if not auto_sfis_check:
@@ -465,23 +486,38 @@ class APLStation:
                 return self._reply("Only a completed PASS can be reported")
             if result and self.test_mode:
                 return self._reply("Browser test data cannot be uploaded to SFIS")
-            if result and self.snapshot_mode and self.local_mode:
+            if result and self.snapshot_mode and self.local_mode and self.sfis_enabled:
+                # Snapshot mode with no transport while SFIS is supposed to be on is
+                # a misconfiguration, not an intentional offline station.
                 return self._reply("SFIS not configured")
             if result and self._transport_profile().get("step2_enabled") is False:
                 return self._reply("SFIS Step2 is disabled by configuration")
             if self.local_mode:
                 self.last_error = ''
+                offline = self.offline_mode
                 if result:
                     self.last_result = {'cycle_id': self.cycle_id, 'sn': self.sn, 'result': 'PASS',
-                                        'reported': False, 'saved_at': time.time(), 'mode': 'local',
+                                        'reported': False, 'saved_at': time.time(),
+                                        'mode': 'offline' if offline else 'local',
                                         'test_mode': self.test_mode, 'step_times': list(self.step_times)}
-                    self._save('PASS_SAVED_LOCALLY', state_override='COMPLETE')
+                    if offline:
+                        self.last_result.update({
+                            'visual_result': 'OK', 'cycle_status': 'COMPLETE',
+                            'upload_status': 'SKIPPED_SFIS_DISABLED',
+                            'sfis_enabled': False, 'completed_at': self.completed_at,
+                        })
+                    # COMPLETE is required here: _recover treats any other state as an
+                    # unresolved cycle. The event name is what marks a skipped upload.
+                    self._save('PASS_SAVED_OFFLINE_NO_SFIS' if offline else 'PASS_SAVED_LOCALLY',
+                               {'sfis_enabled': self.sfis_enabled}, state_override='COMPLETE')
                     self._clear_cycle()
                 else:
-                    self.state = 'RUNNING'
+                    # Snapshot mode continues to WAITING_CAPTURE; RUNNING is the
+                    # legacy next state, mirroring the real path below.
+                    self.state = 'WAITING_CAPTURE' if self.snapshot_mode else 'RUNNING'
                     self.started_at = time.time()
                     self._clear_matching()
-                    self._save('SN_CONFIRMED_LOCALLY')
+                    self._save('SN_ACCEPTED_OFFLINE_NO_SFIS' if offline else 'SN_CONFIRMED_LOCALLY')
                 return self._reply()
             payload = self._payload(result=result)
             profile = dict(self.cycle_profile)

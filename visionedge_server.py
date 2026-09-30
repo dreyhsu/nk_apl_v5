@@ -441,7 +441,8 @@ def edge_status():
             'whep_url': '/api/stream/whep',
             'media_transport': 'ICE/TCP 5000',
         },
-        features={'video_test_enabled': VIDEO_TEST_ENABLED},
+        features={'video_test_enabled': VIDEO_TEST_ENABLED,
+                  'sfis_enabled': bool(state.get('sfis_enabled', True))},
     )
     return jsonify(status)
 
@@ -803,6 +804,10 @@ def main():
         _assert_port_available(host, port)
         _lock_instance(Path(os.environ.get('APL_DATA_DIR', str(BASE_DIR / 'runtime_data' / 'apl'))))
         station()
+        if not STATION.sfis_enabled:
+            print('[VisionEdge] WARNING: SFIS OFFLINE - dmz.sfis_enabled is false in '
+                  'config/apl_workflow.json; no Shopfloor request will be sent and '
+                  'results are saved on this station only')
         from stream_proxy import register_stream_routes
         register_stream_routes(app, CONFIG_PATH)
     except Exception as exc:

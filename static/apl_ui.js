@@ -5,6 +5,7 @@ let streamGeneration=0,streamKey='',streamPC=null,streamLocation='',streamReques
 let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,streamFrameSeq=null,streamFrameAt=0;
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
 const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
+const OFFLINE_HINTS={WAITING_CAPTURE:'SN accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',PASS_CONFIRM:'Inspection OK. SFIS is off; confirm to save this result on the station.',UPLOADING:'Saving this result on the station.'};
 const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_CAPTURE:'SFIS Step1 accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Send SFIS Step2 or terminate this inspection.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
@@ -116,17 +117,18 @@ function renderStation(station){
   $('terminateInspection').disabled=!freshStation||busy||station.can_terminate!==true;
   $('stationState').textContent=freshStation?(STATION_LABELS[station.state]||station.state):'Offline';
   $('stationState').className='state '+(!freshStation?'warn':station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  const sfisOff=station?.dmz?.sfis_enabled===false;
+  const instruction=browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':sfisOff&&OFFLINE_HINTS[station?.state]?OFFLINE_HINTS[station.state]:station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationSN').textContent=station?.sn||'—';$('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':'Capture & Inspect';
   const step2Enabled=station?.dmz?.step2_enabled!==false;
-  $('confirmResult').textContent=station?.state==='UPLOADING'?'Sending Step2...':step2Enabled?'Confirm OK & Send SFIS Step2':'SFIS Step2 disabled';
+  $('confirmResult').textContent=station?.state==='UPLOADING'?(sfisOff?'Saving...':'Sending Step2...'):sfisOff?'Confirm OK & Save Locally':step2Enabled?'Confirm OK & Send SFIS Step2':'SFIS Step2 disabled';
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
-  const step2Blocked=!browserVideoActive()&&!step2Enabled;
-  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiConfigured?'SFIS configured':'SFIS not configured';
-  $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked?'sifiGood':'sifiWarn');
+  const step2Blocked=!browserVideoActive()&&!sfisOff&&!step2Enabled;
+  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':sfisOff?'SFIS off by configuration — inspections are saved on this station only':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiConfigured?'SFIS configured':'SFIS not configured';
+  $('sifiStatus').className='stationMeta '+(!sfisOff&&sifiConfigured&&!step2Blocked?'sifiGood':'sifiWarn');
   $('stationError').textContent=[stationLocalError,textValue(station?.last_error)].filter(Boolean).join('\n');
   const scanner=station?.scanner,panel=$('scannerPanel');
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
@@ -293,7 +295,7 @@ async function stationAction(action){
   if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nThe saved inspection evidence will be retained.'))return;
   let focusNextSN=false;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?'SFIS Step2 accepted. Ready for the next serial number.':'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
+  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?(station?.dmz?.sfis_enabled===false?'Saved on this station. SFIS is off. Ready for the next serial number.':'SFIS Step2 accepted. Ready for the next serial number.'):'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(focusNextSN&&!$('snInput').disabled)$('snInput').focus()}
 }

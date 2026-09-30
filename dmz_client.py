@@ -11,6 +11,29 @@ class DMZError(RuntimeError):
     pass
 
 
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def sfis_enabled(config=None):
+    """Master switch for Shopfloor (SFIS) traffic.
+
+    An absent key means enabled, so an existing production config keeps its
+    behaviour. This is distinct from dmz.mode == "disabled", which fails loud on
+    every call; this switch lets the station drop the transport entirely and
+    complete cycles locally, for a SmartCam with no Shopfloor network.
+    """
+    value = dict(config or {}).get("sfis_enabled", True)
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _TRUE:
+        return True
+    if text in _FALSE:
+        return False
+    raise ValueError("dmz.sfis_enabled must be a boolean (true/false)")
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise DMZError("DMZ redirects are not allowed")
@@ -19,6 +42,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class DMZClient:
     def __init__(self, config=None):
         cfg = dict(config or {})
+        self.enabled = sfis_enabled(cfg)
         self.mode = os.environ.get("APL_DMZ_MODE", cfg.get("mode", "disabled")).lower()
         self.base_url = os.environ.get("APL_DMZ_URL", cfg.get("base_url", "")).rstrip("/")
         self.timeout = max(0.1, min(60.0, float(cfg.get("timeout_seconds", 5))))
@@ -96,6 +120,8 @@ class DMZClient:
         return normalized
 
     def send(self, path, payload):
+        if not self.enabled:
+            raise DMZError("Shopfloor Server calls are disabled by configuration (dmz.sfis_enabled=false)")
         if self.mode == "disabled":
             raise DMZError("DMZ is disabled. Configure production HTTP or explicit mock mode.")
         parsed = urllib.parse.urlsplit(self.base_url)

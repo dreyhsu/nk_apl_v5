@@ -19,9 +19,11 @@ Python 程式。
 - Browser Video Test、時間軸、暫停與指定畫面判定已完成。
 - 原圖、結果圖、JSON、SN、時間與 History 查詢已完成。
 - 影片測試可由設定完全關閉。
-- PC 回歸測試共 92 項通過。
+- PC 回歸測試共 128 項通過（其中 4 項因缺少參考影片而 skip）。
 - SFIS Step1／Step2 呼叫已接入掃碼與檢測完成流程。
 - SFIS Step2 預設由 `step2_enabled=false` 禁止送出，須明確開啟才可使用。
+- Shopfloor（SFIS）呼叫可由 `dmz.sfis_enabled=false` 完全關閉，供無內網 SmartCam 離線驗機；
+  關閉時不會建立 SFIS transport，也不會開任何 socket。
 - 40 系樣本與 MCIO 插入深度／電性確認尚未納入。
 
 ## 正式操作流程
@@ -43,19 +45,33 @@ JUDGING
                   └─ Terminate Inspection → TERMINATED → 開放下一筆 SN
 ```
 
+離線模式（`dmz.sfis_enabled=false`）的流程：
+
+```text
+WAITING_SN（不需簽入工號）
+  ↓ 掃描有效 SN（不呼叫 Step1）
+WAITING_CAPTURE
+  ↓ Capture & Inspect
+JUDGING
+  ├─ 不符合 → NOT_MATCHED → 調整後重新拍照
+  └─ 符合   → PASS_CONFIRM
+                  ├─ Confirm OK & Save Locally → COMPLETE（reported=false）→ 開放下一筆 SN
+                  └─ Terminate Inspection → TERMINATED → 開放下一筆 SN
+```
+
 規則：
 
 - 必須先輸入工號簽入才能掃碼；未簽入時 SN 欄位停用，實體掃碼槍也會被站台端擋下。
 - 工號每班簽入一次，存在站台端；之後可連續掃 SN。要換人時按 `Switch operator` 重新輸入。
 - 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤，系統清除簽入並要求重新輸入工號。
-- Step2 目前 `step2_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
+- **連線中**的站台，Step2 目前 `step2_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。離線模式不受此開關影響。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
 - 同一輪未結束時，新掃碼不能覆蓋目前 SN。
 - 只有按下 `Capture & Inspect` 才執行正式判定。
 - `NOT_MATCHED` 可以用同一個 SN 重拍，每次證據都保留。
 - 視覺結果 OK 不代表已上傳，也不會自動解除 SN 鎖定。
 - 掃碼後先呼叫 SFIS Step1；只有 Step1 接受才可進入拍照判定。
-- 只有 SFIS Step2 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
+- 只有 SFIS Step2 確認成功或操作員按 `Terminate Inspection` 才解除鎖定；離線模式改由 `Confirm OK & Save Locally` 解除。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
 
 ## 判定條件
@@ -96,6 +112,49 @@ video_test_enabled = false
 HTTP 403。影片測試結果禁止上傳 SFIS。
 
 開發影片保存在 `test_assets/videos/`，不屬於 Golden Samples 或產線證據。
+
+## 離線模式（無 Shopfloor 連線）
+
+沒有接到 Shopfloor 內網的 SmartCam 可以把 SFIS 呼叫整個關掉，設定位於
+[config/apl_workflow.json](config/apl_workflow.json) 的 `dmz` 區塊：
+
+```json
+{
+  "dmz": {
+    "sfis_enabled": false
+  }
+}
+```
+
+正式產線必須是 `true`（缺少這個 key 也視為 `true`）。修改後必須重新啟動程式。
+
+`sfis_enabled=false` 與 `mode="disabled"` 是兩件不同的事：
+
+| 設定 | 意義 |
+| --- | --- |
+| `sfis_enabled: false` | 刻意離線測試。不建立 SFIS transport、不開任何 socket，結果存本地，整條流程跑得完。 |
+| `mode: "disabled"` | 設定錯誤保護。仍會建立 transport，但每次 `send()` 都直接丟錯。 |
+
+關閉後的差異：
+
+| 項目 | 連線中 | 離線（`sfis_enabled=false`） |
+| --- | --- | --- |
+| 工號簽入 | 必填 | 非必填（可自願簽入，仍會記錄） |
+| 掃碼後 | 呼叫 Step1，進 `SN_CONFIRM` | 不呼叫，直接進 `WAITING_CAPTURE` |
+| 判定 OK 後的按鈕 | `Confirm OK & Send SFIS Step2` | `Confirm OK & Save Locally` |
+| `step2_enabled` 影響 | 有 | 無 |
+| `last_result.reported` | `true` | 恆為 `false` |
+| `last_result.upload_status` | — | `SKIPPED_SFIS_DISABLED` |
+| 事件名稱 | `PASS_ACKNOWLEDGED` | `PASS_SAVED_OFFLINE_NO_SFIS` |
+| outbox | 成功後 `ACKED` | 完全不寫入（不留 `PENDING`） |
+| 原圖／結果圖／History | 保留 | 一樣保留 |
+
+啟動時若開關為關閉，主控台會印出 `[VisionEdge] WARNING: SFIS OFFLINE ...`；
+網頁的 SFIS 狀態列會常駐顯示
+`SFIS off by configuration — inspections are saved on this station only`（琥珀色）。
+`/api/edge/status` 的 `features.sfis_enabled` 也可供監控判讀。
+
+[scripts/sfis_api_test.py](scripts/sfis_api_test.py) 不受這個開關影響，仍會直連正式 SFIS。
 
 ## 啟動與測試
 
@@ -154,4 +213,6 @@ PC 無法驗證 Qualcomm QTI 相機、GStreamer、MediaMTX、HDMI 與實體掃�
 - 現有樣本數量不足以直接宣告量產辨識率。
 - 尚未判斷 MCIO 是否完整插到底或電性正常。
 - SFIS 內網連線與 Step2 request/response 契約仍須在現場做正式驗收。
+- 離線模式（`sfis_enabled=false`）完成的 PASS 不會進入 outbox，也沒有自動補送 SFIS 的機制；
+  需要回補只能依 `cycles`／`events`／`attempts` 紀錄人工處理。
 - `server.py` 與 `vision_core.py` 是上游 VisionEdge 相容依賴，目前仍不能移除。
