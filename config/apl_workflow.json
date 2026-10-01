@@ -15,6 +15,9 @@
   "ng_states": ["30_PRODUCT_LOADED", "30_COVER_CLOSED"],
   "removal_state": "EMPTY_FIXTURE",
   "sn_max_length": 128,
+  "sn_prefix": "K2V5",
+  "mcio_sn_max_length": 128,
+  "mcio_sn_prefix": "APL",
   "emp_no_max_length": 32,
   "dmz": {
     "mode": "http",
@@ -29,6 +32,7 @@
     "employee_no": "M031978",
     "operator_error_markers": ["NO EMP"],
     "step2_extra_fields": {},
+    "step2_mcio_field": "mcioSn",
     "timeout_seconds": 5,
     "allow_insecure_http": true
   },

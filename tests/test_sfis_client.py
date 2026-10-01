@@ -31,7 +31,8 @@ class SFISClientTests(unittest.TestCase):
             "step2_enabled": True,
             "line": "TEST", "station": "AI-CAM", "employee_no": "M031978",
         })
-        self.payload = {"sn": "M0001000P153B52D01S", "cycle_id": "cycle-1", "request_id": "request-1"}
+        self.payload = {"sn": "M0001000P153B52D01S", "cycle_id": "cycle-1", "request_id": "request-1",
+                        "mcio_sn": "APL0012345"}
 
     def send_with(self, path, response, payload=None):
         with patch.object(self.client.opener, "open", return_value=FakeHTTPResponse(response)) as opened:
@@ -82,6 +83,48 @@ class SFISClientTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://10.0.28.125:8097/api/SFISAPI/Step2")
         self.assertEqual(json.loads(request.data)["sn"], payload["sn"])
         self.assertEqual(result["result"], "PASS")
+
+    def test_step2_carries_the_mcio_card_serial_number(self):
+        payload = {**self.payload, "result": "PASS"}
+        _, request = self.send_with("/result", {
+            "success": True, "data": "OK", "message": "", "errorCode": None,
+        }, payload)
+        self.assertEqual(json.loads(request.data)["mcioSn"], "APL0012345")
+
+    def test_step1_body_is_unchanged_by_the_mcio_card_serial_number(self):
+        _, request = self.send_with("/sn/check", {
+            "success": True, "data": "PASS", "message": "", "errorCode": None,
+        })
+        self.assertEqual(json.loads(request.data), {
+            "line": "TEST", "station": "AI-CAM",
+            "sn": "M0001000P153B52D01S", "empNo": "M031978",
+        })
+
+    def test_step2_without_an_mcio_card_serial_number_is_refused(self):
+        payload = {**self.payload, "result": "PASS", "mcio_sn": ""}
+        with patch.object(self.client.opener, "open") as opened:
+            with self.assertRaisesRegex(DMZError, "MCIO card serial number is missing"):
+                self.client.send("/result", payload)
+        opened.assert_not_called()
+
+    def test_step2_extra_fields_cannot_overwrite_the_mcio_card_serial_number(self):
+        client = DMZClient({
+            "mode": "http", "api_style": "sfis",
+            "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+            "allow_insecure_http": True, "step2_enabled": True,
+            "line": "TEST", "station": "AI-CAM", "employee_no": "M031978",
+            "step2_extra_fields": {"mcioSn": "SPOOFED"},
+        })
+        payload = {**self.payload, "result": "PASS"}
+        with patch.object(client.opener, "open", return_value=FakeHTTPResponse({
+            "success": True, "data": "OK", "message": "", "errorCode": None,
+        })) as opened:
+            client.send("/result", payload)
+        self.assertEqual(json.loads(opened.call_args.args[0].data)["mcioSn"], "APL0012345")
+
+    def test_mcio_field_name_cannot_collide_with_a_documented_field(self):
+        with self.assertRaisesRegex(ValueError, "step2_mcio_field"):
+            DMZClient({"mode": "http", "api_style": "sfis", "step2_mcio_field": "sn"})
 
     def test_step2_is_blocked_without_explicit_test_switch(self):
         client = DMZClient({
@@ -197,6 +240,7 @@ class SnapshotSFISGateTests(unittest.TestCase):
             "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED",
                       "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
             "template_root": "templates", "dmz": {"mode": "http"},
+            "sn_prefix": "K2V5", "mcio_sn_prefix": "APL",
         }), encoding="utf-8")
         self.transport = GateTransport()
         self.station = APLStation(self.config, root / "data", transport=self.transport, matcher=object())
@@ -206,42 +250,63 @@ class SnapshotSFISGateTests(unittest.TestCase):
         self.station.close()
         self.temp.cleanup()
 
-    def test_scan_runs_step1_before_enabling_capture(self):
-        reply = self.station.scan("SN-001")
+    def start_cycle(self, sn="K2V5-001", mcio="APL-001"):
+        """Step1 runs on the MCIO scan, once both serials have been collected."""
+        self.station.scan(sn)
+        return self.station.scan(mcio)
+
+    def test_product_scan_alone_never_touches_sfis(self):
+        reply = self.station.scan("K2V5-001")
+        self.assertTrue(reply["success"])
+        self.assertEqual(reply["station"]["state"], "WAITING_MCIO_SN")
+        self.assertEqual(reply["station"]["mcio_sn"], "")
+        self.assertEqual(self.transport.calls, [])
+
+    def test_mcio_scan_runs_step1_before_enabling_capture(self):
+        reply = self.start_cycle()
         self.assertTrue(reply["success"])
         self.assertEqual(reply["station"]["state"], "WAITING_CAPTURE")
+        self.assertEqual(reply["station"]["mcio_sn"], "APL-001")
         self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check"])
 
     def test_scan_blocked_without_operator(self):
         self.station.clear_operator()
-        reply = self.station.scan("SN-001")
+        reply = self.station.scan("K2V5-001")
         self.assertFalse(reply["success"])
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
         self.assertEqual(self.transport.calls, [])
 
-    def test_step1_failure_releases_serial_number(self):
+    def test_step1_failure_releases_both_serial_numbers(self):
         self.transport.fail = True
-        reply = self.station.scan("SN-FAIL")
+        reply = self.start_cycle(mcio="APL-FAIL")
         self.assertFalse(reply["success"])
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
         self.assertEqual(reply["station"]["sn"], "")
+        self.assertEqual(reply["station"]["mcio_sn"], "")
 
     def test_no_emp_rejection_clears_operator(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
-        reply = self.station.scan("SN-001")
+        reply = self.start_cycle()
         self.assertFalse(reply["success"])
         self.assertEqual(self.station.operator, "")
         self.assertEqual(reply["station"]["operator"], "")
 
     def test_other_business_failure_keeps_operator_signed_in(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1,HS_ASSY"
-        reply = self.station.scan("SN-001")
+        reply = self.start_cycle()
         self.assertFalse(reply["success"])
         self.assertEqual(self.station.operator, "M031978")
         self.assertEqual(reply["station"]["operator"], "M031978")
 
+    def test_step2_payload_carries_both_serial_numbers(self):
+        self.start_cycle()
+        payload = self.station._payload(result=True)
+        self.assertEqual(payload["sn"], "K2V5-001")
+        self.assertEqual(payload["mcio_sn"], "APL-001")
+        self.assertNotIn("mcio_sn", self.station._payload(result=False))
+
     def test_completed_ok_runs_step2_and_unlocks(self):
-        scanned = self.station.scan("SN-OK")
+        scanned = self.start_cycle(mcio="APL-OK")
         cycle_id = scanned["station"]["cycle_id"]
         with self.station.lock:
             self.station.state = "PASS_CONFIRM"
@@ -252,6 +317,7 @@ class SnapshotSFISGateTests(unittest.TestCase):
         reply = self.station.confirm_result(cycle_id)
         self.assertTrue(reply["success"])
         self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check", "/result"])
+        self.assertEqual(self.transport.calls[-1][1]["mcio_sn"], "APL-OK")
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
 
 
@@ -287,7 +353,8 @@ class SnapshotBypassCycleTests(unittest.TestCase):
         self.assertTrue(status["dmz"]["bypass"])
         self.assertTrue(status["dmz"]["configured"])
         with patch.object(self.station.transport.opener, "open") as opened:
-            scanned = self.station.scan("SN-BYPASS")
+            self.station.scan("SN-BYPASS")
+            scanned = self.station.scan("MCIO-BYPASS")
             self.assertTrue(scanned["success"])
             self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
             cycle_id = scanned["station"]["cycle_id"]

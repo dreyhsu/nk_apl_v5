@@ -48,6 +48,9 @@ class DMZClient:
         self.step2_path = str(cfg.get("step2_path", "/Step2")).strip()
         self.step2_enabled = bool(cfg.get("step2_enabled", False))
         self.step2_extra_fields = dict(cfg.get("step2_extra_fields") or {})
+        self.mcio_field = str(cfg.get("step2_mcio_field", "mcioSn")).strip()
+        if not self.mcio_field or self.mcio_field in {"line", "station", "sn", "empNo"}:
+            raise ValueError("dmz.step2_mcio_field must be a field name that does not collide with line, station, sn, or empNo")
         if self.mode not in {"disabled", "mock", "http"}:
             raise ValueError("dmz.mode must be disabled, mock, or http")
         # Engineering switch for stations without a DMZ link: Step1/Step2 answer
@@ -97,6 +100,11 @@ class DMZClient:
         }
         if path == "/result":
             body.update(self.step2_extra_fields)
+            mcio = str(payload.get("mcio_sn") or "").strip()
+            if not mcio:
+                raise DMZError("MCIO card serial number is missing for SFIS Step2")
+            # After the extras: configuration must never clobber the real serial.
+            body[self.mcio_field] = mcio
         return mapping[path], body
 
     @staticmethod

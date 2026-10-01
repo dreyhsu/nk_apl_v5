@@ -55,7 +55,7 @@ class InspectionStore:
         temporary.replace(path)
 
     def save_attempt(self, *, cycle_id, sn, visual_result, raw_frame, result_frame,
-                     matching, source=None, quality=92):
+                     matching, mcio_sn='', source=None, quality=92):
         captured_at = time.time()
         attempt_id = uuid.uuid4().hex
         stamp = datetime.fromtimestamp(captured_at, timezone.utc)
@@ -67,10 +67,11 @@ class InspectionStore:
         json_path = folder / f'{stem}.json'
         source = dict(source or {})
         payload = {
-            'schema_version': 1,
+            'schema_version': 2,
             'attempt_id': attempt_id,
             'cycle_id': cycle_id,
             'sn': sn,
+            'mcio_sn': mcio_sn,
             'captured_at_utc': stamp.isoformat().replace('+00:00', 'Z'),
             'captured_at_epoch': captured_at,
             'visual_result': visual_result,

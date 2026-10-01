@@ -9,6 +9,7 @@ STEP_LABELS = {
 }
 PHASE_LABELS = {
     'WAITING_SN': 'Waiting for SN', 'SN_CONFIRM': 'Confirm SN',
+    'WAITING_MCIO_SN': 'Waiting for MCIO card SN',
     'RUNNING': 'Inspecting', 'RESULT_CONFIRM': 'PASS - complete',
     'NG': 'NG - remove 30-series product', 'RECOVERY_REQUIRED': 'Reset required',
     'WAITING_DMZ': 'Validating SN', 'REPORTING': 'Saving result',
@@ -36,14 +37,14 @@ def workflow_view(state, stale=False):
     done = int(sop.get('done_count', state.get('step_index', 0)))
     rows = []
     for i, step in enumerate(steps):
-        current_phases = {'RUNNING', 'WAITING_CAPTURE', 'JUDGING', 'NOT_MATCHED'}
+        current_phases = {'RUNNING', 'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'JUDGING', 'NOT_MATCHED'}
         status = 'PENDING' if stale else 'DONE' if i < done else 'CURRENT' if phase in current_phases and i == done else 'PENDING'
         if state.get('inspection_mode') == 'single_snapshot_cover_card' and step['name'] == '50_COVER_CLOSED_CARD_PRESENT':
             label = 'Closed cover + MCIO card'
         else:
             label = STEP_LABELS.get(step['name'], step['name'])
         rows.append({'label': label, 'status': status})
-    accent = RED if phase in {'NG', 'RECOVERY_REQUIRED', 'NOT_MATCHED'} else GREEN if phase in {'RESULT_CONFIRM', 'PASS_CONFIRM'} else AMBER if phase in {'RUNNING', 'WAITING_CAPTURE', 'JUDGING', 'UPLOADING'} else BLUE
+    accent = RED if phase in {'NG', 'RECOVERY_REQUIRED', 'NOT_MATCHED'} else GREEN if phase in {'RESULT_CONFIRM', 'PASS_CONFIRM'} else AMBER if phase in {'RUNNING', 'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'JUDGING', 'UPLOADING'} else BLUE
     return {'phase': PHASE_LABELS.get(phase, phase), 'rows': rows,
             'done': 0 if stale else done, 'accent': accent}
 

@@ -204,7 +204,7 @@ class VideoTestInputs:
         browser_metadata = self._browser_metadata(metadata)
         if self.browser_active and self.current:
             state = self.station.status()['state']
-            if state not in {'WAITING_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
+            if state not in {'WAITING_SN', 'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
                 raise ValueError('The test video cannot be changed while inspection is busy or complete')
             if self.runtime.status().get('recording'):
                 raise ValueError('Stop recording before changing the test video')
@@ -212,7 +212,7 @@ class VideoTestInputs:
             return {'success': True, 'station': self.station.status(), 'input': self.status()}
 
         state = self.station.status()['state']
-        if state in {'WAITING_CAPTURE', 'NOT_MATCHED'}:
+        if state in {'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
             if self.runtime.status().get('recording'):
                 raise ValueError('Stop recording before starting the test video')
             self.station.set_test_mode(True, source='browser_video')

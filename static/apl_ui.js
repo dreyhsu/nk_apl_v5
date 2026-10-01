@@ -4,11 +4,14 @@ let lastStatusAt=0,statusPollBusy=false,statusPollError='',stationBusy=false,sta
 let streamGeneration=0,streamKey='',streamPC=null,streamLocation='',streamRequest=null;
 let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,streamFrameSeq=null,streamFrameAt=0;
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
-const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
-const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_CAPTURE:'SFIS Step1 accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Send SFIS Step2 or terminate this inspection.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+const VIDEO_TEST_STATES=['WAITING_SN','WAITING_MCIO_SN','WAITING_CAPTURE','NOT_MATCHED'];
+const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_MCIO_SN:'Scan MCIO Card SN',SN_CONFIRM:'Validating with SFIS',WAITING_DMZ:'Validating with SFIS',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
+const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product and MCIO card.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Send SFIS Step2 or terminate this inspection.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
-let fixedSNBuffer='';
+const SCAN_FIELDS={snInput:{field:'sn',label:'product serial number',expect:'WAITING_SN',submit:'scanSubmit'},mcioInput:{field:'mcio_sn',label:'MCIO card serial number',expect:'WAITING_MCIO_SN',submit:'mcioSubmit'}};
+const fixedBuffers={snInput:'',mcioInput:''};
+let lastScanStep='';
 let scannerSettingsBusy=false;
 
 const FIXED_DIGIT_KEYS={Digit1:['1','!'],Digit2:['2','@'],Digit3:['3','#'],Digit4:['4','$'],Digit5:['5','%'],Digit6:['6','^'],Digit7:['7','&'],Digit8:['8','*'],Digit9:['9','('],Digit0:['0',')']};
@@ -24,25 +27,29 @@ function fixedScannerCharacter(event){
   return null;
 }
 
+function fixedMaxLength(id){return Number($(id).maxLength||128)}
+
 function replaceSNSelection(input,text){
   const start=input.selectionStart??input.value.length;
   const end=input.selectionEnd??start;
   input.setRangeText(text,start,end,'end');
-  fixedSNBuffer=input.value.slice(0,Number(input.maxLength||128));
-  input.value=fixedSNBuffer;
+  fixedBuffers[input.id]=input.value.slice(0,fixedMaxLength(input.id));
+  input.value=fixedBuffers[input.id];
 }
 
-function setFixedSN(value){
-  fixedSNBuffer=String(value||'').slice(0,Number($('snInput').maxLength||128));
-  $('snInput').value=fixedSNBuffer;
+function setFixedValue(id,value){
+  fixedBuffers[id]=String(value||'').slice(0,fixedMaxLength(id));
+  $(id).value=fixedBuffers[id];
 }
 
-function captureFixedSNKey(event){
-  const input=$('snInput');
+function clearScanBuffers(){setFixedValue('snInput','');setFixedValue('mcioInput','')}
+
+function captureFixedSNKey(id,event){
+  const input=$(id);
   if(input.disabled)return;
   if(event.ctrlKey||event.altKey||event.metaKey)return;
   if(event.code==='Enter'||event.code==='NumpadEnter'){
-    event.preventDefault();event.stopImmediatePropagation();submitSN();return;
+    event.preventDefault();event.stopImmediatePropagation();submitScan(id);return;
   }
   if(event.code==='Backspace'){
     event.preventDefault();event.stopImmediatePropagation();
@@ -50,7 +57,7 @@ function captureFixedSNKey(event){
     const end=input.selectionEnd??start;
     if(start!==end)input.setRangeText('',start,end,'end');
     else if(start>0)input.setRangeText('',start-1,start,'end');
-    fixedSNBuffer=input.value;
+    fixedBuffers[id]=input.value;
     return;
   }
   if(event.code==='Delete'){
@@ -59,13 +66,13 @@ function captureFixedSNKey(event){
     const end=input.selectionEnd??start;
     if(start!==end)input.setRangeText('',start,end,'end');
     else if(start<input.value.length)input.setRangeText('',start,start+1,'end');
-    fixedSNBuffer=input.value;
+    fixedBuffers[id]=input.value;
     return;
   }
   const character=fixedScannerCharacter(event);
   if(character!==null){
     event.preventDefault();event.stopImmediatePropagation();
-    if(input.value.length<Number(input.maxLength||128))replaceSNSelection(input,character);
+    if(input.value.length<fixedMaxLength(id))replaceSNSelection(input,character);
     return;
   }
   if(event.isComposing||event.keyCode===229||event.code==='Space'){
@@ -73,21 +80,28 @@ function captureFixedSNKey(event){
   }
 }
 
-function captureFixedSNPaste(event){
-  const input=$('snInput');
+function captureFixedSNPaste(id,event){
+  const input=$(id);
   event.preventDefault();event.stopImmediatePropagation();
   if(input.disabled)return;
   const text=String(event.clipboardData?.getData('text/plain')||'').replace(/[\r\n]+$/,'');
   if(!text||!/^[\x21-\x7e]+$/.test(text)){
-    stationLocalError='Pasted SN must contain printable ASCII characters without spaces.';
+    stationLocalError='Pasted '+SCAN_FIELDS[id].label+' must contain printable ASCII characters without spaces.';
     renderStation(lastStatus.station);return;
   }
   stationLocalError='';replaceSNSelection(input,text);
 }
 
-function blockNativeSNInput(event){
+function blockNativeSNInput(id,event){
   event.preventDefault();event.stopImmediatePropagation();
-  $('snInput').value=fixedSNBuffer;
+  $(id).value=fixedBuffers[id];
+}
+
+function attachFixedScanner(id){
+  $(id).addEventListener('keydown',event=>captureFixedSNKey(id,event),true);
+  $(id).addEventListener('paste',event=>captureFixedSNPaste(id,event),true);
+  for(const eventName of ['beforeinput','compositionstart','compositionupdate','compositionend','drop'])$(id).addEventListener(eventName,event=>blockNativeSNInput(id,event),true);
+  $(id).addEventListener('input',event=>{event.stopImmediatePropagation();$(id).value=fixedBuffers[id]},true);
 }
 
 function stationFresh(){return !!lastStatusAt&&Date.now()-lastStatusAt<5000&&!statusPollError}
@@ -140,8 +154,9 @@ function renderStation(station){
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;
   const operatorRequired=station?.operator_required!==false;
-  if(operatorRequired&&!signedIn&&fixedSNBuffer)setFixedSN('');
+  if(operatorRequired&&!signedIn&&(fixedBuffers.snInput||fixedBuffers.mcioInput))clearScanBuffers();
   const snEditable=freshStation&&!busy&&station.state==='WAITING_SN'&&(!operatorRequired||signedIn);
+  const mcioEditable=freshStation&&!busy&&station.state==='WAITING_MCIO_SN';
   const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
   connection.classList.toggle('hidden',freshStation);
@@ -152,16 +167,21 @@ function renderStation(station){
   $('opInput').disabled=!canEditOperator;$('opSubmit').disabled=!canEditOperator;
   $('opSwitch').disabled=!canEditOperator;
   $('snInput').disabled=!snEditable;$('scanSubmit').disabled=!snEditable;
-  $('snInput').placeholder=operatorRequired&&!signedIn?'Enter the employee number first':'Scan or enter serial number';
+  $('mcioInput').disabled=!mcioEditable;$('mcioSubmit').disabled=!mcioEditable;
+  $('snInput').placeholder=operatorRequired&&!signedIn?'Enter the employee number first':scanPlaceholder('Scan or enter serial number',station?.sn_prefix);
+  $('mcioInput').placeholder=scanPlaceholder('Scan or enter MCIO card serial number',station?.mcio_sn_prefix);
+  $('snHint').textContent=scanHint('product label',station?.sn_prefix);
+  $('mcioHint').textContent=scanHint('MCIO card label',station?.mcio_sn_prefix);
   const captureReady=browserVideoActive()?browserVideoReady&&!!videoChoice:!!lastStatus.has_raw;
   $('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;
   $('confirmResult').disabled=!freshStation||busy||station.can_confirm_result!==true;
   $('terminateInspection').disabled=!freshStation||busy||station.can_terminate!==true;
   $('stationState').textContent=freshStation?(STATION_LABELS[station.state]||station.state):'Offline';
   $('stationState').className='state '+(!freshStation?'warn':station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning an SN.':browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
-  $('stationSN').textContent=station?.sn||'—';$('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
+  $('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
+  renderStepFlow(station,freshStation);
   $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':'Capture & Inspect';
   const step2Enabled=station?.dmz?.step2_enabled!==false;
   $('confirmResult').textContent=station?.state==='UPLOADING'?(station?.dmz?.bypass?'Saving test result...':'Sending Step2...'):step2Enabled?(station?.dmz?.bypass?'Confirm OK (SFIS bypass)':'Confirm OK & Send SFIS Step2'):'SFIS Step2 disabled';
@@ -195,6 +215,68 @@ function renderStation(station){
   renderTemperature();
 }
 
+function scanPlaceholder(base,prefix){return prefix?base+' ('+prefix+'…)':base}
+function scanHint(label,prefix){
+  return 'Scan the '+label+(prefix?' (starts with '+prefix+')':'')+'. Press Enter to continue.';
+}
+
+// One pure function decides every step's state, so the markup, the dimming and
+// the auto-focus can never disagree about which step the operator is on. Exactly
+// one of steps 2-5 is active: the first one that is not finished yet.
+function stepStatuses(station,freshStation){
+  if(!freshStation)return {1:'pending',2:'pending',3:'pending',4:'pending',5:'pending'};
+  const mcioRequired=station.inspection_mode==='single_snapshot_cover_card';
+  // A disconnected scanner warns but never blocks: the fields still accept typing.
+  const scannerReady=station.scanner?.connected===true||station.scanner?.enabled!==true;
+  const done={2:station.operator_required===false||!!station.operator,
+              3:!!station.sn,
+              4:!mcioRequired||!!station.mcio_sn,
+              5:station.state==='PASS_CONFIRM'};
+  const statuses={1:scannerReady?'done':'warn'};
+  let active=false;
+  for(const step of [2,3,4,5]){
+    if(done[step]&&!active){statuses[step]='done';continue}
+    statuses[step]=active?'pending':'active';
+    active=true;
+  }
+  return statuses;
+}
+
+function renderStepFlow(station,freshStation){
+  const statuses=stepStatuses(station,freshStation);
+  const values={1:'',2:station?.operator||'',3:station?.sn||'',4:station?.mcio_sn||'',
+                5:station?.state==='PASS_CONFIRM'?'OK':''};
+  for(const step of [1,2,3,4,5]){
+    const row=$('step'+step);
+    row.className='stepRow '+statuses[step];
+    $('step'+step+'Value').textContent=values[step];
+  }
+  // A legacy station never collects an MCIO card serial number.
+  $('step4').classList.toggle('hidden',freshStation&&station.inspection_mode!=='single_snapshot_cover_card');
+}
+
+// renderStation runs on every poll and on a 1s timer, so focus must follow step
+// transitions only; grabbing it every tick would fight the operator's caret.
+function activeScanStep(station){
+  if(!stationFresh()||!station)return '';
+  if(station.operator_required!==false&&!station.operator)return 'operator';
+  if(station.state==='WAITING_SN')return 'sn';
+  if(station.state==='WAITING_MCIO_SN')return 'mcio';
+  return 'other';
+}
+
+function syncScanFocus(station,force=false){
+  const step=activeScanStep(station);
+  const target={operator:'opInput',sn:'snInput',mcio:'mcioInput'}[step]||'';
+  if(!force&&step===lastScanStep)return;
+  if(!target){lastScanStep=step;return}
+  // Commit only once the focus really moved: a step whose input is still
+  // disabled must keep retrying on the next tick instead of being skipped.
+  if(currentPage!=='live'||$(target).disabled)return;
+  if(document.activeElement!==$(target))$(target).focus({preventScroll:true});
+  lastScanStep=step;
+}
+
 function renderTemperature(){
   const t=lastStatus.temperature,valid=stationFresh()&&t?.available&&Number.isFinite(t.celsius);
   $('temperatureValue').textContent=valid?t.celsius.toFixed(1)+' °C':'Unavailable';
@@ -210,8 +292,8 @@ function renderInput(){
   const videoTestEnabled=lastStatus.features?.video_test_enabled===true;
   const controlsReady=stationFresh()&&!lastStatus.recording&&!videoBusy;
   const canSwitchInput=videoTestEnabled&&controlsReady&&stationState==='WAITING_SN';
-  const canStartVideo=videoTestEnabled&&controlsReady&&!browserActive&&!!videoChoice&&['WAITING_SN','WAITING_CAPTURE','NOT_MATCHED'].includes(stationState);
-  const canAttachVideo=videoTestEnabled&&controlsReady&&['WAITING_SN','WAITING_CAPTURE','NOT_MATCHED'].includes(stationState);
+  const canStartVideo=videoTestEnabled&&controlsReady&&!browserActive&&!!videoChoice&&VIDEO_TEST_STATES.includes(stationState);
+  const canAttachVideo=videoTestEnabled&&controlsReady&&VIDEO_TEST_STATES.includes(stationState);
   $('videoTestToolbar').classList.toggle('hidden',!videoTestEnabled);
   $('videoFile').disabled=!canAttachVideo;$('uploadVideo').disabled=!canAttachVideo;
   $('uploadVideo').textContent=browserActive&&videoChoice?'Replace Test Video':'Choose Test Video';
@@ -304,15 +386,28 @@ async function selectBrowserInput(camera=false){
   finally{videoBusy=false;renderInput();loadConfig(false)}
 }
 
-async function submitSN(){
-  const station=lastStatus.station;
-  if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
-  if(station.operator_required!==false&&!station.operator){setFixedSN('');$('opInput').focus();return}
-  const sn=fixedSNBuffer;if(!sn){$('snInput').focus();return}
+async function submitScan(id){
+  const spec=SCAN_FIELDS[id],station=lastStatus.station;
+  if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!==spec.expect)return;
+  if(spec.field==='sn'&&station.operator_required!==false&&!station.operator){clearScanBuffers();$('opInput').focus();return}
+  const value=fixedBuffers[id];if(!value){$(id).focus();return}
+  const prefix=spec.field==='sn'?station.sn_prefix:station.mcio_sn_prefix;
+  if(prefix&&!value.toUpperCase().startsWith(String(prefix).toUpperCase())){
+    stationLocalError='Wrong label: the '+spec.label+' must start with '+prefix+'. Scanned: '+value.slice(0,32);
+    renderStation(station);return;
+  }
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn})});if(data.success===false)throw Error(data.error||'SFIS Step1 did not accept the serial number');if(data.station)lastStatus.station=data.station;setFixedSN('');message('SFIS Step1 accepted. Complete the fixture, then select Capture & Inspect.','ok')}
+  // expect lets the station refuse a scan whose step already advanced, which a
+  // grabbed HID scanner can do without this tab noticing.
+  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn:value,expect:spec.field})});if(data.success===false)throw Error(data.error||'The station did not accept this serial number');if(data.station)lastStatus.station=data.station;setFixedValue(id,'');message(scanAcceptedMessage(data.station),'ok')}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Check the current serial number before retrying.':error.message}
-  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station)}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
+}
+
+function scanAcceptedMessage(station){
+  if(station?.state==='WAITING_MCIO_SN')return 'Product serial number accepted. Scan the MCIO card serial number.';
+  if(station?.state==='WAITING_CAPTURE')return 'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.';
+  return 'Serial number accepted.';
 }
 
 async function submitOperator(){
@@ -320,29 +415,28 @@ async function submitOperator(){
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
   const emp=$('opInput').value.trim();if(!emp){$('opInput').focus();return}
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_no:emp})});if(data.success===false)throw Error(data.error||'Employee number was not accepted');if(data.station)lastStatus.station=data.station;setFixedSN('');$('opInput').value='';message('Operator signed in. Scan a serial number.','ok')}
+  try{const data=await req(APP_BASE+'/api/apl/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_no:emp})});if(data.success===false)throw Error(data.error||'Employee number was not accepted');if(data.station)lastStatus.station=data.station;clearScanBuffers();$('opInput').value='';message('Operator signed in. Scan the product serial number.','ok')}
   catch(error){stationLocalError=error.message}
-  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('snInput').disabled)$('snInput').focus()}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
 async function switchOperator(){
   const station=lastStatus.station;
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/operator/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(data.success===false)throw Error(data.error||'Could not switch operator');if(data.station)lastStatus.station=data.station;setFixedSN('');message('Enter the next operator employee number.','ok')}
+  try{const data=await req(APP_BASE+'/api/apl/operator/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(data.success===false)throw Error(data.error||'Could not switch operator');if(data.station)lastStatus.station=data.station;clearScanBuffers();message('Enter the next operator employee number.','ok')}
   catch(error){stationLocalError=error.message}
-  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('opInput').disabled)$('opInput').focus()}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
 async function stationAction(action){
   const station=lastStatus.station,permission={'confirm-result':'can_confirm_result',terminate:'can_terminate'}[action];
   if(!permission||!stationFresh()||stationBusy||station?.request_in_flight||station?.[permission]!==true)return;
-  if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nThe saved inspection evidence will be retained.'))return;
-  let focusNextSN=false;
+  if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nMCIO SN: '+(station.mcio_sn||'—')+'\nBoth serial numbers will be cleared. The saved inspection evidence will be retained.'))return;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?(station?.dmz?.bypass?'Test result saved locally. SFIS was not contacted.':'SFIS Step2 accepted. Ready for the next serial number.'):'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
+  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN')clearScanBuffers();message(action==='confirm-result'?(station?.dmz?.bypass?'Test result saved locally. SFIS was not contacted.':'SFIS Step2 accepted. Ready for the next serial number.'):'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message}
-  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(focusNextSN&&!$('snInput').disabled)$('snInput').focus()}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
 async function captureInspection(){
@@ -513,10 +607,8 @@ function renderStreamStatus(){
 }
 
 $('flowStudioLink').href=APP_BASE+'/flow-studio';
-$('snInput').addEventListener('keydown',captureFixedSNKey,true);
-$('snInput').addEventListener('paste',captureFixedSNPaste,true);
-for(const eventName of ['beforeinput','compositionstart','compositionupdate','compositionend','drop'])$('snInput').addEventListener(eventName,blockNativeSNInput,true);
-$('snInput').addEventListener('input',event=>{event.stopImmediatePropagation();$('snInput').value=fixedSNBuffer},true);
+attachFixedScanner('snInput');
+attachFixedScanner('mcioInput');
 $('scannerSettings').addEventListener('toggle',()=>{if($('scannerSettings').open)refreshScannerDevices()});
 $('scannerDevices').addEventListener('change',()=>renderScannerSelection(lastStatus.station?.scanner));
 const browserVideo=$('testVideo');
@@ -525,6 +617,6 @@ browserVideo.addEventListener('play',()=>{clearBrowserResult();renderInput();ren
 browserVideo.addEventListener('pause',()=>{renderInput();renderStreamStatus()});
 browserVideo.addEventListener('ended',()=>{renderInput();renderStreamStatus()});
 window.addEventListener('pagehide',()=>{closeStream();browserVideo.pause();if(browserVideoURL)URL.revokeObjectURL(browserVideoURL)});
-setInterval(()=>{renderStation(lastStatus.station);renderStreamStatus();updateSettingsActionState();checkStreamFrames();if(streamKind==='webrtc'&&streamStartedAt&&!streamRetryAt&&Date.now()-(streamDecodedAt||streamStartedAt)>15000)failStream('No video received for 15 seconds',streamGeneration);syncStream()},1000);
+setInterval(()=>{renderStation(lastStatus.station);syncScanFocus(lastStatus.station);renderStreamStatus();updateSettingsActionState();checkStreamFrames();if(streamKind==='webrtc'&&streamStartedAt&&!streamRetryAt&&Date.now()-(streamDecodedAt||streamStartedAt)>15000)failStream('No video received for 15 seconds',streamGeneration);syncStream()},1000);
 $('opInput').addEventListener('paste',event=>{const text=String(event.clipboardData?.getData('text/plain')||'').replace(/\s+/g,'');event.preventDefault();$('opInput').value=text.slice(0,Number($('opInput').maxLength||32))},true);
-(async()=>{await pollOnce();pollLoop();await Promise.all([loadConfig(false),loadMedia(false)]);updateSnapshotLabel();const first=!$('opInput').disabled&&!$('operatorSignIn').classList.contains('hidden')?'opInput':!$('snInput').disabled?'snInput':'';if(first)$(first).focus()})().catch(error=>message(error.message,'err'));
+(async()=>{await pollOnce();pollLoop();await Promise.all([loadConfig(false),loadMedia(false)]);updateSnapshotLabel();syncScanFocus(lastStatus.station)})().catch(error=>message(error.message,'err'));

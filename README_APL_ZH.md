@@ -30,9 +30,11 @@ Python 程式。
 （未簽入）
   ↓ 輸入工號簽入
 WAITING_SN
-  ↓ 掃描有效 SN（工號 + SN → SFIS Step1）
+  ↓ 掃描產品 SN（必須 K2V5 開頭；此時尚未呼叫 SFIS）
+WAITING_MCIO_SN
+  ↓ 掃描 MCIO 卡 SN（必須 APL 開頭）→ 工號 + 產品 SN → SFIS Step1
   ├─ Step1 回 NO EMP（工號錯誤）→ 清除簽入，需重新輸入工號
-  ├─ Step1 其他 FAIL / 連線失敗 → 保留簽入，SN 釋放可重掃
+  ├─ Step1 其他 FAIL / 連線失敗 → 保留簽入，兩個 SN 一併釋放可重掃
   └─ Step1 接受 ↓
 WAITING_CAPTURE
   ↓ Capture & Inspect

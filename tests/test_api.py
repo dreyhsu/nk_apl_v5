@@ -37,6 +37,23 @@ class StationAPITests(unittest.TestCase):
         self.station.scan.assert_called_once_with('TEST-SN', source='web')
         self.station.confirm_sn.assert_not_called()
 
+    def test_scan_expect_field_blocks_a_step_that_already_advanced(self):
+        self.station.status.return_value = {
+            'state': 'WAITING_SN', 'sn': '', 'cycle_id': '', 'sop': {},
+        }
+        stale = self.client.post('/api/apl/scan', json={'sn': 'APL-001', 'expect': 'mcio_sn'})
+        self.assertEqual(stale.status_code, 409)
+        self.assertIn('different step', stale.json['error'])
+        self.station.scan.assert_not_called()
+        matched = self.client.post('/api/apl/scan', json={'sn': 'K2V5-001', 'expect': 'sn'})
+        self.assertEqual(matched.status_code, 200)
+        self.station.scan.assert_called_once_with('K2V5-001', source='web')
+
+    def test_scan_expect_field_must_name_a_known_scan_step(self):
+        response = self.client.post('/api/apl/scan', json={'sn': 'K2V5-001', 'expect': 'operator'})
+        self.assertEqual(response.status_code, 400)
+        self.station.scan.assert_not_called()
+
     def test_scanner_candidates_and_selection(self):
         device = {'path': '/dev/input/event6', 'name': 'USB scanner', 'vendor_id': '0c2e',
                   'product_id': '0b41', 'serial': '', 'phys': 'usb-1'}

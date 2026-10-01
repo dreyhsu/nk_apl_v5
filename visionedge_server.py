@@ -232,7 +232,19 @@ def apl_scanner():
 @app.route('/api/apl/scan', methods=['POST'])
 @station_command
 def apl_scan():
-    return station_response(station().scan(json_object().get('sn', ''), source='web'))
+    data = json_object()
+    expect = data.get('expect')
+    if expect is not None:
+        # The browser's view of the step can be a second stale while a HID scan
+        # advances it underneath. Both paths take _station_lock, so checking the
+        # state here is atomic with respect to the scanner thread.
+        wanted = {'sn': 'WAITING_SN', 'mcio_sn': 'WAITING_MCIO_SN'}.get(expect)
+        if wanted is None:
+            raise ValueError('Scan field must be sn or mcio_sn')
+        if station().status()['state'] != wanted:
+            return jsonify({'success': False, 'station': station_status(),
+                            'error': 'The station moved to a different step. Check the panel and scan again.'}), 409
+    return station_response(station().scan(data.get('sn', ''), source='web'))
 
 
 @app.route('/api/apl/operator', methods=['POST'])

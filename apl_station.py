@@ -27,6 +27,10 @@ class APLStation:
             raise ValueError("dmz.bypass_sfis must be a boolean (true/false)")
         self.inspection_mode = str(self.config.get("inspection_mode", "legacy_workflow"))
         self.snapshot_mode = self.inspection_mode == "single_snapshot_cover_card"
+        # Label prefixes let the station tell the right label at the wrong step
+        # apart from a scanner misread, for both the HID and the browser path.
+        self.sn_prefix = self._validated_prefix("sn_prefix", "sn_max_length")
+        self.mcio_sn_prefix = self._validated_prefix("mcio_sn_prefix", "mcio_sn_max_length")
         self.target_state = str(self.config.get("target_state", "50_COVER_CLOSED_CARD_PRESENT"))
         self.config_fingerprint = hashlib.sha256(config_bytes).hexdigest()
         template_hash = hashlib.sha256()
@@ -57,6 +61,7 @@ class APLStation:
         self.state = "WAITING_SN"
         self.cycle_id = ""
         self.sn = ""
+        self.mcio_sn = ""
         self.operator = ""
         self.cycle_operator = None
         self.source = ""
@@ -100,6 +105,25 @@ class APLStation:
         self.evidence = InspectionStore(self.data_dir / "evidence", self.db)
         self._recover()
 
+    def _validated_prefix(self, key, max_key, default_max=128):
+        value = self.config.get(key, "")
+        if not isinstance(value, str):
+            raise ValueError(key + " must be text")
+        value = value.strip()
+        if not value:
+            return ""
+        if any(ord(c) < 33 or ord(c) > 126 for c in value):
+            raise ValueError(key + " must contain printable ASCII characters without spaces")
+        if len(value) >= max(1, int(self.config.get(max_key, default_max))):
+            raise ValueError(key + " must be shorter than " + max_key)
+        return value
+
+    def _serial_prefix(self, which):
+        # Prefix rules are a snapshot-mode operator aid; legacy serials stay free-form.
+        if not self.snapshot_mode:
+            return ""
+        return self.sn_prefix if which == "sn" else self.mcio_sn_prefix
+
     def _empty_matching(self):
         return {"raw": UNKNOWN, "stable": UNKNOWN, "box": None,
                 "roi": list(self.config.get("search_roi", [751, 254, 431, 588])),
@@ -127,10 +151,14 @@ class APLStation:
         self.cycle_fingerprints = detail.get("fingerprints", {})
         self.cycle_station_id = detail.get("station_id", self.config.get("station_id", "NK_APL_50"))
         self.cycle_operator = detail.get("cycle_operator")
+        self.mcio_sn = detail.get("mcio_sn", "")
         if self.cycle_operator and not self.operator:
             self.operator = self.cycle_operator
         self.matching = detail.get("matching") or self._empty_matching()
-        if self.snapshot_mode and row["state"] in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM"}:
+        if self.snapshot_mode and row["state"] == "WAITING_MCIO_SN":
+            self.state = row["state"]
+            self.last_error = "Recovered a product SN waiting for the MCIO card serial number. Scan the MCIO card serial number or terminate this inspection."
+        elif self.snapshot_mode and row["state"] in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM"}:
             self.state = row["state"]
             self.last_error = "Recovered active inspection. The SN remains locked."
         elif self.result == "PASS" and row["state"] in {"RESULT_CONFIRM", "REPORTING"}:
@@ -161,7 +189,8 @@ class APLStation:
                              "last_result": self.last_result, "started_at": self.started_at,
                              "completed_at": self.completed_at, "dmz_profile": self.cycle_profile,
                              "fingerprints": self.cycle_fingerprints, "station_id": self.cycle_station_id,
-                             "cycle_operator": self.cycle_operator, "matching": self.matching}, ensure_ascii=False)
+                             "cycle_operator": self.cycle_operator, "matching": self.matching,
+                             "mcio_sn": self.mcio_sn}, ensure_ascii=False)
         with self.db:
             self.db.execute("""INSERT INTO cycles VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(cycle_id) DO UPDATE SET source=excluded.source,
@@ -186,6 +215,7 @@ class APLStation:
                 "station_id": str(self.cycle_station_id or self.config.get("station_id", "NK_APL_50")),
                 "emp_no": self.cycle_operator or ""}
         if result:
+            body["mcio_sn"] = self.mcio_sn
             body["result"] = "PASS"
             body["started_at"] = self.started_at
             body["completed_at"] = self.completed_at
@@ -220,6 +250,7 @@ class APLStation:
         self._clear_matching()
         self.state = "WAITING_SN"
         self.cycle_id = self.sn = self.source = ""
+        self.mcio_sn = ""
         self.cycle_operator = None
         self.sn_request_id = self.report_request_id = ""
         self.step_index = 0
@@ -298,10 +329,13 @@ class APLStation:
         transport["configuration_matches_cycle"] = self._same_transport()
         transport["configured"] = bool(current_transport.get("configured")) and transport["configuration_matches_cycle"]
         transport["configured_mode"] = current_transport.get("mode")
-        can_terminate = self.state in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
+        can_terminate = self.state in {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
         return copy.deepcopy({
             "inspection_mode": self.inspection_mode, "state": self.state,
             "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
+            "mcio_sn": self.mcio_sn, "sn_prefix": self._serial_prefix("sn"),
+            "mcio_sn_prefix": self._serial_prefix("mcio"),
+            "active_scan_field": "sn" if self.state == "WAITING_SN" else "mcio_sn" if self.state == "WAITING_MCIO_SN" else "",
             "operator": self.operator, "cycle_operator": self.cycle_operator,
             "operator_required": self._operator_required(),
             "local_mode": self.local_mode, "test_mode": self.test_mode,
@@ -327,7 +361,7 @@ class APLStation:
         with self.lock:
             enabled = bool(enabled)
             if self.cycle_id:
-                if not enabled or self.state not in {'WAITING_CAPTURE', 'NOT_MATCHED'}:
+                if not enabled or self.state not in {'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
                     raise ValueError('Test mode can only be enabled before snapshot inspection')
                 self.test_mode = True
                 self.source = str(source or 'browser_video')[:40]
@@ -388,46 +422,99 @@ class APLStation:
             self.operator = ""
             return self._reply()
 
+    def _clean_serial(self, value, label, max_key, default_max=128):
+        if not isinstance(value, str):
+            raise ValueError(label + " must be text")
+        value = value.strip()
+        maximum = max(1, int(self.config.get(max_key, default_max)))
+        if not value or len(value) > maximum or any(ord(c) < 33 or ord(c) > 126 for c in value):
+            raise ValueError(label + " must contain printable ASCII characters without spaces")
+        return value
+
+    def _wrong_label_error(self, field, prefix, instruction, value):
+        return ("Wrong label: the " + field + " must start with " + prefix + ". "
+                + instruction + ". Scanned: " + str(value)[:32])
+
+    def _reject_scan_locked(self, message, event=None):
+        # A wrong label is an operator mistake at a known step, not malformed
+        # input: it must reach the dashboard even when the HID scanner sent it,
+        # so it is a reply plus last_error instead of a raised ValueError.
+        self.last_error = message
+        if event and self.cycle_id:
+            self._save(event, {"error": message})
+        return self._reply(message)
+
     def scan(self, sn, source="web"):
-        if not isinstance(sn, str):
-            raise ValueError("SN must be text")
-        sn = sn.strip()
-        maximum = max(1, int(self.config.get("sn_max_length", 128)))
-        if not sn or len(sn) > maximum or any(ord(c) < 33 or ord(c) > 126 for c in sn):
-            raise ValueError("SN must contain printable ASCII characters without spaces")
+        # The HID scanner is grabbed exclusively and calls straight into here, so
+        # the station itself decides whether a scan is the product or MCIO serial.
+        sn = self._clean_serial(sn, "SN", "sn_max_length")
+        gate_cycle = None
         with self.lock:
             if self.closed:
                 return self._reply("Station is closed")
             if self.storage_error:
                 return self._reply(self.storage_error)
-            if not self.snapshot_mode and self.state == "SN_CONFIRM" and self.sn == sn:
-                return self._reply()
-            if self.state != "WAITING_SN":
-                return self._reply("The current SN is locked. Upload successfully or terminate the inspection before scanning another SN")
-            if self._operator_required() and not self.operator:
-                return self._reply("Enter an operator employee number before scanning")
-            self.cycle_id = uuid.uuid4().hex
-            self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
-            self.sn, self.source = sn, str(source)[:40]
-            self.cycle_operator = self.operator or None
-            self.created_at = time.time()
-            self.started_at = time.time() if self.snapshot_mode else None
-            self.completed_at = None
-            self.cycle_profile = self._transport_profile()
-            self.cycle_fingerprints = {"config_sha256": self.config_fingerprint, "templates_sha256": self.template_fingerprint}
-            self.cycle_station_id = str(self.config.get("station_id", "NK_APL_50"))
-            auto_sfis_check = self.snapshot_mode and not self.local_mode and not self.test_mode
-            self.state = "SN_CONFIRM" if auto_sfis_check or not self.snapshot_mode else "WAITING_CAPTURE"
-            self.result = None
-            self.step_index, self.step_times = 0, []
-            self.last_error = ""
-            self._clear_matching()
-            self._save("SN_SCANNED_AND_STARTED" if self.snapshot_mode else "SN_SCANNED",
-                       {"source": self.source})
-            reply = self._reply()
-            cycle_id = self.cycle_id
-        if not auto_sfis_check:
+            if self.snapshot_mode and self.state == "WAITING_MCIO_SN":
+                reply, gate_cycle = self._accept_mcio_locked(sn, source)
+            else:
+                reply = self._accept_sn_locked(sn, source)
+        if gate_cycle is None:
             return reply
+        return self._gate_step1(gate_cycle)
+
+    def _accept_sn_locked(self, sn, source):
+        if not self.snapshot_mode and self.state == "SN_CONFIRM" and self.sn == sn:
+            return self._reply()
+        if self.snapshot_mode and self.cycle_id and sn in {self.sn, self.mcio_sn}:
+            # A scanner that fires the same label twice must not raise the
+            # locked-SN alarm; the step has simply already been completed.
+            return self._reply()
+        if self.state != "WAITING_SN":
+            return self._reply("The current SN is locked. Upload successfully or terminate the inspection before scanning another SN")
+        if self._operator_required() and not self.operator:
+            return self._reply("Enter an operator employee number before scanning")
+        prefix = self._serial_prefix("sn")
+        if prefix and not sn.upper().startswith(prefix.upper()):
+            # No cycle exists yet, so this rejection must not journal a row.
+            return self._reject_scan_locked(self._wrong_label_error(
+                "product serial number", prefix, "Scan the product serial number label", sn))
+        self.cycle_id = uuid.uuid4().hex
+        self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
+        self.sn, self.source = sn, str(source)[:40]
+        self.mcio_sn = ""
+        self.cycle_operator = self.operator or None
+        self.created_at = time.time()
+        self.started_at = time.time() if self.snapshot_mode else None
+        self.completed_at = None
+        self.cycle_profile = self._transport_profile()
+        self.cycle_fingerprints = {"config_sha256": self.config_fingerprint, "templates_sha256": self.template_fingerprint}
+        self.cycle_station_id = str(self.config.get("station_id", "NK_APL_50"))
+        self.state = "WAITING_MCIO_SN" if self.snapshot_mode else "SN_CONFIRM"
+        self.result = None
+        self.step_index, self.step_times = 0, []
+        self.last_error = ""
+        self._clear_matching()
+        self._save("SN_SCANNED_AND_STARTED" if self.snapshot_mode else "SN_SCANNED",
+                   {"source": self.source})
+        return self._reply()
+
+    def _accept_mcio_locked(self, value, source):
+        if self.request_token is not None:
+            return self._reply("Wait for the current operation to finish"), None
+        value = self._clean_serial(value, "MCIO card serial number", "mcio_sn_max_length")
+        prefix = self._serial_prefix("mcio")
+        if prefix and not value.upper().startswith(prefix.upper()):
+            return self._reject_scan_locked(self._wrong_label_error(
+                "MCIO card serial number", prefix, "Scan the MCIO card label", value),
+                "MCIO_SN_REJECTED"), None
+        self.mcio_sn = value
+        self.last_error = ""
+        auto_sfis_check = self.snapshot_mode and not self.local_mode and not self.test_mode
+        self.state = "SN_CONFIRM" if auto_sfis_check else "WAITING_CAPTURE"
+        self._save("MCIO_SN_SCANNED", {"source": str(source)[:40]})
+        return self._reply(), (self.cycle_id if auto_sfis_check else None)
+
+    def _gate_step1(self, cycle_id):
         result = self._confirm(cycle_id, result=False)
         if result.get("success"):
             return result
@@ -545,7 +632,7 @@ class APLStation:
                 return self._reply("Terminate Inspection is only available in snapshot mode")
             if self.request_token is not None or self.state in {"JUDGING", "UPLOADING"}:
                 return self._reply("Wait for the current operation to finish before terminating")
-            if self.state not in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"}:
+            if self.state not in {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"}:
                 return self._reply("Terminate Inspection is unavailable in the current state")
             self._finish_without_report("OPERATOR_SELECTED_NO_UPLOAD")
             return self._reply()
@@ -553,7 +640,7 @@ class APLStation:
     def _finish_without_report(self, reason):
         if self.snapshot_mode:
             self.last_result = {
-                "cycle_id": self.cycle_id, "sn": self.sn,
+                "cycle_id": self.cycle_id, "sn": self.sn, "mcio_sn": self.mcio_sn,
                 "visual_result": "OK" if self.result == "PASS" else self.result or "NOT_INSPECTED",
                 "cycle_status": "TERMINATED", "upload_status": "NOT_SENT_BY_OPERATOR",
                 "reported": False, "reason": reason, "finished_at": time.time(),
@@ -571,7 +658,7 @@ class APLStation:
             if self.closed or self.storage_error:
                 return self._reply(self.storage_error or "Station is closed")
             self._clear_matching()
-            active_states = {"WAITING_CAPTURE", "NOT_MATCHED", "JUDGING"} if self.snapshot_mode else {"RUNNING", "WAITING_DMZ"}
+            active_states = {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "JUDGING"} if self.snapshot_mode else {"RUNNING", "WAITING_DMZ"}
             if self.state in active_states:
                 self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
                 self.request_token = None
@@ -660,7 +747,7 @@ class APLStation:
             if self.state not in {"WAITING_CAPTURE", "NOT_MATCHED"} or self.request_token is not None:
                 return self._reply("Capture & Inspect is unavailable in the current state")
             token = self.generation
-            cycle_id, sn = self.cycle_id, self.sn
+            cycle_id, sn, mcio_sn = self.cycle_id, self.sn, self.mcio_sn
             self.state, self.last_error = "JUDGING", ""
             self._save("INSPECTION_REQUESTED", {"source": dict(source or {})})
         with self.frame_lock:
@@ -689,7 +776,7 @@ class APLStation:
                 result_frame = self.matcher.draw(frame, snapshot)
                 try:
                     attempt = self.evidence.save_attempt(
-                        cycle_id=cycle_id, sn=sn,
+                        cycle_id=cycle_id, sn=sn, mcio_sn=mcio_sn,
                         visual_result="OK" if accepted else "NOT_MATCHED",
                         raw_frame=frame, result_frame=result_frame, matching=match,
                         source=source, quality=quality,

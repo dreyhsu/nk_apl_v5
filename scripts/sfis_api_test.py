@@ -18,7 +18,12 @@ from dmz_client import DMZClient, DMZError  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sn", required=True, help="Serial number to send to SFIS")
+    parser.add_argument("--sn", required=True, help="Product serial number to send to SFIS")
+    parser.add_argument(
+        "--mcio-sn",
+        default="",
+        help="MCIO card serial number; required with --step2-test because Step2 carries it",
+    )
     parser.add_argument(
         "--step2-test",
         action="store_true",
@@ -31,6 +36,8 @@ def main():
         help="APL workflow configuration file",
     )
     args = parser.parse_args()
+    if args.step2_test and not args.mcio_sn.strip():
+        parser.error("--step2-test also needs --mcio-sn; SFIS Step2 carries the MCIO card serial number")
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
     client_config = copy.deepcopy(config.get("dmz") or {})
@@ -59,6 +66,7 @@ def main():
         step2_payload = {
             **step1_payload,
             "request_id": uuid.uuid4().hex,
+            "mcio_sn": args.mcio_sn.strip(),
             "result": "PASS",
         }
         step2 = client.send("/result", step2_payload)
