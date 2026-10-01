@@ -12,12 +12,16 @@ class DMZError(RuntimeError):
 
 
 def _truthy(env_value, config_value):
-    raw = str(env_value or "").strip().lower()
+    if not isinstance(config_value, bool):
+        raise ValueError("dmz.bypass_sfis must be a boolean (true/false)")
+    if env_value is None or not str(env_value).strip():
+        return config_value
+    raw = str(env_value).strip().lower()
     if raw in ("1", "on", "true", "yes"):
         return True
     if raw in ("0", "off", "false", "no"):
         return False
-    return bool(config_value)
+    raise ValueError("APL_DMZ_BYPASS must be on or off")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -28,6 +32,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class DMZClient:
     def __init__(self, config=None):
         cfg = dict(config or {})
+        if "sfis_enabled" in cfg:
+            raise ValueError("dmz.sfis_enabled is obsolete; explicitly migrate to dmz.bypass_sfis")
         self.mode = os.environ.get("APL_DMZ_MODE", cfg.get("mode", "disabled")).lower()
         self.base_url = os.environ.get("APL_DMZ_URL", cfg.get("base_url", "")).rstrip("/")
         self.timeout = max(0.1, min(60.0, float(cfg.get("timeout_seconds", 5))))

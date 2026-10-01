@@ -37,6 +37,24 @@ class StationAPITests(unittest.TestCase):
         self.station.scan.assert_called_once_with('TEST-SN', source='web')
         self.station.confirm_sn.assert_not_called()
 
+    def test_scanner_candidates_and_selection(self):
+        device = {'path': '/dev/input/event6', 'name': 'USB scanner', 'vendor_id': '0c2e',
+                  'product_id': '0b41', 'serial': '', 'phys': 'usb-1'}
+        self.scanner.status.return_value = {'enabled': True, 'configured': True, 'selected': device}
+        with patch.object(web, 'SCANNER', self.scanner), patch('scanner_selection.devices', return_value=[device]):
+            found = self.client.get('/api/apl/scanner')
+            saved = self.client.post('/api/apl/scanner', json={'path': device['path']})
+        self.assertEqual(found.status_code, 200)
+        self.assertEqual(found.json['devices'][0]['product_id'], '0b41')
+        self.assertEqual(saved.status_code, 200)
+        self.scanner.select.assert_called_once_with(device['path'])
+
+    def test_scanner_selection_rejects_stale_or_invalid_path(self):
+        self.scanner.select.side_effect = ValueError('Device is no longer available')
+        with patch.object(web, 'SCANNER', self.scanner):
+            self.assertEqual(self.client.post('/api/apl/scanner', json={'path': ''}).status_code, 400)
+            self.assertEqual(self.client.post('/api/apl/scanner', json={'path': '/dev/input/event99'}).status_code, 409)
+
     def test_confirm_sn_requires_fresh_camera(self):
         for state in ({'running': False, 'last_frame_at': None}, {'running': True, 'last_frame_at': 1}):
             self.edge.status.return_value = state

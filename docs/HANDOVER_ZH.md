@@ -163,7 +163,7 @@ OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上�
 
 ## 10. SFIS 串接
 
-正式設定使用 `station_mode=remote` 與 `dmz.api_style=sfis`：
+正式串接使用 `station_mode=remote`、`dmz.api_style=sfis`，且必須設 `dmz.bypass_sfis=false`。目前版控設定為工程測試用的 `bypass_sfis=true`；這會在本地接受 Step1／Step2，完全不送 SFIS，不能當作正式過帳成功：
 
 - 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step2 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
 - Step1：掃碼後呼叫 `/api/SFISAPI/Step1`，由 SFIS 驗證「工號 + SN」組合。
@@ -180,6 +180,9 @@ Step2 目前依現有資料先使用與 Step1 相同的四個欄位。若 SFIS �
 測試程式必須在自己的 client 設定中明確加入 `"step2_enabled": true`，不可依賴正式設定檔開啟。
 手動測試使用 `scripts/sfis_api_test.py --sn <SN>` 時只會呼叫 Step1；只有另外明確加入
 `--step2-test` 才會在該次測試程序中暫時允許一筆 Step2，正式設定仍維持關閉。
+這支工具會忽略設定檔的 `bypass_sfis=true` 並改走 HTTP；若環境變數 `APL_DMZ_BYPASS` 強制開啟則拒絕執行，避免假成功。實際執行前需確認網路與 SFIS 測試授權。
+
+舊版的 `dmz.sfis_enabled` 不能與新版直接混用：新版遇到此鍵會拒絕啟動，防止原本 `false` 的離線站台意外連向 SFIS。更新程式時須同步審核 `config/apl_workflow.json`。`bypass_sfis` 只接受 JSON 布林值；正式 Step1／Step2 的 URL、四個欄位、回覆規則及 Step2 安全開關維持原樣。
 
 ## 11. PC 開發驗證
 
@@ -201,8 +204,7 @@ http://127.0.0.1:8772/edge
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-目前基準為 92 項通過。根目錄 `tests/legacy/` 是上游 VisionEdge 測試，不屬於
-這個 92 項指令。
+此指令涵蓋本目錄的測試；`tests/legacy/` 是上游 VisionEdge 測試，不在此指令範圍。PC 結果不能取代 SmartCam HID 與現場 SFIS 驗收。
 
 ## 12. SmartCam 啟動
 

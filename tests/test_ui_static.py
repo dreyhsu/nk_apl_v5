@@ -42,7 +42,18 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261001-1-operator-field-always', html)
+        self.assertIn('apl_ui.js?v=20261001-4-scanner-sfis-merge', html)
+
+    def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('<details id="scannerSettings"', html)
+        self.assertIn('id="scannerRefresh"', html)
+        self.assertIn('id="scannerApply"', html)
+        self.assertIn("if(operatorRequired&&!signedIn&&fixedSNBuffer)setFixedSN('')", script)
+        self.assertIn('function refreshScannerDevices()', script)
+        self.assertIn('function saveScannerSelection()', script)
 
     def test_active_browser_video_can_be_reattached_after_scanning(self):
         root = Path(__file__).resolve().parents[1]

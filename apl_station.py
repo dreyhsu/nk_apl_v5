@@ -20,6 +20,11 @@ class APLStation:
         self.config_path = Path(config_path).resolve()
         config_bytes = self.config_path.read_bytes()
         self.config = json.loads(config_bytes)
+        dmz_config = self.config.get("dmz") or {}
+        if "sfis_enabled" in dmz_config:
+            raise ValueError("dmz.sfis_enabled is obsolete; explicitly migrate to dmz.bypass_sfis")
+        if not isinstance(dmz_config.get("bypass_sfis", False), bool):
+            raise ValueError("dmz.bypass_sfis must be a boolean (true/false)")
         self.inspection_mode = str(self.config.get("inspection_mode", "legacy_workflow"))
         self.snapshot_mode = self.inspection_mode == "single_snapshot_cover_card"
         self.target_state = str(self.config.get("target_state", "50_COVER_CLOSED_CARD_PRESENT"))
@@ -48,7 +53,7 @@ class APLStation:
         self.filter = StableStateFilter(self.config.get("stable_frames", 2))
         self.local_mode = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else local_mode
         self.test_mode = bool(test_mode)
-        self.transport = None if self.local_mode else transport or DMZClient(self.config.get("dmz"))
+        self.transport = None if self.local_mode else transport or DMZClient(dmz_config)
         self.state = "WAITING_SN"
         self.cycle_id = ""
         self.sn = ""
@@ -349,9 +354,8 @@ class APLStation:
             raise ValueError("Cycle ID is stale or missing")
 
     def _operator_required(self):
-        # SFIS Step1 validates the operator + SN pair, so an operator must sign in
-        # before scanning whenever the station will actually reach Step1.
-        return self.snapshot_mode and not self.local_mode and not self.test_mode
+        # An operator must sign in before any snapshot-mode SN, including tests.
+        return self.snapshot_mode
 
     def _is_operator_error(self, text):
         markers = self.config.get("dmz", {}).get("operator_error_markers") or ["NO EMP"]

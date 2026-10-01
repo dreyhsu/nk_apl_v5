@@ -19,7 +19,7 @@ Python 程式。
 - Browser Video Test、時間軸、暫停與指定畫面判定已完成。
 - 原圖、結果圖、JSON、SN、時間與 History 查詢已完成。
 - 影片測試可由設定完全關閉。
-- PC 回歸測試共 92 項通過。
+- PC 回歸測試已涵蓋工號前置、掃碼槍選擇、SFIS bypass 與原有 Step1／Step2 契約；實體 SmartCam 尚需現場驗收。
 - SFIS Step1／Step2 呼叫已接入掃碼與檢測完成流程。
 - SFIS Step2 預設由 `step2_enabled=false` 禁止送出，須明確開啟才可使用。
 - 40 系樣本與 MCIO 插入深度／電性確認尚未納入。
@@ -47,6 +47,8 @@ JUDGING
 
 - 必須先輸入工號簽入才能掃碼；未簽入時 SN 欄位停用，實體掃碼槍也會被站台端擋下。
 - 工號每班簽入一次，存在站台端；之後可連續掃 SN。要換人時按 `Switch operator` 重新輸入。
+- `--demo` 與 Browser Video Test 也須先簽入工號才能掃 SN；測試不會呼叫 SFIS。切換隔離的影片測試站台後，若顯示未簽入，需在該站台再輸入工號。
+- 掃碼槍狀態下方有預設收合的 `Find or change scanner`；新裝置首次選擇後，成功連接過的掃碼槍會保存在 `runtime_data/barcode/scanner_selection.json`，拔插、重啟及已知裝置間更換會自動接回。只有新裝置或辨識不明才需要重新尋找。詳見 [工號與掃碼槍操作](docs/SCANNER_OPERATOR_FLOW_ZH.md)。
 - 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤，系統清除簽入並要求重新輸入工號。
 - Step2 目前 `step2_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
@@ -57,6 +59,14 @@ JUDGING
 - 掃碼後先呼叫 SFIS Step1；只有 Step1 接受才可進入拍照判定。
 - 只有 SFIS Step2 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
+
+### SFIS 測試／正式切換
+
+目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=true`，僅供工程測試：站台會在本地接受 Step1／Step2，**不會呼叫 SFIS**；畫面也會標示 BYPASS。正式串接前須明確改為 `false`，並依 SFIS 規格與現場驗收結果決定是否開啟 `step2_enabled`。`APL_DMZ_BYPASS=on/off` 可覆寫設定，值不明確時程式拒絕啟動。
+
+舊設定鍵 `dmz.sfis_enabled` 已停用；若仍存在，程式會拒絕啟動，避免原本的離線設定在新版被忽略後誤送正式 SFIS。請先備份設定並明確換成 `bypass_sfis`，不可只更新 Python 檔而保留舊 JSON。
+
+獨立的 `scripts/sfis_api_test.py` 是實際 HTTP API 測試工具，會在該次程序關閉設定檔的 bypass，預設僅送 Step1；只有加上 `--step2-test` 才送 Step2。若環境變數仍強制 bypass，工具直接報錯，不會顯示假成功。此工具可能真的更新 SFIS，僅在取得現場測試授權後使用。
 
 ## 判定條件
 

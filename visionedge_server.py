@@ -211,6 +211,24 @@ def apl_status():
     return jsonify({'success': True, 'station': station_status()})
 
 
+@app.route('/api/apl/scanner', methods=['GET', 'POST'])
+def apl_scanner():
+    from scanner_selection import devices
+    if SCANNER is None:
+        return jsonify({'success': False, 'error': 'Scanner selection is unavailable'}), 409
+    if request.method == 'POST':
+        path = json_object().get('path')
+        if not isinstance(path, str) or not path:
+            raise ValueError('Select a scanner from the current device list')
+        try:
+            SCANNER.select(path)
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 409
+        except OSError as exc:
+            return jsonify({'success': False, 'error': 'Cannot save scanner selection: ' + str(exc)}), 500
+    return jsonify({'success': True, 'scanner': SCANNER.status(), 'devices': devices()})
+
+
 @app.route('/api/apl/scan', methods=['POST'])
 @station_command
 def apl_scan():
@@ -810,10 +828,12 @@ def main():
         raise SystemExit(2)
 
     scanner_cfg = json.loads((BASE_DIR / 'config' / 'apl_workflow.json').read_text(encoding='utf-8'))['scanner']
-    if not args.demo and os.name == 'posix' and scanner_cfg.get('enabled'):
-        from barcode_reader import BarcodeReader
-        SCANNER = BarcodeReader(scanner_scan, config=scanner_cfg)
-        SCANNER.start()
+    from scanner_selection import ScannerSelection
+    SCANNER = ScannerSelection(
+        BASE_DIR / 'runtime_data' / 'barcode', scanner_cfg, scanner_scan,
+        can_switch=lambda: station().status()['state'] == 'WAITING_SN',
+    )
+    SCANNER.start()
 
     # Camera auto-start happens only after TLS + port preflight succeeds.
     if EDGE.cfg.auto_start:

@@ -87,7 +87,8 @@ class InputTests(unittest.TestCase):
         self.assertEqual(self.runtime.cfg.backend, 'qti')
 
     def test_active_sn_prevents_switching(self):
-        self.station.scan('IN-PROGRESS')
+        self.assertTrue(self.station.set_operator('OP-TEST')['success'])
+        self.assertTrue(self.station.scan('IN-PROGRESS')['success'])
         with self.assertRaisesRegex(ValueError, 'Finish or reset'):
             self.inputs.restore()
         self.runtime.stop.assert_not_called()
@@ -133,7 +134,8 @@ class InputTests(unittest.TestCase):
             'duration_seconds': 10,
         })
         browser_station = self.inputs.station
-        browser_station.scan('IN-PROGRESS')
+        self.assertTrue(browser_station.set_operator('OP-TEST')['success'])
+        self.assertTrue(browser_station.scan('IN-PROGRESS')['success'])
         before = browser_station.status()
 
         result = self.inputs.start_browser({
@@ -151,7 +153,8 @@ class InputTests(unittest.TestCase):
         self.assertEqual(result['input']['duration_seconds'], 20)
 
     def test_live_cycle_can_switch_to_browser_video_without_resetting_sn(self):
-        self.station.scan('LIVE-TO-VIDEO')
+        self.assertTrue(self.station.set_operator('OP-TEST')['success'])
+        self.assertTrue(self.station.scan('LIVE-TO-VIDEO')['success'])
         before = self.station.status()
 
         result = self.inputs.start_browser({

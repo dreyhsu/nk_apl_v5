@@ -9,6 +9,7 @@ const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_C
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
 let fixedSNBuffer='';
+let scannerSettingsBusy=false;
 
 const FIXED_DIGIT_KEYS={Digit1:['1','!'],Digit2:['2','@'],Digit3:['3','#'],Digit4:['4','$'],Digit5:['5','%'],Digit6:['6','^'],Digit7:['7','&'],Digit8:['8','*'],Digit9:['9','('],Digit0:['0',')']};
 const FIXED_PUNCTUATION_KEYS={Minus:['-','_'],Equal:['=','+'],BracketLeft:['[','{'],BracketRight:[']','}'],Semicolon:[';',':'],Quote:["'",'"'],Backquote:['`','~'],Backslash:['\\','|'],Comma:[',','<'],Period:['.','>'],Slash:['/','?']};
@@ -92,11 +93,54 @@ function blockNativeSNInput(event){
 function stationFresh(){return !!lastStatusAt&&Date.now()-lastStatusAt<5000&&!statusPollError}
 function textValue(value){if(value==null)return '';return typeof value==='string'?value:JSON.stringify(value)}
 function browserVideoActive(){return lastStatus.input?.mode==='browser_video'}
+function renderScannerSelection(scanner){
+  const selected=scanner?.selected||{};
+  const known=Number(scanner?.known_count||0);
+  $('scannerSelected').textContent=scanner?.configured?`${selected.name||'USB scanner'} · VID ${selected.vendor_id} · PID ${selected.product_id} · Serial ${selected.serial||'unavailable'} · ${scanner.device||selected.phys||'disconnected'} · ${known} remembered`:'No scanner selected. A single USB keyboard candidate is selected automatically; choose manually if there are several.';
+  $('scannerRefresh').disabled=scannerSettingsBusy||!scanner?.enabled||!scanner?.platform_supported;
+  $('scannerApply').disabled=scannerSettingsBusy||!scanner?.enabled||!scanner?.platform_supported||!$('scannerDevices').value;
+}
+
+async function refreshScannerDevices(){
+  if(scannerSettingsBusy)return;
+  scannerSettingsBusy=true;$('scannerSettingsError').textContent='';
+  renderScannerSelection(lastStatus.station?.scanner);
+  try{
+    const data=await req(APP_BASE+'/api/apl/scanner');
+    const list=$('scannerDevices'),previous=list.value,selected=data.scanner?.selected||{};
+    list.replaceChildren(new Option('Select a device',''));
+    for(const device of data.devices||[]){
+      const option=new Option(`${device.name||'USB keyboard'} · ${device.vendor_id}:${device.product_id} · ${device.path}`,device.path);
+      list.add(option);
+      if(!previous&&selected.vendor_id===device.vendor_id&&selected.product_id===device.product_id&&selected.name===device.name&&selected.serial===device.serial&&(selected.serial||selected.phys===device.phys))list.value=device.path;
+    }
+    if([...list.options].some(option=>option.value===previous))list.value=previous;
+    if(lastStatus.station)lastStatus.station.scanner=data.scanner;
+    if(!data.scanner.platform_supported)$('scannerSettingsError').textContent='Direct USB scanner discovery is available on Linux SmartCam. On a PC, use the SN field after signing in.';
+    else if(!(data.devices||[]).length)$('scannerSettingsError').textContent='No USB keyboard candidate found. Check the powered hub and USB host mode.';
+  }catch(error){$('scannerSettingsError').textContent=error.message}
+  finally{scannerSettingsBusy=false;renderStation(lastStatus.station)}
+}
+
+async function saveScannerSelection(){
+  const path=$('scannerDevices').value;
+  if(scannerSettingsBusy||!path)return;
+  scannerSettingsBusy=true;$('scannerSettingsError').textContent='';
+  renderScannerSelection(lastStatus.station?.scanner);
+  try{
+    const data=await req(APP_BASE+'/api/apl/scanner',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+    if(lastStatus.station)lastStatus.station.scanner=data.scanner;
+    message('Scanner selected. It will be remembered after the USB connection succeeds.','ok');
+  }catch(error){$('scannerSettingsError').textContent=error.message}
+  finally{scannerSettingsBusy=false;renderStation(lastStatus.station)}
+}
+
 function renderStation(station){
   const fresh=stationFresh(),available=!!station,freshStation=fresh&&available;
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;
   const operatorRequired=station?.operator_required!==false;
+  if(operatorRequired&&!signedIn&&fixedSNBuffer)setFixedSN('');
   const snEditable=freshStation&&!busy&&station.state==='WAITING_SN'&&(!operatorRequired||signedIn);
   const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
@@ -115,12 +159,12 @@ function renderStation(station){
   $('terminateInspection').disabled=!freshStation||busy||station.can_terminate!==true;
   $('stationState').textContent=freshStation?(STATION_LABELS[station.state]||station.state):'Offline';
   $('stationState').className='state '+(!freshStation?'warn':station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning an SN.':browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationSN').textContent=station?.sn||'—';$('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':'Capture & Inspect';
   const step2Enabled=station?.dmz?.step2_enabled!==false;
-  $('confirmResult').textContent=station?.state==='UPLOADING'?'Sending Step2...':step2Enabled?'Confirm OK & Send SFIS Step2':'SFIS Step2 disabled';
+  $('confirmResult').textContent=station?.state==='UPLOADING'?(station?.dmz?.bypass?'Saving test result...':'Sending Step2...'):step2Enabled?(station?.dmz?.bypass?'Confirm OK (SFIS bypass)':'Confirm OK & Send SFIS Step2'):'SFIS Step2 disabled';
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
   const sifiBypass=station?.dmz?.bypass===true;
@@ -132,12 +176,14 @@ function renderStation(station){
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
   if(scanner?.connected){
     scannerClass=' good';scannerTitle='Scanner connected';
-    scannerDetail=scanner.scan_count?scanner.scan_count+' scans received':'Ready for the next serial number';
+    const device=scanner.selected||{};
+    scannerDetail=`${device.name||'USB scanner'} · VID ${device.vendor_id||'—'} · PID ${device.product_id||'—'} · ${scanner.scan_count||0} scans accepted`;
   }else if(scanner?.enabled){
-    scannerClass=' warn';scannerTitle='SmartCam scanner not connected';
-    scannerDetail=textValue(scanner.last_error)||'Check the powered USB hub, or scan into the SN field from this PC.';
+    scannerClass=' warn';scannerTitle=scanner?.known_count?'Reconnecting saved scanner':'SmartCam scanner not connected';
+    scannerDetail=textValue(scanner.last_error)||'Known scanners reconnect automatically. For a new scanner, open Find or change scanner.';
   }
   panel.className='scannerPanel'+scannerClass;$('scannerTitle').textContent=scannerTitle;$('scannerDetail').textContent=scannerDetail;
+  renderScannerSelection(scanner);
   const matching=station?.matching||{};$('stableLabel').textContent=freshStation?matching.stable||'UNKNOWN':'Unavailable';$('rawLabel').textContent=freshStation?matching.raw||'UNKNOWN':'—';
   const result=station?.last_result;
   $('lastResult').textContent=result?'Last '+(result.test_mode?'test':'inspection')+': '+result.sn+' · '+(result.visual_result||result.result||result.cycle_status||'CLOSED')+' · '+(result.upload_status||result.reason||'Saved locally'):'';
@@ -261,6 +307,7 @@ async function selectBrowserInput(camera=false){
 async function submitSN(){
   const station=lastStatus.station;
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
+  if(station.operator_required!==false&&!station.operator){setFixedSN('');$('opInput').focus();return}
   const sn=fixedSNBuffer;if(!sn){$('snInput').focus();return}
   stationBusy=true;stationLocalError='';renderStation(station);
   try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn})});if(data.success===false)throw Error(data.error||'SFIS Step1 did not accept the serial number');if(data.station)lastStatus.station=data.station;setFixedSN('');message('SFIS Step1 accepted. Complete the fixture, then select Capture & Inspect.','ok')}
@@ -273,7 +320,7 @@ async function submitOperator(){
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
   const emp=$('opInput').value.trim();if(!emp){$('opInput').focus();return}
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_no:emp})});if(data.success===false)throw Error(data.error||'Employee number was not accepted');if(data.station)lastStatus.station=data.station;$('opInput').value='';message('Operator signed in. Scan a serial number.','ok')}
+  try{const data=await req(APP_BASE+'/api/apl/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emp_no:emp})});if(data.success===false)throw Error(data.error||'Employee number was not accepted');if(data.station)lastStatus.station=data.station;setFixedSN('');$('opInput').value='';message('Operator signed in. Scan a serial number.','ok')}
   catch(error){stationLocalError=error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('snInput').disabled)$('snInput').focus()}
 }
@@ -282,7 +329,7 @@ async function switchOperator(){
   const station=lastStatus.station;
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!=='WAITING_SN')return;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/operator/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(data.success===false)throw Error(data.error||'Could not switch operator');if(data.station)lastStatus.station=data.station;message('Enter the next operator employee number.','ok')}
+  try{const data=await req(APP_BASE+'/api/apl/operator/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(data.success===false)throw Error(data.error||'Could not switch operator');if(data.station)lastStatus.station=data.station;setFixedSN('');message('Enter the next operator employee number.','ok')}
   catch(error){stationLocalError=error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(!$('opInput').disabled)$('opInput').focus()}
 }
@@ -293,7 +340,7 @@ async function stationAction(action){
   if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nThe saved inspection evidence will be retained.'))return;
   let focusNextSN=false;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?'SFIS Step2 accepted. Ready for the next serial number.':'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
+  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN'){setFixedSN('');focusNextSN=true}message(action==='confirm-result'?(station?.dmz?.bypass?'Test result saved locally. SFIS was not contacted.':'SFIS Step2 accepted. Ready for the next serial number.'):'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);if(focusNextSN&&!$('snInput').disabled)$('snInput').focus()}
 }
@@ -470,6 +517,8 @@ $('snInput').addEventListener('keydown',captureFixedSNKey,true);
 $('snInput').addEventListener('paste',captureFixedSNPaste,true);
 for(const eventName of ['beforeinput','compositionstart','compositionupdate','compositionend','drop'])$('snInput').addEventListener(eventName,blockNativeSNInput,true);
 $('snInput').addEventListener('input',event=>{event.stopImmediatePropagation();$('snInput').value=fixedSNBuffer},true);
+$('scannerSettings').addEventListener('toggle',()=>{if($('scannerSettings').open)refreshScannerDevices()});
+$('scannerDevices').addEventListener('change',()=>renderScannerSelection(lastStatus.station?.scanner));
 const browserVideo=$('testVideo');
 browserVideo.addEventListener('timeupdate',()=>{if(!videoSeeking){$('videoSeek').value=String(browserVideo.currentTime||0);updateVideoProgress(browserVideo.currentTime,videoChoice?.duration_seconds||0)}if(browserCaptureTime!==null&&Math.abs(browserVideo.currentTime-browserCaptureTime)>0.001)clearBrowserResult()});
 browserVideo.addEventListener('play',()=>{clearBrowserResult();renderInput();renderStreamStatus()});
