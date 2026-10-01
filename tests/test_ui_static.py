@@ -15,6 +15,15 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertIn('captureFixedSNKey,true', script)
         self.assertIn("/^[\\x21-\\x7e]+$/", script)
 
+    def test_operator_employee_number_field_is_rendered_in_every_mode(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('id="operatorSignIn"', html)
+        self.assertIn("$('operatorSignIn').classList.toggle('hidden',signedIn)", script)
+        self.assertNotIn('showSignIn', script)
+        self.assertIn("const sifiBypass=station?.dmz?.bypass===true", script)
+
     def test_video_ui_uses_local_browser_playback_and_canvas_capture(self):
         root = Path(__file__).resolve().parents[1]
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
@@ -33,16 +42,18 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20260930-1-sfis-offline-switch', html)
+        self.assertIn('apl_ui.js?v=20261001-4-scanner-sfis-merge', html)
 
-    def test_offline_sfis_mode_reads_as_intentional(self):
+    def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
         script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
-        self.assertIn("station?.dmz?.sfis_enabled===false", script)
-        self.assertIn("'Confirm OK & Save Locally'", script)
-        self.assertIn('SFIS off by configuration', script)
-        self.assertIn('Saved on this station. SFIS is off.', script)
-        self.assertIn("OFFLINE_HINTS", script)
+        self.assertIn('<details id="scannerSettings"', html)
+        self.assertIn('id="scannerRefresh"', html)
+        self.assertIn('id="scannerApply"', html)
+        self.assertIn("if(operatorRequired&&!signedIn&&fixedSNBuffer)setFixedSN('')", script)
+        self.assertIn('function refreshScannerDevices()', script)
+        self.assertIn('function saveScannerSelection()', script)
 
     def test_active_browser_video_can_be_reattached_after_scanning(self):
         root = Path(__file__).resolve().parents[1]

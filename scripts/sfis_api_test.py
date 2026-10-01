@@ -4,6 +4,7 @@
 import argparse
 import copy
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -33,13 +34,14 @@ def main():
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
     client_config = copy.deepcopy(config.get("dmz") or {})
-    # The production setting remains untouched. This process-local override is
-    # possible only when the operator explicitly supplied --step2-test.
+    # This harness must reach SFIS even when the station config is in bypass mode.
+    client_config["bypass_sfis"] = False
     client_config["step2_enabled"] = bool(args.step2_test)
-    # This harness exists to reach the real server, so the offline switch in
-    # the configuration file must not silence it.
-    client_config["sfis_enabled"] = True
     client = DMZClient(client_config)
+    if client.bypass:
+        parser.error("APL_DMZ_BYPASS is active; unset it before testing the real SFIS API")
+    if client.mode != "http" or client.api_style != "sfis":
+        parser.error("The SFIS probe requires dmz.mode=http and dmz.api_style=sfis")
     cycle_id = uuid.uuid4().hex
 
     step1_payload = {

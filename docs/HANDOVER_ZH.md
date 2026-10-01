@@ -163,7 +163,7 @@ OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上�
 
 ## 10. SFIS 串接
 
-正式設定使用 `station_mode=remote` 與 `dmz.api_style=sfis`：
+正式串接使用 `station_mode=remote`、`dmz.api_style=sfis`，且必須設 `dmz.bypass_sfis=false`。目前版控設定為工程測試用的 `bypass_sfis=true`；這會在本地接受 Step1／Step2，完全不送 SFIS，不能當作正式過帳成功：
 
 - 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step2 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
 - Step1：掃碼後呼叫 `/api/SFISAPI/Step1`，由 SFIS 驗證「工號 + SN」組合。
@@ -174,20 +174,15 @@ OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上�
 - Step1 失敗會回到 `WAITING_SN`，不允許拍照判定；若失敗訊息含 `dmz.operator_error_markers`（預設 `NO EMP`）代表工號錯誤，站台會清除簽入並要求重新輸入工號，其餘失敗則保留簽入僅釋放 SN。
 - Step2 失敗會保留 SN、cycle 與相同 request ID，供操作員重試。
 - `APL_DMZ_URL`、`APL_SFIS_LINE`、`APL_SFIS_STATION`、`APL_SFIS_EMP_NO` 可覆寫設定檔。
-- 總開關 `dmz.sfis_enabled`（預設 `true`，缺 key 也視為 `true`）可把 Step1／Step2 整個關掉，供無內網
-  SmartCam 離線驗機。關閉時站台不會建立 `DMZClient`（`transport is None`），所以不可能開 socket；
-  工號改為非必填、掃碼後直接進 `WAITING_CAPTURE`、`Confirm` 改為存本地（`reported=false`、事件
-  `PASS_SAVED_OFFLINE_NO_SFIS`、不寫 outbox）。**這個開關只能改設定檔，沒有環境變數覆寫**，
-  改完必須重新啟動。詳見 README 的「離線模式（無 Shopfloor 連線）」。
-- 注意：離線時不會建立 `DMZClient`，所以 `dmz` 區塊裡 `api_style`／`mode` 的錯字不會在當下被驗證，
-  要等開關關回 `true` 重新啟動時才會在 preflight 爆出來。
 
 Step2 目前依現有資料先使用與 Step1 相同的四個欄位。若 SFIS 的 Step2 Swagger
 另有結果碼或必填欄位，填入 `step2_extra_fields` 並補做現場驗收後才可視為量產完成。
 測試程式必須在自己的 client 設定中明確加入 `"step2_enabled": true`，不可依賴正式設定檔開啟。
-同理 `scripts/sfis_api_test.py` 會在該次程序內強制 `"sfis_enabled": True`，所以即使設定檔處於離線模式，這支手動驗測工具仍會直連正式 SFIS。
 手動測試使用 `scripts/sfis_api_test.py --sn <SN>` 時只會呼叫 Step1；只有另外明確加入
 `--step2-test` 才會在該次測試程序中暫時允許一筆 Step2，正式設定仍維持關閉。
+這支工具會忽略設定檔的 `bypass_sfis=true` 並改走 HTTP；若環境變數 `APL_DMZ_BYPASS` 強制開啟則拒絕執行，避免假成功。實際執行前需確認網路與 SFIS 測試授權。
+
+舊版的 `dmz.sfis_enabled` 不能與新版直接混用：新版遇到此鍵會拒絕啟動，防止原本 `false` 的離線站台意外連向 SFIS。更新程式時須同步審核 `config/apl_workflow.json`。`bypass_sfis` 只接受 JSON 布林值；正式 Step1／Step2 的 URL、四個欄位、回覆規則及 Step2 安全開關維持原樣。
 
 ## 11. PC 開發驗證
 
@@ -209,8 +204,7 @@ http://127.0.0.1:8772/edge
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-目前基準為 128 項通過（其中 4 項因缺少參考影片而 skip）。根目錄 `tests/legacy/` 是上游
-VisionEdge 測試，不屬於這個指令。
+此指令涵蓋本目錄的測試；`tests/legacy/` 是上游 VisionEdge 測試，不在此指令範圍。PC 結果不能取代 SmartCam HID 與現場 SFIS 驗收。
 
 ## 12. SmartCam 啟動
 

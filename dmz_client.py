@@ -11,27 +11,17 @@ class DMZError(RuntimeError):
     pass
 
 
-_TRUE = {"1", "true", "yes", "on"}
-_FALSE = {"0", "false", "no", "off"}
-
-
-def sfis_enabled(config=None):
-    """Master switch for Shopfloor (SFIS) traffic.
-
-    An absent key means enabled, so an existing production config keeps its
-    behaviour. This is distinct from dmz.mode == "disabled", which fails loud on
-    every call; this switch lets the station drop the transport entirely and
-    complete cycles locally, for a SmartCam with no Shopfloor network.
-    """
-    value = dict(config or {}).get("sfis_enabled", True)
-    if isinstance(value, bool):
-        return value
-    text = str(value).strip().lower()
-    if text in _TRUE:
+def _truthy(env_value, config_value):
+    if not isinstance(config_value, bool):
+        raise ValueError("dmz.bypass_sfis must be a boolean (true/false)")
+    if env_value is None or not str(env_value).strip():
+        return config_value
+    raw = str(env_value).strip().lower()
+    if raw in ("1", "on", "true", "yes"):
         return True
-    if text in _FALSE:
+    if raw in ("0", "off", "false", "no"):
         return False
-    raise ValueError("dmz.sfis_enabled must be a boolean (true/false)")
+    raise ValueError("APL_DMZ_BYPASS must be on or off")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -42,7 +32,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class DMZClient:
     def __init__(self, config=None):
         cfg = dict(config or {})
-        self.enabled = sfis_enabled(cfg)
+        if "sfis_enabled" in cfg:
+            raise ValueError("dmz.sfis_enabled is obsolete; explicitly migrate to dmz.bypass_sfis")
         self.mode = os.environ.get("APL_DMZ_MODE", cfg.get("mode", "disabled")).lower()
         self.base_url = os.environ.get("APL_DMZ_URL", cfg.get("base_url", "")).rstrip("/")
         self.timeout = max(0.1, min(60.0, float(cfg.get("timeout_seconds", 5))))
@@ -59,11 +50,22 @@ class DMZClient:
         self.step2_extra_fields = dict(cfg.get("step2_extra_fields") or {})
         if self.mode not in {"disabled", "mock", "http"}:
             raise ValueError("dmz.mode must be disabled, mock, or http")
+        # Engineering switch for stations without a DMZ link: Step1/Step2 answer
+        # OK locally so the whole SN cycle can be exercised. It never changes
+        # what dmz.mode means; it only short-circuits ahead of it.
+        self.bypass = _truthy(os.environ.get("APL_DMZ_BYPASS"), cfg.get("bypass_sfis", False))
         if self.mode == "mock" and not self.base_url:
             self.base_url = "http://127.0.0.1:8791"
         self.opener = urllib.request.build_opener(_NoRedirect())
 
     def status(self):
+        if self.bypass:
+            # The "+bypass" suffix keeps _same_transport() from letting a cycle
+            # that started against the real SFIS be finished by a bypassed
+            # Step2, and records the difference in the cycle history.
+            return {"mode": self.mode + "+bypass", "configured": True,
+                    "step2_enabled": True, "bypass": True,
+                    "label": f"SFIS BYPASS - TEST ONLY ({self.mode})"}
         # The employee number is supplied per request by the signed-in operator,
         # so station readiness no longer depends on a static config value.
         sfis_ready = self.api_style != "sfis" or all(
@@ -119,9 +121,18 @@ class DMZClient:
             normalized["result"] = payload.get("result")
         return normalized
 
+    @staticmethod
+    def _bypass_response(path, payload):
+        reply = {"accepted": True, "bypass": True,
+                 "sn": payload["sn"], "cycle_id": payload["cycle_id"],
+                 "request_id": payload["request_id"]}
+        if path == "/result":
+            reply["result"] = payload.get("result")
+        return reply
+
     def send(self, path, payload):
-        if not self.enabled:
-            raise DMZError("Shopfloor Server calls are disabled by configuration (dmz.sfis_enabled=false)")
+        if self.bypass:
+            return self._bypass_response(path, payload)
         if self.mode == "disabled":
             raise DMZError("DMZ is disabled. Configure production HTTP or explicit mock mode.")
         parsed = urllib.parse.urlsplit(self.base_url)

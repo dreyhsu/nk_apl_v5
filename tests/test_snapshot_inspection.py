@@ -89,6 +89,21 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(accepted["station"]["operator"], "M999")
         self.assertEqual(accepted["station"]["cycle_operator"], "M999")
 
+    def test_test_mode_still_requires_operator_before_sn(self):
+        self.station.clear_operator()
+        self.station.set_test_mode(True)
+        blocked = self.station.scan("TEST-SN", source="scanner")
+        self.assertFalse(blocked["success"])
+        self.assertTrue(blocked["station"]["operator_required"])
+        self.assertEqual(blocked["station"]["sn"], "")
+        self.assertEqual(blocked["station"]["cycle_id"], "")
+        self.assertEqual(self.transport.calls, [])
+        self.assertTrue(self.station.set_operator("M999")["success"])
+        accepted = self.station.scan("TEST-SN", source="scanner")
+        self.assertTrue(accepted["success"])
+        self.assertEqual(accepted["station"]["cycle_operator"], "M999")
+        self.assertEqual(self.transport.calls, [])
+
     def test_operator_cannot_switch_during_active_cycle(self):
         self.station.scan("SN-001")
         self.assertFalse(self.station.set_operator("M888")["success"])
