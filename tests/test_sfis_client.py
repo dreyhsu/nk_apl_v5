@@ -85,6 +85,63 @@ class SFISClientTests(unittest.TestCase):
         opened.assert_not_called()
 
 
+class DMZBypassTests(unittest.TestCase):
+    """The bypass switch answers Step1/Step2 locally without touching dmz.mode."""
+
+    def client(self, **overrides):
+        config = {
+            "mode": "http", "api_style": "sfis",
+            "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+            "allow_insecure_http": True,
+            "line": "TEST", "station": "AI-CAM", "employee_no": "M031978",
+        }
+        config.update(overrides)
+        return DMZClient(config)
+
+    def setUp(self):
+        self.payload = {"sn": "SN-BYPASS", "cycle_id": "cycle-1", "request_id": "request-1"}
+
+    def test_status_reports_configured_bypass_without_hiding_the_real_mode(self):
+        status = self.client(bypass_sfis=True).status()
+        self.assertEqual(status["mode"], "http+bypass")
+        self.assertTrue(status["configured"])
+        self.assertTrue(status["step2_enabled"])
+        self.assertTrue(status["bypass"])
+        self.assertIn("BYPASS", status["label"])
+
+    def test_both_steps_return_accepted_without_any_request(self):
+        client = self.client(bypass_sfis=True, step2_enabled=False)
+        step2_payload = {**self.payload, "result": "PASS"}
+        with patch.object(client.opener, "open") as opened:
+            step1 = client.send("/sn/check", self.payload)
+            step2 = client.send("/result", step2_payload)
+        opened.assert_not_called()
+        DMZClient.validate_response("/sn/check", self.payload, step1)
+        DMZClient.validate_response("/result", step2_payload, step2)
+        self.assertTrue(step1["bypass"])
+        self.assertEqual(step2["result"], "PASS")
+
+    def test_bypass_can_be_forced_from_the_environment(self):
+        with patch.dict("os.environ", {"APL_DMZ_BYPASS": "on"}):
+            self.assertTrue(self.client().bypass)
+        with patch.dict("os.environ", {"APL_DMZ_BYPASS": "off"}):
+            self.assertFalse(self.client(bypass_sfis=True).bypass)
+
+    def test_switch_off_keeps_the_existing_dmz_mode_behaviour(self):
+        disabled = DMZClient({"mode": "disabled"})
+        self.assertFalse(disabled.bypass)
+        self.assertFalse(disabled.status()["configured"])
+        with self.assertRaisesRegex(DMZError, "DMZ is disabled"):
+            disabled.send("/sn/check", self.payload)
+        live = self.client(step2_enabled=True)
+        self.assertEqual(live.status()["mode"], "http")
+        with patch.object(live.opener, "open",
+                          return_value=FakeHTTPResponse({"success": True, "data": "PASS",
+                                                         "message": "", "errorCode": None})) as opened:
+            self.assertTrue(live.send("/sn/check", self.payload)["accepted"])
+        opened.assert_called_once()
+
+
 class GateTransport:
     mode = "http"
     base_url = "http://sfis.example/api/SFISAPI"
@@ -177,6 +234,55 @@ class SnapshotSFISGateTests(unittest.TestCase):
         self.assertTrue(reply["success"])
         self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check", "/result"])
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
+
+
+class SnapshotBypassCycleTests(unittest.TestCase):
+    """A station with no DMZ link can run a full SN cycle when bypass is on."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.config = root / "workflow.json"
+        self.config.write_text(json.dumps({
+            "station_id": "AI-CAM", "station_mode": "remote",
+            "inspection_mode": "single_snapshot_cover_card",
+            "target_state": "50_COVER_CLOSED_CARD_PRESENT",
+            "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED",
+                      "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
+            "template_root": "templates",
+            "dmz": {"mode": "http", "api_style": "sfis", "bypass_sfis": True,
+                    "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+                    "allow_insecure_http": True, "step2_enabled": False,
+                    "line": "TEST", "station": "AI-CAM"},
+        }), encoding="utf-8")
+        # No injected transport: the station builds a real DMZClient.
+        self.station = APLStation(self.config, root / "data", matcher=object())
+        self.station.set_operator("M031978")
+
+    def tearDown(self):
+        self.station.close()
+        self.temp.cleanup()
+
+    def test_step1_and_step2_pass_through_without_network(self):
+        status = self.station.status()
+        self.assertTrue(status["dmz"]["bypass"])
+        self.assertTrue(status["dmz"]["configured"])
+        with patch.object(self.station.transport.opener, "open") as opened:
+            scanned = self.station.scan("SN-BYPASS")
+            self.assertTrue(scanned["success"])
+            self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
+            cycle_id = scanned["station"]["cycle_id"]
+            with self.station.lock:
+                self.station.state = "PASS_CONFIRM"
+                self.station.result = "PASS"
+                self.station.step_index = len(self.station.step_names)
+                self.station.step_times = [123.0]
+                self.station.completed_at = 123.0
+            reply = self.station.confirm_result(cycle_id)
+        opened.assert_not_called()
+        self.assertTrue(reply["success"])
+        self.assertEqual(reply["station"]["state"], "WAITING_SN")
+        self.assertEqual(reply["station"]["last_result"]["dmz_mode"], "http+bypass")
 
 
 if __name__ == "__main__":

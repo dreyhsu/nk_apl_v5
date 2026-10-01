@@ -15,6 +15,15 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertIn('captureFixedSNKey,true', script)
         self.assertIn("/^[\\x21-\\x7e]+$/", script)
 
+    def test_operator_employee_number_field_is_rendered_in_every_mode(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('id="operatorSignIn"', html)
+        self.assertIn("$('operatorSignIn').classList.toggle('hidden',signedIn)", script)
+        self.assertNotIn('showSignIn', script)
+        self.assertIn("const sifiBypass=station?.dmz?.bypass===true", script)
+
     def test_video_ui_uses_local_browser_playback_and_canvas_capture(self):
         root = Path(__file__).resolve().parents[1]
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
@@ -33,7 +42,7 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20260914-3-video-feature-gate', html)
+        self.assertIn('apl_ui.js?v=20261001-1-operator-field-always', html)
 
     def test_active_browser_video_can_be_reattached_after_scanning(self):
         root = Path(__file__).resolve().parents[1]

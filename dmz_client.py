@@ -11,6 +11,15 @@ class DMZError(RuntimeError):
     pass
 
 
+def _truthy(env_value, config_value):
+    raw = str(env_value or "").strip().lower()
+    if raw in ("1", "on", "true", "yes"):
+        return True
+    if raw in ("0", "off", "false", "no"):
+        return False
+    return bool(config_value)
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise DMZError("DMZ redirects are not allowed")
@@ -35,11 +44,22 @@ class DMZClient:
         self.step2_extra_fields = dict(cfg.get("step2_extra_fields") or {})
         if self.mode not in {"disabled", "mock", "http"}:
             raise ValueError("dmz.mode must be disabled, mock, or http")
+        # Engineering switch for stations without a DMZ link: Step1/Step2 answer
+        # OK locally so the whole SN cycle can be exercised. It never changes
+        # what dmz.mode means; it only short-circuits ahead of it.
+        self.bypass = _truthy(os.environ.get("APL_DMZ_BYPASS"), cfg.get("bypass_sfis", False))
         if self.mode == "mock" and not self.base_url:
             self.base_url = "http://127.0.0.1:8791"
         self.opener = urllib.request.build_opener(_NoRedirect())
 
     def status(self):
+        if self.bypass:
+            # The "+bypass" suffix keeps _same_transport() from letting a cycle
+            # that started against the real SFIS be finished by a bypassed
+            # Step2, and records the difference in the cycle history.
+            return {"mode": self.mode + "+bypass", "configured": True,
+                    "step2_enabled": True, "bypass": True,
+                    "label": f"SFIS BYPASS - TEST ONLY ({self.mode})"}
         # The employee number is supplied per request by the signed-in operator,
         # so station readiness no longer depends on a static config value.
         sfis_ready = self.api_style != "sfis" or all(
@@ -95,7 +115,18 @@ class DMZClient:
             normalized["result"] = payload.get("result")
         return normalized
 
+    @staticmethod
+    def _bypass_response(path, payload):
+        reply = {"accepted": True, "bypass": True,
+                 "sn": payload["sn"], "cycle_id": payload["cycle_id"],
+                 "request_id": payload["request_id"]}
+        if path == "/result":
+            reply["result"] = payload.get("result")
+        return reply
+
     def send(self, path, payload):
+        if self.bypass:
+            return self._bypass_response(path, payload)
         if self.mode == "disabled":
             raise DMZError("DMZ is disabled. Configure production HTTP or explicit mock mode.")
         parsed = urllib.parse.urlsplit(self.base_url)

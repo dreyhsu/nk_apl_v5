@@ -102,8 +102,7 @@ function renderStation(station){
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
   connection.classList.toggle('hidden',freshStation);
   const canEditOperator=freshStation&&!busy&&station.state==='WAITING_SN';
-  const showSignIn=freshStation&&operatorRequired&&!signedIn;
-  $('operatorSignIn').classList.toggle('hidden',!showSignIn);
+  $('operatorSignIn').classList.toggle('hidden',signedIn);
   $('operatorBadge').classList.toggle('hidden',!signedIn);
   $('opName').textContent=station?.operator||'—';
   $('opInput').disabled=!canEditOperator;$('opSubmit').disabled=!canEditOperator;
@@ -124,9 +123,10 @@ function renderStation(station){
   $('confirmResult').textContent=station?.state==='UPLOADING'?'Sending Step2...':step2Enabled?'Confirm OK & Send SFIS Step2':'SFIS Step2 disabled';
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
+  const sifiBypass=station?.dmz?.bypass===true;
   const step2Blocked=!browserVideoActive()&&!step2Enabled;
-  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiConfigured?'SFIS configured':'SFIS not configured';
-  $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked?'sifiGood':'sifiWarn');
+  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiBypass?'SFIS BYPASS — Step1/Step2 not sent (test only)':sifiConfigured?'SFIS configured':'SFIS not configured';
+  $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked&&!sifiBypass?'sifiGood':'sifiWarn');
   $('stationError').textContent=[stationLocalError,textValue(station?.last_error)].filter(Boolean).join('\n');
   const scanner=station?.scanner,panel=$('scannerPanel');
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
