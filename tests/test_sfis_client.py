@@ -28,7 +28,7 @@ class SFISClientTests(unittest.TestCase):
             "mode": "http", "api_style": "sfis",
             "base_url": "http://10.0.28.125:8097/api/SFISAPI",
             "allow_insecure_http": True,
-            "step2_enabled": True,
+            "step4_enabled": True,
             "line": "TEST", "station": "AI-CAM", "employee_no": "M031978",
         })
         self.payload = {"sn": "M0001000P153B52D01S", "cycle_id": "cycle-1", "request_id": "request-1",
@@ -75,21 +75,25 @@ class SFISClientTests(unittest.TestCase):
                 "success": True, "data": "FAIL1,PASM1 ", "message": "", "errorCode": None,
             })
 
-    def test_step2_uses_same_confirmed_fields_and_normalizes_ack(self):
+    def test_step4_uses_same_confirmed_fields_and_normalizes_ack(self):
         payload = {**self.payload, "result": "PASS"}
         result, request = self.send_with("/result", {
             "success": True, "data": "OK", "message": "", "errorCode": None,
         }, payload)
-        self.assertEqual(request.full_url, "http://10.0.28.125:8097/api/SFISAPI/Step2")
-        self.assertEqual(json.loads(request.data)["sn"], payload["sn"])
+        self.assertEqual(request.full_url, "http://10.0.28.125:8097/api/SFISAPI/Step4")
+        body = json.loads(request.data)
+        self.assertEqual(body["sn"], payload["sn"])
+        # Step4 uses the curl casing: EmpNo (not empNo) and mciosn.
+        self.assertEqual(body["EmpNo"], "M031978")
+        self.assertNotIn("empNo", body)
         self.assertEqual(result["result"], "PASS")
 
-    def test_step2_carries_the_mcio_card_serial_number(self):
+    def test_step4_carries_the_mcio_card_serial_number(self):
         payload = {**self.payload, "result": "PASS"}
         _, request = self.send_with("/result", {
             "success": True, "data": "OK", "message": "", "errorCode": None,
         }, payload)
-        self.assertEqual(json.loads(request.data)["mcioSn"], "APL0012345")
+        self.assertEqual(json.loads(request.data)["mciosn"], "APL0012345")
 
     def test_step1_body_is_unchanged_by_the_mcio_card_serial_number(self):
         _, request = self.send_with("/sn/check", {
@@ -100,33 +104,33 @@ class SFISClientTests(unittest.TestCase):
             "sn": "M0001000P153B52D01S", "empNo": "M031978",
         })
 
-    def test_step2_without_an_mcio_card_serial_number_is_refused(self):
+    def test_step4_without_an_mcio_card_serial_number_is_refused(self):
         payload = {**self.payload, "result": "PASS", "mcio_sn": ""}
         with patch.object(self.client.opener, "open") as opened:
             with self.assertRaisesRegex(DMZError, "MCIO card serial number is missing"):
                 self.client.send("/result", payload)
         opened.assert_not_called()
 
-    def test_step2_extra_fields_cannot_overwrite_the_mcio_card_serial_number(self):
+    def test_step4_extra_fields_cannot_overwrite_the_mcio_card_serial_number(self):
         client = DMZClient({
             "mode": "http", "api_style": "sfis",
             "base_url": "http://10.0.28.125:8097/api/SFISAPI",
-            "allow_insecure_http": True, "step2_enabled": True,
+            "allow_insecure_http": True, "step4_enabled": True,
             "line": "TEST", "station": "AI-CAM", "employee_no": "M031978",
-            "step2_extra_fields": {"mcioSn": "SPOOFED"},
+            "step4_extra_fields": {"mciosn": "SPOOFED"},
         })
         payload = {**self.payload, "result": "PASS"}
         with patch.object(client.opener, "open", return_value=FakeHTTPResponse({
             "success": True, "data": "OK", "message": "", "errorCode": None,
         })) as opened:
             client.send("/result", payload)
-        self.assertEqual(json.loads(opened.call_args.args[0].data)["mcioSn"], "APL0012345")
+        self.assertEqual(json.loads(opened.call_args.args[0].data)["mciosn"], "APL0012345")
 
     def test_mcio_field_name_cannot_collide_with_a_documented_field(self):
-        with self.assertRaisesRegex(ValueError, "step2_mcio_field"):
-            DMZClient({"mode": "http", "api_style": "sfis", "step2_mcio_field": "sn"})
+        with self.assertRaisesRegex(ValueError, "step4_mcio_field"):
+            DMZClient({"mode": "http", "api_style": "sfis", "step4_mcio_field": "sn"})
 
-    def test_step2_is_blocked_without_explicit_test_switch(self):
+    def test_step4_is_blocked_without_explicit_test_switch(self):
         client = DMZClient({
             "mode": "http", "api_style": "sfis",
             "base_url": "http://10.0.28.125:8097/api/SFISAPI",
@@ -135,13 +139,13 @@ class SFISClientTests(unittest.TestCase):
         })
         payload = {**self.payload, "result": "PASS"}
         with patch.object(client.opener, "open") as opened:
-            with self.assertRaisesRegex(DMZError, "Step2 is disabled"):
+            with self.assertRaisesRegex(DMZError, "Step4 is disabled"):
                 client.send("/result", payload)
         opened.assert_not_called()
 
 
 class DMZBypassTests(unittest.TestCase):
-    """The bypass switch answers Step1/Step2 locally without touching dmz.mode."""
+    """The bypass switch answers Step1/Step4 locally without touching dmz.mode."""
 
     def client(self, **overrides):
         config = {
@@ -160,21 +164,21 @@ class DMZBypassTests(unittest.TestCase):
         status = self.client(bypass_sfis=True).status()
         self.assertEqual(status["mode"], "http+bypass")
         self.assertTrue(status["configured"])
-        self.assertTrue(status["step2_enabled"])
+        self.assertTrue(status["step4_enabled"])
         self.assertTrue(status["bypass"])
         self.assertIn("BYPASS", status["label"])
 
     def test_both_steps_return_accepted_without_any_request(self):
-        client = self.client(bypass_sfis=True, step2_enabled=False)
-        step2_payload = {**self.payload, "result": "PASS"}
+        client = self.client(bypass_sfis=True, step4_enabled=False)
+        step4_payload = {**self.payload, "result": "PASS"}
         with patch.object(client.opener, "open") as opened:
             step1 = client.send("/sn/check", self.payload)
-            step2 = client.send("/result", step2_payload)
+            step4 = client.send("/result", step4_payload)
         opened.assert_not_called()
         DMZClient.validate_response("/sn/check", self.payload, step1)
-        DMZClient.validate_response("/result", step2_payload, step2)
+        DMZClient.validate_response("/result", step4_payload, step4)
         self.assertTrue(step1["bypass"])
-        self.assertEqual(step2["result"], "PASS")
+        self.assertEqual(step4["result"], "PASS")
 
     def test_bypass_can_be_forced_from_the_environment(self):
         with patch.dict("os.environ", {"APL_DMZ_BYPASS": "on"}):
@@ -195,7 +199,7 @@ class DMZBypassTests(unittest.TestCase):
         self.assertFalse(disabled.status()["configured"])
         with self.assertRaisesRegex(DMZError, "DMZ is disabled"):
             disabled.send("/sn/check", self.payload)
-        live = self.client(step2_enabled=True)
+        live = self.client(step4_enabled=True)
         self.assertEqual(live.status()["mode"], "http")
         with patch.object(live.opener, "open",
                           return_value=FakeHTTPResponse({"success": True, "data": "PASS",
@@ -298,14 +302,14 @@ class SnapshotSFISGateTests(unittest.TestCase):
         self.assertEqual(self.station.operator, "M031978")
         self.assertEqual(reply["station"]["operator"], "M031978")
 
-    def test_step2_payload_carries_both_serial_numbers(self):
+    def test_step4_payload_carries_both_serial_numbers(self):
         self.start_cycle()
         payload = self.station._payload(result=True)
         self.assertEqual(payload["sn"], "K2V5-001")
         self.assertEqual(payload["mcio_sn"], "APL-001")
         self.assertNotIn("mcio_sn", self.station._payload(result=False))
 
-    def test_completed_ok_runs_step2_and_unlocks(self):
+    def test_completed_ok_runs_step4_and_unlocks(self):
         scanned = self.start_cycle(mcio="APL-OK")
         cycle_id = scanned["station"]["cycle_id"]
         with self.station.lock:
@@ -337,7 +341,7 @@ class SnapshotBypassCycleTests(unittest.TestCase):
             "template_root": "templates",
             "dmz": {"mode": "http", "api_style": "sfis", "bypass_sfis": True,
                     "base_url": "http://10.0.28.125:8097/api/SFISAPI",
-                    "allow_insecure_http": True, "step2_enabled": False,
+                    "allow_insecure_http": True, "step4_enabled": False,
                     "line": "TEST", "station": "AI-CAM"},
         }), encoding="utf-8")
         # No injected transport: the station builds a real DMZClient.
@@ -348,7 +352,7 @@ class SnapshotBypassCycleTests(unittest.TestCase):
         self.station.close()
         self.temp.cleanup()
 
-    def test_step1_and_step2_pass_through_without_network(self):
+    def test_step1_and_step4_pass_through_without_network(self):
         status = self.station.status()
         self.assertTrue(status["dmz"]["bypass"])
         self.assertTrue(status["dmz"]["configured"])

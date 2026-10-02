@@ -53,18 +53,18 @@ class ManualSFISProbeTests(unittest.TestCase):
         self.config.write_text(json.dumps({
             "station_id": "AI-CAM",
             "dmz": {"mode": "http", "api_style": "sfis", "bypass_sfis": True,
-                    "step2_enabled": False, "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+                    "step4_enabled": False, "base_url": "http://10.0.28.125:8097/api/SFISAPI",
                     "line": "TEST", "station": "AI-CAM", "allow_insecure_http": True},
         }), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_probe_overrides_config_bypass_but_does_not_send_step2(self):
+    def test_probe_overrides_config_bypass_but_does_not_send_step4(self):
         observed = []
 
         def fake_send(client, path, payload):
-            observed.append((client.bypass, client.step2_enabled, path))
+            observed.append((client.bypass, client.step4_enabled, path))
             return {"sfis_response": {"success": True}}
 
         argv = ["sfis_api_test.py", "--sn", "SN-001", "--config", str(self.config)]

@@ -25,7 +25,7 @@ SmartCam 直接部署慣用目錄：
 
 完成 OK 後由操作員選擇：
 
-- `Confirm OK & Send SFIS Step2`：視覺判定 OK 後回報 SFIS。
+- `Confirm OK & Send SFIS Step4`：視覺判定 OK 後回報 SFIS。
 - `Terminate Inspection`：不上傳，保存終止紀錄並開放下一筆 SN。
 
 ## 3. 核心元件
@@ -164,36 +164,36 @@ OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上�
 
 ## 10. SFIS 串接
 
-正式串接使用 `station_mode=remote`、`dmz.api_style=sfis`，且必須設 `dmz.bypass_sfis=false`。目前版控設定為工程測試用的 `bypass_sfis=true`；這會在本地接受 Step1／Step2，完全不送 SFIS，不能當作正式過帳成功：
+正式串接使用 `station_mode=remote`、`dmz.api_style=sfis`，且必須設 `dmz.bypass_sfis=false`。目前版控設定為工程測試用的 `bypass_sfis=true`；這會在本地接受 Step1／Step4，完全不送 SFIS，不能當作正式過帳成功：
 
-- 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step2 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
+- 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step4 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
 - Step1：**兩個 SN 都掃完後**才呼叫 `/api/SFISAPI/Step1`，由 SFIS 驗證「工號 + 產品 SN」組合。Step1 的 body 不含 MCIO 卡序號。
-- Step2：影像 OK 且操作員確認後呼叫 `/api/SFISAPI/Step2`。
-- Step2 有獨立安全開關 `step2_enabled`，預設為 `false`；未明確開啟時不會送出 HTTP request，畫面並會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561）。
+- Step4：影像 OK 且操作員確認後呼叫 `/api/SFISAPI/Step4`。
+- Step4 有獨立安全開關 `step4_enabled`，預設為 `false`；未明確開啟時不會送出 HTTP request，畫面並會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561）。
 - 目前已確認欄位：`line`、`station`、`sn`、`empNo`（小寫，依 Swagger）；`empNo` 取簽入工號，未簽入時 fallback 設定檔 `employee_no`。
-- Step2 另外帶 MCIO 卡序號，欄位名由 `dmz.step2_mcio_field` 決定（預設 `mcioSn`）。**此欄位名尚未經 SFIS Swagger 確認**，上線前必須用 `scripts/sfis_api_test.py --step2-test --mcio-sn <APL...>` 對真機驗證；欄位名不符時只需改設定檔，不必改程式。缺 MCIO 序號時 Step2 會在送出前就被擋下。
+- Step4 另外帶 MCIO 卡序號，欄位名由 `dmz.step4_mcio_field` 決定（預設 `mciosn`）。**此欄位名尚未經 SFIS Swagger 確認**，上線前必須用 `scripts/sfis_api_test.py --step4-test --mcio-sn <APL...>` 對真機驗證；欄位名不符時只需改設定檔，不必改程式。缺 MCIO 序號時 Step4 會在送出前就被擋下。
 - API 即使回覆 `success=true`，只要 `data` 以 `FAIL` 開頭仍視為業務拒絕。
 - Step1 失敗會回到 `WAITING_SN` 並同時清掉兩個 SN，不允許拍照判定；若失敗訊息含 `dmz.operator_error_markers`（預設 `NO EMP`）代表工號錯誤，站台會清除簽入並要求重新輸入工號，其餘失敗則保留簽入僅釋放 SN。
-- Step2 失敗會保留 SN、cycle 與相同 request ID，供操作員重試。
+- Step4 失敗會保留 SN、cycle 與相同 request ID，供操作員重試。
 - `APL_DMZ_URL`、`APL_SFIS_LINE`、`APL_SFIS_STATION`、`APL_SFIS_EMP_NO` 可覆寫設定檔。
 
-Step2 目前依現有資料先使用與 Step1 相同的四個欄位。若 SFIS 的 Step2 Swagger
-另有結果碼或必填欄位，填入 `step2_extra_fields` 並補做現場驗收後才可視為量產完成。
-測試程式必須在自己的 client 設定中明確加入 `"step2_enabled": true`，不可依賴正式設定檔開啟。
+Step4 目前依現有資料先使用與 Step1 相同的四個欄位。若 SFIS 的 Step4 Swagger
+另有結果碼或必填欄位，填入 `step4_extra_fields` 並補做現場驗收後才可視為量產完成。
+測試程式必須在自己的 client 設定中明確加入 `"step4_enabled": true`，不可依賴正式設定檔開啟。
 手動測試使用 `scripts/sfis_api_test.py --sn <SN>` 時只會呼叫 Step1；只有另外明確加入
-`--step2-test` 才會在該次測試程序中暫時允許一筆 Step2，正式設定仍維持關閉。使用
-`--step2-test` 時必須同時給 `--mcio-sn`。
+`--step4-test` 才會在該次測試程序中暫時允許一筆 Step4，正式設定仍維持關閉。使用
+`--step4-test` 時必須同時給 `--mcio-sn`。
 
 ### 升級注意（兩段掃碼版本）
 
-`_recover` 會把升級前就存在的 `PASS_CONFIRM` cycle 以空的 `mcio_sn` 還原，該筆的 Step2 會以
+`_recover` 會把升級前就存在的 `PASS_CONFIRM` cycle 以空的 `mcio_sn` 還原，該筆的 Step4 會以
 `MCIO card serial number is missing` 失敗（可按 Terminate 脫身，證據保留，但該台要重跑）。
 **升級前請先把所有未結束的 cycle 收到 `WAITING_SN`。** 另外 `static/apl_ui.js` 的 `?v=` 版本字串
 已改為 `20261002-1-mcio-two-scan`，更新時務必連同 `edge_dashboard.html` 一起部署，否則瀏覽器會
 拿舊 UI 配新後端，站台會停在 `WAITING_MCIO_SN` 且畫面沒有 MCIO 欄位。
 這支工具會忽略設定檔的 `bypass_sfis=true` 並改走 HTTP；若環境變數 `APL_DMZ_BYPASS` 強制開啟則拒絕執行，避免假成功。實際執行前需確認網路與 SFIS 測試授權。
 
-舊版的 `dmz.sfis_enabled` 不能與新版直接混用：新版遇到此鍵會拒絕啟動，防止原本 `false` 的離線站台意外連向 SFIS。更新程式時須同步審核 `config/apl_workflow.json`。`bypass_sfis` 只接受 JSON 布林值；正式 Step1／Step2 的 URL、四個欄位、回覆規則及 Step2 安全開關維持原樣。
+舊版的 `dmz.sfis_enabled` 不能與新版直接混用：新版遇到此鍵會拒絕啟動，防止原本 `false` 的離線站台意外連向 SFIS。更新程式時須同步審核 `config/apl_workflow.json`。`bypass_sfis` 只接受 JSON 布林值；正式 Step1／Step4 的 URL、四個欄位、回覆規則及 Step4 安全開關維持原樣。
 
 ## 11. PC 開發驗證
 
@@ -276,7 +276,7 @@ TLS private key 必須受控，不應任意散布或放入一般交接壓縮檔�
 
 ## 15. 尚未完成
 
-- SFIS Step2 schema 確認與現場網路驗收。
+- SFIS Step4 schema 確認與現場網路驗收。
 - 40 系 Golden Samples。
 - MCIO 插入深度及電性狀態判定。
 - 現場不同照明、角度、手部遮擋與長時間準確率測試。

@@ -258,8 +258,8 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(self.transport.calls[-1][1]["mcio_sn"], "APL-001")
 
 
-class AutomaticStep2Tests(unittest.TestCase):
-    """Backend contracts the automatic Step2 in captureInspection depends on."""
+class AutomaticStep4Tests(unittest.TestCase):
+    """Backend contracts the automatic Step4 in captureInspection depends on."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -314,7 +314,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         return cycle_id
 
     def test_bypass_closes_the_unit_without_any_http(self):
-        station = self.station(bypass_sfis=True, step2_enabled=False)
+        station = self.station(bypass_sfis=True, step4_enabled=False)
         with patch.object(station.transport.opener, "open") as opened:
             cycle_id = self.reach_pass_confirm(station)
             # The gate the UI reads before sending automatically.
@@ -327,13 +327,13 @@ class AutomaticStep2Tests(unittest.TestCase):
         self.assertEqual(reply["station"]["mcio_sn"], "")
         self.assertTrue(reply["station"]["last_result"]["reported"])
 
-    def test_disabled_step2_closes_the_gate_so_the_ui_never_tries(self):
-        station = self.station(bypass_sfis=False, step2_enabled=False)
+    def test_disabled_step4_closes_the_gate_so_the_ui_never_tries(self):
+        station = self.station(bypass_sfis=False, step4_enabled=False)
         self.reach_pass_confirm(station)
         self.assertFalse(station.status()["can_confirm_result"])
 
     def test_business_rejection_stays_on_pass_confirm_and_offers_a_retry(self):
-        station = self.station(bypass_sfis=False, step2_enabled=True)
+        station = self.station(bypass_sfis=False, step4_enabled=True)
         cycle_id = self.reach_pass_confirm(station)
         with patch.object(station.transport, "send",
                           side_effect=DMZError("SFIS business validation failed: FAIL1,PASM1")):
@@ -343,7 +343,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         status = station.status()
         self.assertEqual(status["state"], "PASS_CONFIRM")
         self.assertIn("FAIL1,PASM1", status["last_error"])
-        # True again, so the UI re-shows Retry SFIS Step2 instead of a dead end.
+        # True again, so the UI re-shows Retry SFIS Step4 instead of a dead end.
         self.assertTrue(status["can_confirm_result"])
         self.assertEqual(status["sn"], "K2V5-001")
         events = [row["event"] for row in
@@ -351,7 +351,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         self.assertIn("REPORT_RETRY_REQUIRED", events)
 
     def test_a_retry_while_the_request_is_in_flight_is_refused(self):
-        station = self.station(bypass_sfis=True, step2_enabled=False)
+        station = self.station(bypass_sfis=True, step4_enabled=False)
         cycle_id = self.reach_pass_confirm(station)
         with station.lock:
             station.request_token = "in-flight"
@@ -362,7 +362,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         self.assertIn("not available in the current state", reply["error"])
 
     def test_bypass_lets_a_browser_test_close_its_own_cycle(self):
-        station = self.station(bypass_sfis=True, step2_enabled=False,
+        station = self.station(bypass_sfis=True, step4_enabled=False,
                                local_mode=True, test_mode=True)
         cycle_id = self.reach_pass_confirm(station)
         profile = station.status()["dmz"]
@@ -376,7 +376,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         self.assertTrue(reply["station"]["last_result"]["test_mode"])
 
     def test_without_bypass_a_browser_test_can_never_post(self):
-        station = self.station(bypass_sfis=False, step2_enabled=True,
+        station = self.station(bypass_sfis=False, step4_enabled=True,
                                local_mode=True, test_mode=True)
         cycle_id = self.reach_pass_confirm(station)
         self.assertEqual(station.status()["dmz"]["label"], "BROWSER TEST - SFIS DISABLED")
@@ -387,7 +387,7 @@ class AutomaticStep2Tests(unittest.TestCase):
         self.assertEqual(station.status()["state"], "PASS_CONFIRM")
 
     def test_the_automatic_send_still_carries_the_mcio_card_serial_number(self):
-        station = self.station(bypass_sfis=False, step2_enabled=True)
+        station = self.station(bypass_sfis=False, step4_enabled=True)
         cycle_id = self.reach_pass_confirm(station)
         sent = []
         with patch.object(station.transport, "send",

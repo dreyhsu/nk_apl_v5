@@ -19,9 +19,9 @@ Python 程式。
 - Browser Video Test、時間軸、暫停與指定畫面判定已完成。
 - 原圖、結果圖、JSON、SN、時間與 History 查詢已完成。
 - 影片測試可由設定完全關閉。
-- PC 回歸測試已涵蓋工號前置、掃碼槍選擇、SFIS bypass 與原有 Step1／Step2 契約；實體 SmartCam 尚需現場驗收。
-- SFIS Step1／Step2 呼叫已接入掃碼與檢測完成流程。
-- SFIS Step2 預設由 `step2_enabled=false` 禁止送出，須明確開啟才可使用。
+- PC 回歸測試已涵蓋工號前置、掃碼槍選擇、SFIS bypass 與原有 Step1／Step4 契約；實體 SmartCam 尚需現場驗收。
+- SFIS Step1／Step4 呼叫已接入掃碼與檢測完成流程。
+- SFIS Step4 預設由 `step4_enabled=false` 禁止送出，須明確開啟才可使用。
 - 40 系樣本與 MCIO 插入深度／電性確認尚未納入。
 
 ## 正式操作流程
@@ -41,7 +41,7 @@ WAITING_CAPTURE
 JUDGING
   ├─ 不符合 → NOT_MATCHED → 調整後重新拍照
   └─ 符合   → PASS_CONFIRM
-                  ├─ SFIS Step2 成功 → COMPLETE → 開放下一筆 SN
+                  ├─ SFIS Step4 成功 → COMPLETE → 開放下一筆 SN
                   └─ Terminate Inspection → TERMINATED → 開放下一筆 SN
 ```
 
@@ -52,23 +52,23 @@ JUDGING
 - `--demo` 與 Browser Video Test 也須先簽入工號才能掃 SN；測試不會呼叫 SFIS。切換隔離的影片測試站台後，若顯示未簽入，需在該站台再輸入工號。
 - 掃碼槍狀態下方有預設收合的 `Find or change scanner`；新裝置首次選擇後，成功連接過的掃碼槍會保存在 `runtime_data/barcode/scanner_selection.json`，拔插、重啟及已知裝置間更換會自動接回。只有新裝置或辨識不明才需要重新尋找。詳見 [工號與掃碼槍操作](docs/SCANNER_OPERATOR_FLOW_ZH.md)。
 - 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤，系統清除簽入並要求重新輸入工號。
-- Step2 目前 `step2_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
+- Step4 目前 `step4_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
 - 同一輪未結束時，新掃碼不能覆蓋目前 SN。
 - 只有按下 `Capture & Inspect` 才執行正式判定。
 - `NOT_MATCHED` 可以用同一個 SN 重拍，每次證據都保留。
 - 視覺結果 OK 不代表已上傳，也不會自動解除 SN 鎖定。
 - 掃碼後先呼叫 SFIS Step1；只有 Step1 接受才可進入拍照判定。
-- 只有 SFIS Step2 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
+- 只有 SFIS Step4 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
 
 ### SFIS 測試／正式切換
 
-目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=true`，僅供工程測試：站台會在本地接受 Step1／Step2，**不會呼叫 SFIS**；畫面也會標示 BYPASS。正式串接前須明確改為 `false`，並依 SFIS 規格與現場驗收結果決定是否開啟 `step2_enabled`。`APL_DMZ_BYPASS=on/off` 可覆寫設定，值不明確時程式拒絕啟動。
+目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=true`，僅供工程測試：站台會在本地接受 Step1／Step4，**不會呼叫 SFIS**；畫面也會標示 BYPASS。正式串接前須明確改為 `false`，並依 SFIS 規格與現場驗收結果決定是否開啟 `step4_enabled`。`APL_DMZ_BYPASS=on/off` 可覆寫設定，值不明確時程式拒絕啟動。
 
 舊設定鍵 `dmz.sfis_enabled` 已停用；若仍存在，程式會拒絕啟動，避免原本的離線設定在新版被忽略後誤送正式 SFIS。請先備份設定並明確換成 `bypass_sfis`，不可只更新 Python 檔而保留舊 JSON。
 
-獨立的 `scripts/sfis_api_test.py` 是實際 HTTP API 測試工具，會在該次程序關閉設定檔的 bypass，預設僅送 Step1；只有加上 `--step2-test` 才送 Step2。若環境變數仍強制 bypass，工具直接報錯，不會顯示假成功。此工具可能真的更新 SFIS，僅在取得現場測試授權後使用。
+獨立的 `scripts/sfis_api_test.py` 是實際 HTTP API 測試工具，會在該次程序關閉設定檔的 bypass，預設僅送 Step1；只有加上 `--step4-test` 才送 Step4。若環境變數仍強制 bypass，工具直接報錯，不會顯示假成功。此工具可能真的更新 SFIS，僅在取得現場測試授權後使用。
 
 ## 判定條件
 
@@ -165,5 +165,5 @@ PC 無法驗證 Qualcomm QTI 相機、GStreamer、MediaMTX、HDMI 與實體掃�
 - Template Matching 依賴固定視角、固定 ROI、解析度與照明。
 - 現有樣本數量不足以直接宣告量產辨識率。
 - 尚未判斷 MCIO 是否完整插到底或電性正常。
-- SFIS 內網連線與 Step2 request/response 契約仍須在現場做正式驗收。
+- SFIS 內網連線與 Step4 request/response 契約仍須在現場做正式驗收。
 - `server.py` 與 `vision_core.py` 是上游 VisionEdge 相容依賴，目前仍不能移除。
