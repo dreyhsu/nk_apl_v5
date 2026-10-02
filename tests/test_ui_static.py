@@ -43,7 +43,7 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261002-4-auto-step2', html)
+        self.assertIn('apl_ui.js?v=20261002-5-auto-step2', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]

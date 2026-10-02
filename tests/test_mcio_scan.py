@@ -269,7 +269,7 @@ class AutomaticStep2Tests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def station(self, **dmz):
+    def station(self, *, local_mode=False, test_mode=False, **dmz):
         transport = dict({"mode": "http", "api_style": "sfis",
                           "base_url": "http://10.0.28.125:8097/api/SFISAPI",
                           "allow_insecure_http": True, "line": "TEST", "station": "AI-CAM"}, **dmz)
@@ -282,7 +282,8 @@ class AutomaticStep2Tests(unittest.TestCase):
             "template_root": "templates", "dmz": transport,
             "sn_prefix": "K2V5", "mcio_sn_prefix": "APL",
         }), encoding="utf-8")
-        station = APLStation(self.config, self.root / "data", matcher=object())
+        station = APLStation(self.config, self.root / "data", matcher=object(),
+                             local_mode=local_mode, test_mode=test_mode)
         self.addCleanup(station.close)
         station.set_operator("M031978")
         return station
@@ -291,7 +292,7 @@ class AutomaticStep2Tests(unittest.TestCase):
     @contextlib.contextmanager
     def accepted_step1(station):
         """Let Step1 through without a network, unless bypass already handles it."""
-        if station.transport.bypass:
+        if station.transport is None or station.transport.bypass:
             yield
             return
         with patch.object(station.transport, "send",
@@ -359,6 +360,31 @@ class AutomaticStep2Tests(unittest.TestCase):
         reply = station.confirm_result(cycle_id)
         self.assertFalse(reply["success"])
         self.assertIn("not available in the current state", reply["error"])
+
+    def test_bypass_lets_a_browser_test_close_its_own_cycle(self):
+        station = self.station(bypass_sfis=True, step2_enabled=False,
+                               local_mode=True, test_mode=True)
+        cycle_id = self.reach_pass_confirm(station)
+        profile = station.status()["dmz"]
+        self.assertEqual(profile["label"], "BROWSER TEST - SFIS BYPASS")
+        self.assertTrue(station.status()["can_confirm_result"])
+        reply = station.confirm_result(cycle_id)
+        self.assertTrue(reply["success"])
+        self.assertEqual(reply["station"]["state"], "WAITING_SN")
+        # Closed locally, and still recorded as never reported to SFIS.
+        self.assertFalse(reply["station"]["last_result"]["reported"])
+        self.assertTrue(reply["station"]["last_result"]["test_mode"])
+
+    def test_without_bypass_a_browser_test_can_never_post(self):
+        station = self.station(bypass_sfis=False, step2_enabled=True,
+                               local_mode=True, test_mode=True)
+        cycle_id = self.reach_pass_confirm(station)
+        self.assertEqual(station.status()["dmz"]["label"], "BROWSER TEST - SFIS DISABLED")
+        self.assertFalse(station.status()["can_confirm_result"])
+        reply = station.confirm_result(cycle_id)
+        self.assertFalse(reply["success"])
+        self.assertIn("Browser test data cannot be uploaded", reply["error"])
+        self.assertEqual(station.status()["state"], "PASS_CONFIRM")
 
     def test_the_automatic_send_still_carries_the_mcio_card_serial_number(self):
         station = self.station(bypass_sfis=False, step2_enabled=True)

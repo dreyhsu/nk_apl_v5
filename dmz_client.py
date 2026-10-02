@@ -24,6 +24,15 @@ def _truthy(env_value, config_value):
     raise ValueError("APL_DMZ_BYPASS must be on or off")
 
 
+def bypass_enabled(config):
+    """Read the bypass switch the way DMZClient does, without building one.
+
+    A station running without a transport (browser video test) still needs to
+    know whether SFIS is bypassed, and the env override must behave identically.
+    """
+    return _truthy(os.environ.get("APL_DMZ_BYPASS"), dict(config or {}).get("bypass_sfis", False))
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise DMZError("DMZ redirects are not allowed")
@@ -56,7 +65,7 @@ class DMZClient:
         # Engineering switch for stations without a DMZ link: Step1/Step2 answer
         # OK locally so the whole SN cycle can be exercised. It never changes
         # what dmz.mode means; it only short-circuits ahead of it.
-        self.bypass = _truthy(os.environ.get("APL_DMZ_BYPASS"), cfg.get("bypass_sfis", False))
+        self.bypass = bypass_enabled(cfg)
         if self.mode == "mock" and not self.base_url:
             self.base_url = "http://127.0.0.1:8791"
         self.opener = urllib.request.build_opener(_NoRedirect())

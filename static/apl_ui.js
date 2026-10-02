@@ -225,7 +225,7 @@ function renderStation(station){
   const sifiConfigured=station?.dmz?.configured===true;
   const sifiBypass=station?.dmz?.bypass===true;
   const step2Blocked=!browserVideoActive()&&!step2Enabled;
-  $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiBypass?'SFIS BYPASS — Step1/Step2 not sent (test only)':sifiConfigured?'SFIS configured':'SFIS not configured';
+  $('sifiStatus').textContent=browserVideoActive()?(sifiBypass?'Browser test · SFIS BYPASS — results are saved locally only':'Browser test: SFIS upload disabled'):step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiBypass?'SFIS BYPASS — Step1/Step2 not sent (test only)':sifiConfigured?'SFIS configured':'SFIS not configured';
   $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked&&!sifiBypass?'sifiGood':'sifiWarn');
   // The station echoes the same text in last_error that the failed request just
   // returned, so dedupe instead of showing the operator the line twice.

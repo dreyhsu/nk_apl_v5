@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from apl_matching import APLMatcher, StableStateFilter, UNKNOWN
-from dmz_client import DMZClient
+from dmz_client import DMZClient, bypass_enabled
 from inspection_store import InspectionStore
 from workflow_view import STEP_LABELS
 
@@ -25,6 +25,9 @@ class APLStation:
             raise ValueError("dmz.sfis_enabled is obsolete; explicitly migrate to dmz.bypass_sfis")
         if not isinstance(dmz_config.get("bypass_sfis", False), bool):
             raise ValueError("dmz.bypass_sfis must be a boolean (true/false)")
+        # Bypass means nothing ever reaches SFIS, so it also decides whether a
+        # transport-less station (browser video test) may close its own cycle.
+        self.bypass_sfis = bypass_enabled(dmz_config)
         self.inspection_mode = str(self.config.get("inspection_mode", "legacy_workflow"))
         self.snapshot_mode = self.inspection_mode == "single_snapshot_cover_card"
         # Label prefixes let the station tell the right label at the wrong step
@@ -225,6 +228,13 @@ class APLStation:
 
     def _transport_profile(self):
         if self.test_mode:
+            if self.bypass_sfis:
+                # Nothing is sent in either case, so blocking the close here would
+                # only stop the operator rehearsing the full loop on a PC.
+                return {'mode': 'local+bypass', 'configured': True,
+                        'step2_enabled': True, 'bypass': True,
+                        'label': 'BROWSER TEST - SFIS BYPASS',
+                        'endpoint_hash': 'local-video'}
             return {'mode': 'local', 'configured': False,
                     'label': 'BROWSER TEST - SFIS DISABLED',
                     'endpoint_hash': 'local-video'}
@@ -554,9 +564,9 @@ class APLStation:
                 return self._reply("This action is not available in the current state")
             if result and (self.result != "PASS" or self.step_index != len(self.step_names)):
                 return self._reply("Only a completed PASS can be reported")
-            if result and self.test_mode:
+            if result and self.test_mode and not self.bypass_sfis:
                 return self._reply("Browser test data cannot be uploaded to SFIS")
-            if result and self.snapshot_mode and self.local_mode:
+            if result and self.snapshot_mode and self.local_mode and not self.bypass_sfis:
                 return self._reply("SFIS not configured")
             if result and self._transport_profile().get("step2_enabled") is False:
                 return self._reply("SFIS Step2 is disabled by configuration")
