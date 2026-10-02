@@ -43,7 +43,7 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261002-1-mcio-two-scan', html)
+        self.assertIn('apl_ui.js?v=20261002-4-auto-step2', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -109,6 +109,42 @@ class OperatorInputUITests(unittest.TestCase):
         self.assertNotIn('.stepRow.pending{opacity:.45;pointer-events:none}', html)
         self.assertIn('.stepRow.pending{opacity:.45}', html)
         self.assertIn('function stepStatuses(station,freshStation)', script)
+        # A visible step 5 always means unfinished: a successful cycle resets them all.
+        self.assertIn('5:false};', script)
+
+    def test_a_pass_sends_step2_and_hands_the_station_back_automatically(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('async function sendStep2(station)', script)
+        self.assertIn("else if(lastStatus.station?.can_confirm_result===true){", script)
+        self.assertIn('await sendStep2(lastStatus.station)', script)
+        self.assertIn("{'confirm-result':'can_confirm_result',terminate:'can_terminate'}", script)
+        # The next round starts by itself: buffers cleared, focus back on the SN field.
+        self.assertIn("if(data.station?.state==='WAITING_SN')clearScanBuffers();", script)
+        self.assertIn("finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}\n}\n\nasync function toggleBrowserVideo", script)
+        self.assertIn("Ready for the next serial number.", script)
+        self.assertIn('id="retryStep2"', html)
+
+    def test_step2_failures_tell_the_operator_what_to_do(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('id="stationRecovery"', html)
+        self.assertIn('.stationRecovery:empty{display:none}', html)
+        self.assertIn('function step2RecoveryText(detail,timedOut)', script)
+        self.assertIn('function applyStep2Failure(error)', script)
+        # A timeout may still be in flight server-side, so retrying is wrong there.
+        self.assertIn('Do not retry yet', script)
+        self.assertIn('SFIS refused this unit. Retrying will not help.', script)
+        self.assertIn('contact the web developer SMD (Dre Hsu / TW031561)', script)
+        self.assertIn('Select Retry SFIS Step2. If it keeps failing', script)
+        self.assertIn('business validation failed|rejected request|does not confirm PASS', script)
+        # The retry button is hidden outside the failure case, not merely disabled.
+        self.assertIn("$('retryStep2').classList.toggle('hidden',!awaitingStep2)", script)
+        # The SFIS text arrives both in the response and in station.last_error.
+        self.assertIn("[...new Set([stationLocalError,textValue(station?.last_error)].filter(Boolean))]", script)
+        self.assertIn("const awaitingStep2=freshStation&&station.state==='PASS_CONFIRM'&&station.can_confirm_result===true", script)
 
     def test_scan_focus_follows_step_transitions_only(self):
         root = Path(__file__).resolve().parents[1]

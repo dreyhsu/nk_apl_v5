@@ -1,12 +1,14 @@
 """Two-serial snapshot flow: product SN, then MCIO card SN, then SFIS Step1."""
 
 import json
+import contextlib
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from apl_station import APLStation
+from dmz_client import DMZError
 from inspection_store import InspectionStore
 
 
@@ -254,6 +256,120 @@ class MCIOScanTests(unittest.TestCase):
         reply = self.station.confirm_result(cycle_id)
         self.assertTrue(reply["success"])
         self.assertEqual(self.transport.calls[-1][1]["mcio_sn"], "APL-001")
+
+
+class AutomaticStep2Tests(unittest.TestCase):
+    """Backend contracts the automatic Step2 in captureInspection depends on."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = self.root / "workflow.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def station(self, **dmz):
+        transport = dict({"mode": "http", "api_style": "sfis",
+                          "base_url": "http://10.0.28.125:8097/api/SFISAPI",
+                          "allow_insecure_http": True, "line": "TEST", "station": "AI-CAM"}, **dmz)
+        self.config.write_text(json.dumps({
+            "station_id": "AI-CAM", "station_mode": "remote",
+            "inspection_mode": "single_snapshot_cover_card",
+            "target_state": "50_COVER_CLOSED_CARD_PRESENT",
+            "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED",
+                      "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
+            "template_root": "templates", "dmz": transport,
+            "sn_prefix": "K2V5", "mcio_sn_prefix": "APL",
+        }), encoding="utf-8")
+        station = APLStation(self.config, self.root / "data", matcher=object())
+        self.addCleanup(station.close)
+        station.set_operator("M031978")
+        return station
+
+    @staticmethod
+    @contextlib.contextmanager
+    def accepted_step1(station):
+        """Let Step1 through without a network, unless bypass already handles it."""
+        if station.transport.bypass:
+            yield
+            return
+        with patch.object(station.transport, "send",
+                          side_effect=lambda path, payload: {**payload, "accepted": True}):
+            yield
+
+    def reach_pass_confirm(self, station, sn="K2V5-001", mcio="APL-001"):
+        with self.accepted_step1(station):
+            station.scan(sn)
+            scanned = station.scan(mcio)
+        cycle_id = scanned["station"]["cycle_id"]
+        self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
+        with station.lock:
+            station.state = "PASS_CONFIRM"
+            station.result = "PASS"
+            station.step_index = len(station.step_names)
+            station.step_times = [123.0]
+            station.completed_at = 123.0
+        return cycle_id
+
+    def test_bypass_closes_the_unit_without_any_http(self):
+        station = self.station(bypass_sfis=True, step2_enabled=False)
+        with patch.object(station.transport.opener, "open") as opened:
+            cycle_id = self.reach_pass_confirm(station)
+            # The gate the UI reads before sending automatically.
+            self.assertTrue(station.status()["can_confirm_result"])
+            reply = station.confirm_result(cycle_id)
+        opened.assert_not_called()
+        self.assertTrue(reply["success"])
+        self.assertEqual(reply["station"]["state"], "WAITING_SN")
+        self.assertEqual(reply["station"]["sn"], "")
+        self.assertEqual(reply["station"]["mcio_sn"], "")
+        self.assertTrue(reply["station"]["last_result"]["reported"])
+
+    def test_disabled_step2_closes_the_gate_so_the_ui_never_tries(self):
+        station = self.station(bypass_sfis=False, step2_enabled=False)
+        self.reach_pass_confirm(station)
+        self.assertFalse(station.status()["can_confirm_result"])
+
+    def test_business_rejection_stays_on_pass_confirm_and_offers_a_retry(self):
+        station = self.station(bypass_sfis=False, step2_enabled=True)
+        cycle_id = self.reach_pass_confirm(station)
+        with patch.object(station.transport, "send",
+                          side_effect=DMZError("SFIS business validation failed: FAIL1,PASM1")):
+            reply = station.confirm_result(cycle_id)
+        self.assertFalse(reply["success"])
+        self.assertIn("FAIL1,PASM1", reply["error"])
+        status = station.status()
+        self.assertEqual(status["state"], "PASS_CONFIRM")
+        self.assertIn("FAIL1,PASM1", status["last_error"])
+        # True again, so the UI re-shows Retry SFIS Step2 instead of a dead end.
+        self.assertTrue(status["can_confirm_result"])
+        self.assertEqual(status["sn"], "K2V5-001")
+        events = [row["event"] for row in
+                  station.db.execute("SELECT event FROM events ORDER BY id")]
+        self.assertIn("REPORT_RETRY_REQUIRED", events)
+
+    def test_a_retry_while_the_request_is_in_flight_is_refused(self):
+        station = self.station(bypass_sfis=True, step2_enabled=False)
+        cycle_id = self.reach_pass_confirm(station)
+        with station.lock:
+            station.request_token = "in-flight"
+        # This is why the timeout guidance says to wait instead of retrying.
+        self.assertFalse(station.status()["can_confirm_result"])
+        reply = station.confirm_result(cycle_id)
+        self.assertFalse(reply["success"])
+        self.assertIn("not available in the current state", reply["error"])
+
+    def test_the_automatic_send_still_carries_the_mcio_card_serial_number(self):
+        station = self.station(bypass_sfis=False, step2_enabled=True)
+        cycle_id = self.reach_pass_confirm(station)
+        sent = []
+        with patch.object(station.transport, "send",
+                          side_effect=lambda path, payload: sent.append((path, dict(payload)))
+                          or {**payload, "accepted": True, "result": "PASS"}):
+            self.assertTrue(station.confirm_result(cycle_id)["success"])
+        self.assertEqual(sent[-1][0], "/result")
+        self.assertEqual(sent[-1][1]["mcio_sn"], "APL-001")
 
 
 class EvidenceRecordTests(unittest.TestCase):

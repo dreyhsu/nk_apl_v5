@@ -6,13 +6,44 @@ let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,st
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
 const VIDEO_TEST_STATES=['WAITING_SN','WAITING_MCIO_SN','WAITING_CAPTURE','NOT_MATCHED'];
 const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_MCIO_SN:'Scan MCIO Card SN',SN_CONFIRM:'Validating with SFIS',WAITING_DMZ:'Validating with SFIS',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
-const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product and MCIO card.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK. Send SFIS Step2 or terminate this inspection.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product and MCIO card.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK.',UPLOADING:'Sending SFIS Step2.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
 const SCAN_FIELDS={snInput:{field:'sn',label:'product serial number',expect:'WAITING_SN',submit:'scanSubmit'},mcioInput:{field:'mcio_sn',label:'MCIO card serial number',expect:'WAITING_MCIO_SN',submit:'mcioSubmit'}};
 const fixedBuffers={snInput:'',mcioInput:''};
 let lastScanStep='';
+let step2Recovery='';
 let scannerSettingsBusy=false;
+
+// What the operator should do when Step2 does not go through. The raw SFIS text
+// stays in #stationError; this is the "what now" line next to it.
+const STEP2_REFUSED_GUIDANCE='SFIS refused this unit. Retrying will not help. Select Terminate Inspection and handle the unit per the line SOP. The captured evidence is kept.';
+const STEP2_CONFIG_GUIDANCE='This station cannot post Step2 with the current configuration. Terminate this inspection and contact the web developer SMD (Dre Hsu / TW031561).';
+// A timeout leaves the station possibly still mid-request: _confirm refuses a
+// second attempt while request_token is set, so retrying now only confuses.
+const STEP2_TIMEOUT_GUIDANCE='The SFIS answer timed out. Do not retry yet — wait for the station status to settle. If it still shows OK, select Retry SFIS Step2.';
+const STEP2_RETRY_GUIDANCE='SFIS did not answer. Select Retry SFIS Step2. If it keeps failing, select Terminate Inspection — the evidence and the same report ID are kept — and report the network outage.';
+const STEP2_GUIDANCE=[
+  [/business validation failed|rejected request|does not confirm PASS/i,STEP2_REFUSED_GUIDANCE],
+  [/disabled by configuration|not configured|MCIO card serial number is missing|line, station, and employee number/i,STEP2_CONFIG_GUIDANCE],
+];
+
+function step2RecoveryText(detail,timedOut){
+  if(timedOut)return STEP2_TIMEOUT_GUIDANCE;
+  for(const [pattern,text] of STEP2_GUIDANCE)if(pattern.test(String(detail||'')))return text;
+  return STEP2_RETRY_GUIDANCE;
+}
+
+function step2BlockedGuidance(station){
+  if(station?.test_mode||browserVideoActive())return 'Browser test data is never uploaded to SFIS. Select Terminate Inspection to finish this test.';
+  return STEP2_CONFIG_GUIDANCE;
+}
+
+function applyStep2Failure(error){
+  const timedOut=error.name==='AbortError';
+  stationLocalError=timedOut?'SFIS Step2 did not answer within 30 seconds.':error.message;
+  step2Recovery=step2RecoveryText(error.message,timedOut);
+}
 
 const FIXED_DIGIT_KEYS={Digit1:['1','!'],Digit2:['2','@'],Digit3:['3','#'],Digit4:['4','$'],Digit5:['5','%'],Digit6:['6','^'],Digit7:['7','&'],Digit8:['8','*'],Digit9:['9','('],Digit0:['0',')']};
 const FIXED_PUNCTUATION_KEYS={Minus:['-','_'],Equal:['=','+'],BracketLeft:['[','{'],BracketRight:[']','}'],Semicolon:[';',':'],Quote:["'",'"'],Backquote:['`','~'],Backslash:['\\','|'],Comma:[',','<'],Period:['.','>'],Slash:['/','?']};
@@ -174,24 +205,31 @@ function renderStation(station){
   $('mcioHint').textContent=scanHint('MCIO card label',station?.mcio_sn_prefix);
   const captureReady=browserVideoActive()?browserVideoReady&&!!videoChoice:!!lastStatus.has_raw;
   $('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;
-  $('confirmResult').disabled=!freshStation||busy||station.can_confirm_result!==true;
   $('terminateInspection').disabled=!freshStation||busy||station.can_terminate!==true;
+  // The automatic send makes PASS_CONFIRM a momentary state, so this button only
+  // surfaces when a send failed or an interrupted cycle was recovered.
+  const awaitingStep2=freshStation&&station.state==='PASS_CONFIRM'&&station.can_confirm_result===true;
+  $('retryStep2').classList.toggle('hidden',!awaitingStep2);
+  $('retryStep2').disabled=!awaitingStep2||busy;
+  if(freshStation&&station.state!=='PASS_CONFIRM'&&step2Recovery)step2Recovery='';
+  $('stationRecovery').textContent=step2Recovery;
   $('stationState').textContent=freshStation?(STATION_LABELS[station.state]||station.state):'Offline';
   $('stationState').className='state '+(!freshStation?'warn':station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':browserVideoActive()&&station?.state==='PASS_CONFIRM'?'Inspection OK. Test data cannot be uploaded; select Terminate Inspection to finish.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   renderStepFlow(station,freshStation);
   $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':'Capture & Inspect';
   const step2Enabled=station?.dmz?.step2_enabled!==false;
-  $('confirmResult').textContent=station?.state==='UPLOADING'?(station?.dmz?.bypass?'Saving test result...':'Sending Step2...'):step2Enabled?(station?.dmz?.bypass?'Confirm OK (SFIS bypass)':'Confirm OK & Send SFIS Step2'):'SFIS Step2 disabled';
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
   const sifiBypass=station?.dmz?.bypass===true;
   const step2Blocked=!browserVideoActive()&&!step2Enabled;
   $('sifiStatus').textContent=browserVideoActive()?'Browser test: SFIS upload disabled':step2Blocked?'SFIS Step2 not enabled — cannot post. Contact the web developer SMD (Dre Hsu / TW031561).':sifiBypass?'SFIS BYPASS — Step1/Step2 not sent (test only)':sifiConfigured?'SFIS configured':'SFIS not configured';
   $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step2Blocked&&!sifiBypass?'sifiGood':'sifiWarn');
-  $('stationError').textContent=[stationLocalError,textValue(station?.last_error)].filter(Boolean).join('\n');
+  // The station echoes the same text in last_error that the failed request just
+  // returned, so dedupe instead of showing the operator the line twice.
+  $('stationError').textContent=[...new Set([stationLocalError,textValue(station?.last_error)].filter(Boolean))].join('\n');
   const scanner=station?.scanner,panel=$('scannerPanel');
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
   if(scanner?.connected){
@@ -231,7 +269,9 @@ function stepStatuses(station,freshStation){
   const done={2:station.operator_required===false||!!station.operator,
               3:!!station.sn,
               4:!mcioRequired||!!station.mcio_sn,
-              5:station.state==='PASS_CONFIRM'};
+              // Step 5 closes the cycle: on success every step resets at once, so a
+              // visible PASS_CONFIRM means the unit is NOT finished yet.
+              5:false};
   const statuses={1:scannerReady?'done':'warn'};
   let active=false;
   for(const step of [2,3,4,5]){
@@ -399,7 +439,7 @@ async function submitScan(id){
   stationBusy=true;stationLocalError='';renderStation(station);
   // expect lets the station refuse a scan whose step already advanced, which a
   // grabbed HID scanner can do without this tab noticing.
-  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn:value,expect:spec.field})});if(data.success===false)throw Error(data.error||'The station did not accept this serial number');if(data.station)lastStatus.station=data.station;setFixedValue(id,'');message(scanAcceptedMessage(data.station),'ok')}
+  try{const data=await req(APP_BASE+'/api/apl/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn:value,expect:spec.field})});if(data.success===false)throw Error(data.error||'The station did not accept this serial number');if(data.station)lastStatus.station=data.station;setFixedValue(id,'');step2Recovery='';message(scanAcceptedMessage(data.station),'ok')}
   catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Check the current serial number before retrying.':error.message}
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
@@ -429,13 +469,37 @@ async function switchOperator(){
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
+async function sendStep2(station){
+  const data=await req(APP_BASE+'/api/apl/confirm-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});
+  if(data.success===false)throw Error(data.error||'SFIS Step2 did not complete');
+  if(data.station)lastStatus.station=data.station;
+  if(data.station?.state==='WAITING_SN')clearScanBuffers();
+  step2Recovery='';
+  message(station?.dmz?.bypass?'Test result saved locally. SFIS was not contacted. Ready for the next serial number.':'SFIS Step2 accepted. Ready for the next serial number.','ok');
+  if(currentPage==='history')loadHistory();
+}
+
 async function stationAction(action){
   const station=lastStatus.station,permission={'confirm-result':'can_confirm_result',terminate:'can_terminate'}[action];
   if(!permission||!stationFresh()||stationBusy||station?.request_in_flight||station?.[permission]!==true)return;
   if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nMCIO SN: '+(station.mcio_sn||'—')+'\nBoth serial numbers will be cleared. The saved inspection evidence will be retained.'))return;
   stationBusy=true;stationLocalError='';renderStation(station);
-  try{const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});if(data.success===false)throw Error(data.error||'Action did not complete');if(data.station)lastStatus.station=data.station;if(data.station?.state==='WAITING_SN')clearScanBuffers();message(action==='confirm-result'?(station?.dmz?.bypass?'Test result saved locally. SFIS was not contacted.':'SFIS Step2 accepted. Ready for the next serial number.'):'Inspection terminated without upload.','ok');if(currentPage==='history')loadHistory()}
-  catch(error){stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message}
+  try{
+    if(action==='confirm-result'){await sendStep2(station)}
+    else{
+      const data=await req(APP_BASE+'/api/apl/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle_id:station.cycle_id}),timeoutMs:30000});
+      if(data.success===false)throw Error(data.error||'Action did not complete');
+      if(data.station)lastStatus.station=data.station;
+      if(data.station?.state==='WAITING_SN')clearScanBuffers();
+      step2Recovery='';
+      message('Inspection terminated without upload.','ok');
+      if(currentPage==='history')loadHistory();
+    }
+  }
+  catch(error){
+    if(action==='confirm-result')applyStep2Failure(error);
+    else stationLocalError=error.name==='AbortError'?'Request timed out. Wait for the current status before retrying.':error.message;
+  }
   finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
@@ -445,7 +509,7 @@ async function captureInspection(){
   if(!stationFresh()||stationBusy||station?.request_in_flight||station?.can_capture!==true)return;
   if(browserCapture&&(!browserVideoReady||!videoChoice))return;
   if(!browserCapture&&!lastStatus.has_raw)return;
-  stationBusy=true;stationLocalError='';renderStation(station);
+  stationBusy=true;stationLocalError='';step2Recovery='';renderStation(station);
   try{
     let data;
     if(browserCapture){
@@ -473,9 +537,23 @@ async function captureInspection(){
     if(data.success===false)throw Error(data.error||'Inspection did not complete');
     if(data.station)lastStatus.station=data.station;
     const accepted=data.station?.state==='PASS_CONFIRM';
-    message(accepted?(browserCapture?'Inspection OK. Terminate this test when finished.':'Inspection OK. Confirm upload or terminate.'):'Not matched. Adjust the product and capture again.',accepted?'ok':'warn');
+    if(!accepted){message('Not matched. Adjust the product and capture again.','warn')}
+    else if(lastStatus.station?.can_confirm_result===true){
+      // A PASS closes itself: send Step2 and hand the station straight back for
+      // the next unit, so a normal round needs no click after Capture & Inspect.
+      message(station?.dmz?.bypass?'Inspection OK. Closing this unit (SFIS bypass)...':'Inspection OK. Sending SFIS Step2...','ok');
+      renderStation(lastStatus.station);
+      try{await sendStep2(lastStatus.station)}
+      catch(error){applyStep2Failure(error)}
+    }
+    else{
+      // Step2 is off, unconfigured, or this is browser test data: PASS_CONFIRM
+      // is the end of the line and only Terminate can clear it.
+      step2Recovery=step2BlockedGuidance(lastStatus.station);
+      message('Inspection OK. This station cannot post Step2; terminate this inspection to finish.','warn');
+    }
   }catch(error){stationLocalError=error.name==='AbortError'?'Inspection timed out. Check the current status before retrying.':error.message}
-  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station)}
+  finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
 }
 
 async function toggleBrowserVideo(){
