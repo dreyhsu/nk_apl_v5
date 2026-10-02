@@ -54,15 +54,15 @@ class DMZClient:
         self.station = str(os.environ.get("APL_SFIS_STATION", cfg.get("station", ""))).strip()
         self.employee_no = str(os.environ.get("APL_SFIS_EMP_NO", cfg.get("employee_no", ""))).strip()
         self.step1_path = str(cfg.get("step1_path", "/Step1")).strip()
-        self.step2_path = str(cfg.get("step2_path", "/Step2")).strip()
-        self.step2_enabled = bool(cfg.get("step2_enabled", False))
-        self.step2_extra_fields = dict(cfg.get("step2_extra_fields") or {})
-        self.mcio_field = str(cfg.get("step2_mcio_field", "mcioSn")).strip()
+        self.step4_path = str(cfg.get("step4_path", "/Step4")).strip()
+        self.step4_enabled = bool(cfg.get("step4_enabled", False))
+        self.step4_extra_fields = dict(cfg.get("step4_extra_fields") or {})
+        self.mcio_field = str(cfg.get("step4_mcio_field", "mciosn")).strip()
         if not self.mcio_field or self.mcio_field in {"line", "station", "sn", "empNo"}:
-            raise ValueError("dmz.step2_mcio_field must be a field name that does not collide with line, station, sn, or empNo")
+            raise ValueError("dmz.step4_mcio_field must be a field name that does not collide with line, station, sn, or empNo")
         if self.mode not in {"disabled", "mock", "http"}:
             raise ValueError("dmz.mode must be disabled, mock, or http")
-        # Engineering switch for stations without a DMZ link: Step1/Step2 answer
+        # Engineering switch for stations without a DMZ link: Step1/Step4 answer
         # OK locally so the whole SN cycle can be exercised. It never changes
         # what dmz.mode means; it only short-circuits ahead of it.
         self.bypass = bypass_enabled(cfg)
@@ -74,44 +74,45 @@ class DMZClient:
         if self.bypass:
             # The "+bypass" suffix keeps _same_transport() from letting a cycle
             # that started against the real SFIS be finished by a bypassed
-            # Step2, and records the difference in the cycle history.
+            # Step4, and records the difference in the cycle history.
             return {"mode": self.mode + "+bypass", "configured": True,
-                    "step2_enabled": True, "bypass": True,
+                    "step4_enabled": True, "bypass": True,
                     "label": f"SFIS BYPASS - TEST ONLY ({self.mode})"}
         # The employee number is supplied per request by the signed-in operator,
         # so station readiness no longer depends on a static config value.
         sfis_ready = self.api_style != "sfis" or all(
-            (self.line, self.station, self.step1_path, self.step2_path)
+            (self.line, self.station, self.step1_path, self.step4_path)
         )
         return {
             "mode": self.mode,
             "configured": self.mode != "disabled" and bool(self.base_url) and sfis_ready,
-            "step2_enabled": self.step2_enabled if self.api_style == "sfis" else True,
+            "step4_enabled": self.step4_enabled if self.api_style == "sfis" else True,
             "label": "MOCK / TEST ONLY" if self.mode == "mock" else "SFIS" if self.api_style == "sfis" else self.mode.upper(),
         }
 
     def _wire_request(self, path, payload):
         if self.api_style != "sfis":
             return path, payload
-        mapping = {"/sn/check": self.step1_path, "/result": self.step2_path}
+        mapping = {"/sn/check": self.step1_path, "/result": self.step4_path}
         if path not in mapping:
             raise DMZError("Unsupported SFIS operation")
-        if path == "/result" and not self.step2_enabled:
-            raise DMZError("SFIS Step2 is disabled by configuration")
+        if path == "/result" and not self.step4_enabled:
+            raise DMZError("SFIS Step4 is disabled by configuration")
         emp_no = str(payload.get("emp_no") or self.employee_no).strip()
         if not all((self.line, self.station, emp_no)):
             raise DMZError("SFIS line, station, and employee number must be configured")
+        emp_field = "EmpNo" if path == "/result" else "empNo"
         body = {
             "line": self.line,
             "station": self.station,
             "sn": payload["sn"],
-            "empNo": emp_no,
+            emp_field: emp_no,
         }
         if path == "/result":
-            body.update(self.step2_extra_fields)
+            body.update(self.step4_extra_fields)
             mcio = str(payload.get("mcio_sn") or "").strip()
             if not mcio:
-                raise DMZError("MCIO card serial number is missing for SFIS Step2")
+                raise DMZError("MCIO card serial number is missing for SFIS Step4")
             # After the extras: configuration must never clobber the real serial.
             body[self.mcio_field] = mcio
         return mapping[path], body

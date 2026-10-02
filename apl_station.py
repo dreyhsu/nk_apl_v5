@@ -232,7 +232,7 @@ class APLStation:
                 # Nothing is sent in either case, so blocking the close here would
                 # only stop the operator rehearsing the full loop on a PC.
                 return {'mode': 'local+bypass', 'configured': True,
-                        'step2_enabled': True, 'bypass': True,
+                        'step4_enabled': True, 'bypass': True,
                         'label': 'BROWSER TEST - SFIS BYPASS',
                         'endpoint_hash': 'local-video'}
             return {'mode': 'local', 'configured': False,
@@ -308,7 +308,7 @@ class APLStation:
                               "completed_at": self.completed_at,
                               "request_in_flight": self.request_token is not None,
                               "can_confirm_sn": self.state == "SN_CONFIRM" and self.request_token is None and dmz.get("configured", False),
-                              "can_confirm_result": self.state == "RESULT_CONFIRM" and self.request_token is None and dmz["configured"] and dmz.get("step2_enabled", True) and not self.storage_error,
+                              "can_confirm_result": self.state == "RESULT_CONFIRM" and self.request_token is None and dmz["configured"] and dmz.get("step4_enabled", True) and not self.storage_error,
                               "can_reset": self.state in {"SN_CONFIRM", "RUNNING", "RECOVERY_REQUIRED"} and self.request_token is None})
 
     def _snapshot_single(self):
@@ -358,7 +358,7 @@ class APLStation:
             "attempt_count": attempt_count,
             "can_capture": self.state in {"WAITING_CAPTURE", "NOT_MATCHED"} and self.request_token is None and not self.storage_error,
             "can_confirm_sn": False,
-            "can_confirm_result": self.state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and transport.get("step2_enabled", True) and not self.storage_error,
+            "can_confirm_result": self.state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and transport.get("step4_enabled", True) and not self.storage_error,
             "can_terminate": can_terminate,
             "can_reset": can_terminate,
         })
@@ -568,8 +568,8 @@ class APLStation:
                 return self._reply("Browser test data cannot be uploaded to SFIS")
             if result and self.snapshot_mode and self.local_mode and not self.bypass_sfis:
                 return self._reply("SFIS not configured")
-            if result and self._transport_profile().get("step2_enabled") is False:
-                return self._reply("SFIS Step2 is disabled by configuration")
+            if result and self._transport_profile().get("step4_enabled") is False:
+                return self._reply("SFIS Step4 is disabled by configuration")
             if self.local_mode:
                 self.last_error = ''
                 if result:
