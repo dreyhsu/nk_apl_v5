@@ -143,6 +143,87 @@ function attachFixedScanner(id){
   $(id).addEventListener('input',event=>{event.stopImmediatePropagation();$(id).value=fixedBuffers[id]},true);
 }
 
+// ---------------------------------------------------------------------------
+// F12 console tracing for SFIS Step1 / Step4.
+// The station keeps the last 60 attempts (URL, body, raw answer); this mirrors
+// them into the browser console and logs every station state transition, so a
+// rolled-back cycle can be explained without shell access to the station.
+// ---------------------------------------------------------------------------
+const SFIS_TAG='font-weight:bold;color:#0b8457';
+const SFIS_TAG_BAD='font-weight:bold;color:#c0392b';
+const SFIS_TAG_WARN='font-weight:bold;color:#b8860b';
+const SFIS_PHASE_STYLE={error:SFIS_TAG_BAD,failed:SFIS_TAG_BAD,rolled_back:SFIS_TAG_BAD,
+                        bypass:SFIS_TAG_WARN,local:SFIS_TAG_WARN,ignored:SFIS_TAG_WARN};
+let sfisLogCursor=0,sfisLogBusy=false,sfisLogAt=0,sfisLogDisabled=false,sfisHistory=[];
+let lastLoggedStationState=null;
+
+function sfisStamp(ts){const value=Number(ts);return Number.isFinite(value)?new Date(value*1000).toLocaleTimeString('en-GB',{hour12:false})+'.'+String(Math.floor((value%1)*1000)).padStart(3,'0'):'--'}
+
+function logSfisEvent(entry){
+  const step=String(entry.step||'sfis').toUpperCase(),phase=String(entry.phase||'');
+  const style=SFIS_PHASE_STYLE[phase]||SFIS_TAG;
+  const headline=`%c[SFIS ${step}] ${phase}%c ${sfisStamp(entry.ts)} · SN ${entry.sn||'—'} · MCIO ${entry.mcio_sn||'—'} · empNo ${entry.emp_no||'—'}`;
+  const bad=style===SFIS_TAG_BAD;
+  (bad?console.group:console.groupCollapsed).call(console,headline,style,'color:inherit;font-weight:normal');
+  if(entry.url)console.log('URL        :',entry.url);
+  if(entry.request_body)console.log('Request    :',entry.request_body);
+  if(entry.response!==undefined&&entry.response!==null)console.log('Response   :',entry.response);
+  const sfis=entry.response&&entry.response.sfis_response;
+  if(sfis)console.log('SFIS data  :',sfis.data??'(none)','· errorCode',sfis.errorCode??'(none)','· message',sfis.message||'(none)');
+  if(entry.detail)(bad?console.error:console.log)('Detail     :',entry.detail);
+  if(entry.hint)console.warn('Hint       :',entry.hint);
+  console.log('Context    :',{seq:entry.seq,cycle_id:entry.cycle_id||'',station_state:entry.station_state||'',
+                              request_id:entry.request_id||'',transport_mode:entry.transport_mode||'',
+                              bypass:entry.bypass===true,path:entry.path||''});
+  console.groupEnd();
+}
+
+async function pollSfisLog(force=false){
+  if(sfisLogDisabled||sfisLogBusy)return;
+  if(!force&&Date.now()-sfisLogAt<1000)return;
+  sfisLogBusy=true;
+  try{
+    const data=await req(APP_BASE+'/api/apl/sfis-log?after='+sfisLogCursor,{timeoutMs:4000});
+    sfisLogAt=Date.now();
+    for(const entry of data.events||[]){
+      sfisLogCursor=Math.max(sfisLogCursor,Number(entry.seq)||0);
+      sfisHistory.push(entry);if(sfisHistory.length>200)sfisHistory.shift();
+      logSfisEvent(entry);
+    }
+  }catch(error){
+    // A station build without the endpoint must not spam the console.
+    sfisLogAt=Date.now();
+    if(/404|Not Found/i.test(error.message||'')){sfisLogDisabled=true;console.warn('%c[SFIS]%c tracing endpoint /api/apl/sfis-log is unavailable on this station build.',SFIS_TAG_WARN,'color:inherit')}
+  }finally{sfisLogBusy=false}
+}
+
+function logStationState(station){
+  const state=station?.state??null;
+  if(state===lastLoggedStationState)return;
+  const previous=lastLoggedStationState;lastLoggedStationState=state;
+  // Step1 runs inside the single /api/apl/scan request, so SN_CONFIRM and
+  // WAITING_DMZ are usually too short-lived for this tab to ever poll them:
+  // the transition a rolled-back cycle actually shows is MCIO -> WAITING_SN.
+  const rolledBack=state==='WAITING_SN'&&!!station?.last_error
+    &&['WAITING_MCIO_SN','SN_CONFIRM','WAITING_DMZ'].includes(previous);
+  const style=rolledBack?SFIS_TAG_BAD:SFIS_TAG;
+  console.log(`%c[APL] state%c ${previous===null?'(page load)':previous||'offline'} → ${state||'offline'}`,style,'color:inherit;font-weight:normal',
+    {sn:station?.sn||'',mcio_sn:station?.mcio_sn||'',operator:station?.operator||'',
+     cycle_id:station?.cycle_id||'',last_error:station?.last_error||'',
+     dmz_mode:station?.dmz?.mode||'',bypass:station?.dmz?.bypass===true});
+  if(rolledBack)console.error('%c[APL]%c SFIS Step1 refused this unit, so the whole cycle was dropped: the product SN and the MCIO SN must both be scanned again.'+(station?.operator?'':' The employee number was rejected too, so sign in again first.')+' Reason: '+(station?.last_error||'unknown'),SFIS_TAG_BAD,'color:inherit');
+  pollSfisLog(true);
+}
+
+// Console helpers for manual inspection from F12.
+window.aplSfis={
+  log:()=>{console.table(sfisHistory.map(e=>({seq:e.seq,time:sfisStamp(e.ts),step:e.step,phase:e.phase,sn:e.sn,mcio_sn:e.mcio_sn,emp_no:e.emp_no,detail:e.detail||'',url:e.url||''})));return sfisHistory},
+  last:()=>sfisHistory[sfisHistory.length-1],
+  refresh:()=>pollSfisLog(true),
+  station:()=>lastStatus.station,
+  reset:()=>{sfisLogCursor=0;sfisHistory=[];sfisLogDisabled=false;return pollSfisLog(true)},
+};
+
 function stationFresh(){return !!lastStatusAt&&Date.now()-lastStatusAt<5000&&!statusPollError}
 function textValue(value){if(value==null)return '';return typeof value==='string'?value:JSON.stringify(value)}
 function browserVideoActive(){return lastStatus.input?.mode==='browser_video'}
@@ -189,6 +270,7 @@ async function saveScannerSelection(){
 }
 
 function renderStation(station){
+  logStationState(station);pollSfisLog();
   const fresh=stationFresh(),available=!!station,freshStation=fresh&&available;
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;

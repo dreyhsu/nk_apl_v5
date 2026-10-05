@@ -211,6 +211,17 @@ def apl_status():
     return jsonify({'success': True, 'station': station_status()})
 
 
+@app.route('/api/apl/sfis-log')
+def apl_sfis_log():
+    # Read-only diagnostics for the dashboard console: the last Step1/Step4
+    # attempts with the real URL, body and SFIS answer.
+    try:
+        after = int(request.args.get('after', 0))
+    except ValueError:
+        raise ValueError('SFIS log cursor must be an integer')
+    return jsonify({'success': True, 'events': station().sfis_log(after)})
+
+
 @app.route('/api/apl/scanner', methods=['GET', 'POST'])
 def apl_scanner():
     from scanner_selection import devices

@@ -375,5 +375,70 @@ class SnapshotBypassCycleTests(unittest.TestCase):
         self.assertEqual(reply["station"]["last_result"]["dmz_mode"], "http+bypass")
 
 
+class SFISTraceTests(SnapshotSFISGateTests):
+    """The dashboard console reads sfis_log; a rolled-back cycle must explain itself."""
+
+    def phases(self):
+        return [(item["step"], item["phase"]) for item in self.station.sfis_log()]
+
+    def test_accepted_step1_is_traced_with_both_serial_numbers(self):
+        self.start_cycle()
+        self.assertEqual(self.phases(), [("step1", "begin"), ("step1", "accepted")])
+        entry = self.station.sfis_log()[0]
+        self.assertEqual((entry["sn"], entry["mcio_sn"], entry["emp_no"]),
+                         ("K2V5-001", "APL-001", "M031978"))
+
+    def test_rejected_step1_traces_the_rollback_and_the_reason(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,HS_ASSY"
+        self.start_cycle()
+        self.assertEqual(self.phases(),
+                         [("step1", "begin"), ("step1", "failed"), ("step1", "rolled_back")])
+        rollback = self.station.sfis_log()[-1]
+        self.assertIn("HS_ASSY", rollback["detail"])
+        self.assertFalse(rollback["operator_cleared"])
+        # The trace must still name the serials the operator has to scan again,
+        # because _clear_cycle has already dropped them from the snapshot.
+        self.assertEqual((rollback["sn"], rollback["mcio_sn"]), ("K2V5-001", "APL-001"))
+
+    def test_operator_rejection_is_marked_in_the_trace(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
+        self.start_cycle()
+        self.assertTrue(self.station.sfis_log()[-1]["operator_cleared"])
+
+    def test_log_cursor_only_returns_new_entries(self):
+        self.start_cycle()
+        latest = self.station.sfis_log()[-1]["seq"]
+        self.assertEqual(self.station.sfis_log(latest), [])
+
+
+class SFISWireTraceTests(SFISClientTests):
+    def test_the_trace_carries_the_real_url_body_and_answer(self):
+        seen = []
+        self.client.on_trace = seen.append
+        self.send_with("/sn/check", {"success": True, "data": "OK1,REWORK=0",
+                                     "message": "", "errorCode": None})
+        self.assertEqual([item["phase"] for item in seen], ["request", "response"])
+        self.assertEqual(seen[0]["url"], "http://10.0.28.125:8097/api/SFISAPI/Step1")
+        self.assertEqual(seen[0]["request_body"]["empNo"], "M031978")
+        self.assertEqual(seen[1]["response"]["sfis_response"]["data"], "OK1,REWORK=0")
+
+    def test_a_business_failure_is_traced_as_an_error(self):
+        seen = []
+        self.client.on_trace = seen.append
+        with self.assertRaises(DMZError):
+            self.send_with("/sn/check", {"success": True, "data": "FAIL1,PASM1 ",
+                                         "message": "", "errorCode": None})
+        self.assertEqual(seen[-1]["phase"], "error")
+        self.assertIn("FAIL1,PASM1", seen[-1]["detail"])
+
+    def test_a_failing_trace_hook_never_breaks_a_request(self):
+        def explode(_event):
+            raise RuntimeError("diagnostics must not be load-bearing")
+        self.client.on_trace = explode
+        result, _ = self.send_with("/sn/check", {"success": True, "data": "PASS",
+                                                 "message": "", "errorCode": None})
+        self.assertTrue(result["accepted"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 """Durable SN-gated APL station. Network calls never hold the camera lock."""
 
+import collections
 import copy
 import hashlib
 import json
@@ -61,6 +62,14 @@ class APLStation:
         self.local_mode = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else local_mode
         self.test_mode = bool(test_mode)
         self.transport = None if self.local_mode else transport or DMZClient(dmz_config)
+        # Operator-visible SFIS diagnostics. The dashboard reads this ring over
+        # /api/apl/sfis-log and prints it in the browser console, so Step1 and
+        # Step4 can be debugged from F12 without a shell on the station.
+        self.sfis_lock = threading.Lock()
+        self.sfis_events = collections.deque(maxlen=60)
+        self.sfis_seq = 0
+        if self.transport is not None and hasattr(self.transport, "on_trace"):
+            self.transport.on_trace = self._record_sfis
         self.state = "WAITING_SN"
         self.cycle_id = ""
         self.sn = ""
@@ -383,6 +392,32 @@ class APLStation:
                 self.test_mode = enabled
             return self._snapshot()
 
+    def _record_sfis(self, event):
+        """Append one Step1/Step4 diagnostic entry. Never raises, never blocks
+        on the station lock: the transport calls this from the request thread."""
+        entry = dict(event or {})
+        with self.sfis_lock:
+            self.sfis_seq += 1
+            entry["seq"] = self.sfis_seq
+            entry["ts"] = time.time()
+            entry.setdefault("step", "")
+            entry.setdefault("phase", "")
+            entry.setdefault("cycle_id", self.cycle_id)
+            entry.setdefault("sn", self.sn)
+            entry.setdefault("mcio_sn", self.mcio_sn)
+            entry.setdefault("emp_no", self.cycle_operator or self.operator or "")
+            entry.setdefault("station_state", self.state)
+            try:
+                json.dumps(entry, ensure_ascii=False, default=str)
+            except Exception:
+                entry = {k: str(v) for k, v in entry.items()}
+            self.sfis_events.append(entry)
+
+    def sfis_log(self, after=0):
+        after = int(after or 0)
+        with self.sfis_lock:
+            return [copy.deepcopy(item) for item in self.sfis_events if item["seq"] > after]
+
     def _reply(self, error=None):
         value = {"success": error is None, "station": self._snapshot()}
         if error:
@@ -534,8 +569,14 @@ class APLStation:
             if self.cycle_id == cycle_id and self.state == "SN_CONFIRM":
                 error = self.last_error or result.get("error") or "SFIS Step1 failed"
                 self._save("SFIS_STEP1_REJECTED", {"error": error}, state_override="TERMINATED")
+                operator_rejected = self._is_operator_error(error)
+                self._record_sfis({"step": "step1", "phase": "rolled_back", "detail": error,
+                                   "operator_cleared": operator_rejected,
+                                   "hint": "Step1 is a pre-inspection gate: the cycle is dropped and both"
+                                           " serial numbers must be scanned again"
+                                           + (" after a fresh employee sign-in" if operator_rejected else "")})
                 self._clear_cycle()
-                if self._is_operator_error(error):
+                if operator_rejected:
                     # SFIS rejected the employee number itself; force a fresh sign-in.
                     self.operator = ""
                     self.last_error = "Employee number rejected by SFIS. Enter the employee number again."
@@ -556,6 +597,7 @@ class APLStation:
         expected = "PASS_CONFIRM" if result and self.snapshot_mode else "RESULT_CONFIRM" if result else "SN_CONFIRM"
         pending = "UPLOADING" if result and self.snapshot_mode else "REPORTING" if result else "WAITING_DMZ"
         path = "/result" if result else "/sn/check"
+        step_name = "step4" if result else "step1"
         with self.lock:
             self._check_cycle(cycle_id)
             if not self._same_transport():
@@ -572,6 +614,8 @@ class APLStation:
                 return self._reply("SFIS Step4 is disabled by configuration")
             if self.local_mode:
                 self.last_error = ''
+                self._record_sfis({"step": step_name, "phase": "local",
+                                   "detail": "Station is in local mode; SFIS was not contacted"})
                 if result:
                     self.last_result = {'cycle_id': self.cycle_id, 'sn': self.sn, 'result': 'PASS',
                                         'reported': False, 'saved_at': time.time(), 'mode': 'local',
@@ -590,6 +634,10 @@ class APLStation:
             self.request_token = token
             self.state, self.last_error = pending, ""
             self._save("REPORT_REQUESTED" if result else "SN_CHECK_REQUESTED", outbox="pending" if result else None)
+            self._record_sfis({"step": step_name, "phase": "begin", "path": path,
+                               "request_id": payload["request_id"],
+                               "transport_mode": profile.get("mode"),
+                               "bypass": bool(profile.get("bypass"))})
         error, response = None, None
         try:
             response = self.transport.send(path, payload)
@@ -600,12 +648,18 @@ class APLStation:
             error = str(exc)
         with self.lock:
             if self.closed or self.cycle_id != cycle_id or self.state != pending or self.request_token != token:
+                self._record_sfis({"step": step_name, "phase": "ignored",
+                                   "detail": "Late DMZ answer ignored because the cycle changed"})
                 return self._reply("Late DMZ response ignored because the cycle changed")
             self.request_token = None
             if error:
                 self.state, self.last_error = expected, error
                 self._save("REPORT_RETRY_REQUIRED" if result else "SN_CHECK_FAILED", {"error": error})
+                self._record_sfis({"step": step_name, "phase": "failed", "detail": error,
+                                   "station_state": self.state})
                 return self._reply(error)
+            self._record_sfis({"step": step_name, "phase": "accepted",
+                               "response": response if isinstance(response, dict) else None})
             if result:
                 self.last_result = {"cycle_id": self.cycle_id, "sn": self.sn, "result": "PASS", "reported": True,
                                     "reported_at": time.time(), "request_id": self.report_request_id,

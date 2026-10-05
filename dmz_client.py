@@ -69,6 +69,19 @@ class DMZClient:
         if self.mode == "mock" and not self.base_url:
             self.base_url = "http://127.0.0.1:8791"
         self.opener = urllib.request.build_opener(_NoRedirect())
+        # Optional diagnostics sink. The station sets this so the dashboard
+        # console can show the real Step1/Step4 URL, body and answer. It never
+        # changes what is sent and a failing hook never fails a request.
+        self.on_trace = None
+
+    def _emit(self, event):
+        hook = self.on_trace
+        if hook is None:
+            return
+        try:
+            hook(event)
+        except Exception:
+            pass
 
     def status(self):
         if self.bypass:
@@ -149,8 +162,22 @@ class DMZClient:
         return reply
 
     def send(self, path, payload):
+        step = "step4" if path == "/result" else "step1"
         if self.bypass:
-            return self._bypass_response(path, payload)
+            reply = self._bypass_response(path, payload)
+            self._emit({"step": step, "phase": "bypass", "url": "", "request_body": None,
+                        "response": reply, "detail": "SFIS bypass is on; nothing was sent"})
+            return reply
+        context = {"step": step, "url": "", "request_body": None}
+        try:
+            result = self._send_http(path, payload, context)
+        except Exception as exc:
+            self._emit({**context, "phase": "error", "detail": str(exc)})
+            raise
+        self._emit({**context, "phase": "response", "response": result})
+        return result
+
+    def _send_http(self, path, payload, context):
         if self.mode == "disabled":
             raise DMZError("DMZ is disabled. Configure production HTTP or explicit mock mode.")
         parsed = urllib.parse.urlsplit(self.base_url)
@@ -164,6 +191,10 @@ class DMZClient:
         if parsed.scheme != "https" and not local and not self.allow_http:
             raise DMZError("Remote DMZ requires HTTPS unless allow_insecure_http is explicitly enabled")
         wire_path, wire_payload = self._wire_request(path, payload)
+        context["url"] = self.base_url + wire_path
+        context["request_body"] = wire_payload
+        context["timeout_seconds"] = self.timeout
+        self._emit({**context, "phase": "request"})
         data = json.dumps(wire_payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + wire_path, data=data,
