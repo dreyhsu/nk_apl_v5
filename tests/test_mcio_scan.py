@@ -263,11 +263,9 @@ class AutomaticStep4Tests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.config = self.root / "workflow.json"
-
-    def tearDown(self):
-        self.temp.cleanup()
 
     def station(self, *, local_mode=False, test_mode=False, **dmz):
         transport = dict({"mode": "http", "api_style": "sfis",

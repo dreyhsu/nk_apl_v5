@@ -95,6 +95,36 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(accepted["station"]["operator"], "M999")
         self.assertEqual(accepted["station"]["cycle_operator"], "M999")
 
+    def test_camera_cancel_discards_late_matching_without_sending_sfis(self):
+        self.start_cycle()
+        calls = len(self.transport.calls)
+        stopped = threading.Event()
+        original = self.station.matcher.evaluate_snapshot
+        def evaluate(frame):
+            stopped.set()
+            return original(frame)
+        self.station.matcher.evaluate_snapshot = evaluate
+        result = self.station.inspect_snapshot(self.frame(True), source={'mode': 'camera'},
+                                                cancelled=stopped.is_set)
+        self.assertFalse(result['success'])
+        self.assertNotEqual(self.station.state, 'PASS_CONFIRM')
+        self.assertEqual(len(self.transport.calls), calls)
+
+    def test_stop_preserves_pending_step4_and_accepts_its_existing_response(self):
+        self.start_cycle()
+        self.station.inspect_snapshot(self.frame(True))
+        original = self.transport.send
+        def send(path, payload):
+            self.assertEqual(self.station.state, 'UPLOADING')
+            token = self.station.request_token
+            self.station.camera_fault('Camera stopped by operator')
+            self.assertEqual(self.station.request_token, token)
+            return original(path, payload)
+        self.transport.send = send
+        result = self.station.confirm_result(self.station.cycle_id)
+        self.assertTrue(result['success'])
+        self.assertEqual(self.station.state, 'WAITING_SN')
+
     def test_test_mode_still_requires_operator_before_sn(self):
         self.station.clear_operator()
         self.station.set_test_mode(True)

@@ -19,6 +19,7 @@ import ssl
 import json
 import threading
 import time
+import copy
 from functools import wraps
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from flask import Response, jsonify, request, send_from_directory, stream_with_c
 
 import server as base
 from edge_runtime import EdgeRuntime
+from camera_lifecycle import CameraLifecycle
 from system_metrics import TemperatureReader
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -111,15 +113,75 @@ STATION = None
 SCANNER = None
 _station_lock = threading.RLock()
 _instance_lock = None
+_shutdown_requested = threading.Event()
+_shutdown_lock = threading.Lock()
+_shutdown_result = None
+_http_server = None
 INPUTS = None
 TEMPERATURE = TemperatureReader()
 DEMO = False
+_camera_lifecycle = None
+_camera_lifecycle_lock = threading.Lock()
+_station_snapshot = None
+
+
+def _camera_station_interrupted():
+    # Do not initialize a station as a prerequisite for releasing hardware.
+    target = STATION
+    if target is not None:
+        target.camera_fault('Camera stopped by operator')
+        if getattr(target, 'storage_error', ''):
+            raise RuntimeError(target.storage_error)
+
+
+def camera_lifecycle():
+    global _camera_lifecycle
+    with _camera_lifecycle_lock:
+        if _camera_lifecycle is None or _camera_lifecycle.edge is not EDGE:
+            _camera_lifecycle = CameraLifecycle(EDGE, _camera_station_interrupted)
+        return _camera_lifecycle
+
+
+def responsive_station_status():
+    global _station_snapshot
+    acquired = _station_lock.acquire(blocking=False)
+    target = STATION
+    station_acquired = False
+    try:
+        if acquired and target is not None:
+            station_acquired = target.lock.acquire(blocking=False)
+            if station_acquired:
+                _station_snapshot = target.status()
+                if SCANNER is None:
+                    _station_snapshot['scanner'] = {'connected': False, 'enabled': False}
+                elif SCANNER.control.acquire(blocking=False):
+                    try:
+                        _station_snapshot['scanner'] = SCANNER.status()
+                    finally:
+                        SCANNER.control.release()
+                state = copy.deepcopy(_station_snapshot)
+                state['status_stale'] = False
+                return state
+        state = copy.deepcopy(_station_snapshot) if _station_snapshot else {'state': 'UNAVAILABLE', 'sop': {}}
+        state['status_stale'] = True
+        return state
+    finally:
+        if station_acquired:
+            target.lock.release()
+        if acquired:
+            _station_lock.release()
 
 
 def station_command(func):
     @wraps(func)
     def locked(*args, **kwargs):
         with _station_lock:
+            if _shutdown_requested.is_set():
+                return jsonify({'success': False, 'error': 'Station is stopping'}), 503
+            if camera_lifecycle().notification_pending:
+                return jsonify({'success': False, 'error': 'Station interruption update is pending'}), 409
+            if camera_lifecycle().transition_lock.locked():
+                return jsonify({'success': False, 'error': 'Camera transition is in progress'}), 409
             return func(*args, **kwargs)
     return locked
 
@@ -144,6 +206,10 @@ def inputs():
 
 def scanner_scan(sn, source='scanner'):
     with _station_lock:
+        if _shutdown_requested.is_set():
+            return {'success': False, 'error': 'Station is stopping'}
+        if camera_lifecycle().notification_pending or camera_lifecycle().transition_lock.locked():
+            return {'success': False, 'error': 'Camera transition is in progress'}
         return station().scan(sn, source)
 
 
@@ -194,6 +260,8 @@ def invalid_request(exc):
 
 @app.before_request
 def apl_request_policy():
+    if _shutdown_requested.is_set() and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        return jsonify({'success': False, 'error': 'Station is stopping'}), 503
     # Legacy PC runtimes must not open another owner of the physical camera.
     blocked = ('/api/stream-sources', '/api/runtime/', '/api/video/stream_infer',
                '/api/video/sop_stream_infer')
@@ -417,49 +485,62 @@ app.view_functions['multi_stream_page'] = lambda: redirect('edge')
 def edge_get_config():
     config = EDGE.cfg.public()
     config['product_id'] = 1
-    return jsonify({'ok': True, 'config': config})
+    pending = getattr(EDGE, '_pending_config', None)
+    return jsonify({'ok': True, 'config': config, 'effective_config': config,
+                    'pending_config': pending.public() if pending is not None else None})
 
 
 @app.route('/api/edge/config', methods=['PUT', 'POST'])
-@station_command
 def edge_set_config():
-    if INPUTS is not None and INPUTS.current:
-        return jsonify({'success': False, 'error': 'Return to live camera before changing device settings'}), 409
-    if station().status()['state'] != 'WAITING_SN':
-        return jsonify({'success': False, 'error': 'Finish or safely reset the SN cycle before changing settings'}), 409
+    def validate():
+        with _station_lock:
+            if INPUTS is not None and INPUTS.current:
+                return 'Return to live camera before changing device settings'
+            if station().status()['state'] != 'WAITING_SN':
+                return 'Finish or safely reset the SN cycle before changing settings'
     data = json_object()
     if 'product_id' in data:
         data['product_id'] = 0
     restart = bool(data.pop('restart', False))
-    return jsonify(EDGE.update_config(data, restart=restart))
+    running = bool(EDGE.thread and EDGE.thread.is_alive())
+    return station_response(camera_lifecycle().configure(data, restart=restart and running, validate=validate))
 
 
 @app.route('/api/edge/start', methods=['POST'])
 @station_command
 def edge_start():
     station()
-    return jsonify(EDGE.start())
+    return jsonify(camera_lifecycle().start())
 
 
 @app.route('/api/edge/stop', methods=['POST'])
-@station_command
 def edge_stop():
-    station().camera_fault('Camera stopped by operator')
-    return jsonify(EDGE.stop())
+    return jsonify(camera_lifecycle().stop())
+
+
+@app.route('/api/edge/lifecycle', methods=['GET'])
+def edge_lifecycle():
+    return jsonify(camera_lifecycle().status())
 
 
 @app.route('/api/edge/restart', methods=['POST'])
-@station_command
 def edge_restart():
-    if station().status()['state'] != 'WAITING_SN':
-        return jsonify({'success': False, 'error': 'Reset the interrupted cycle before restarting the camera'}), 409
-    return jsonify(EDGE.restart())
+    def validate():
+        with _station_lock:
+            if station().status()['state'] != 'WAITING_SN':
+                return 'Reset the interrupted cycle before restarting the camera'
+    return station_response(camera_lifecycle().configure(restart=True, validate=validate))
 
 
 @app.route('/api/edge/status', methods=['GET'])
 def edge_status():
-    state = station_status()
+    state = responsive_station_status()
     status = EDGE.status()
+    lifecycle = camera_lifecycle().status()
+    if lifecycle.get('pending'):
+        status['status'] = 'STOPPING'
+    if lifecycle.get('station_update', {}).get('success') is False:
+        status['warning'] = lifecycle['station_update'].get('error', 'Station cleanup failed')
     demo_path = Path(str(getattr(EDGE.cfg, 'source', '')))
     demo_source = bool(
         DEMO and getattr(EDGE.cfg, 'backend', '') == 'opencv'
@@ -468,11 +549,12 @@ def edge_status():
     )
     status.update(
         station=state,
+        lifecycle=lifecycle,
         product_id=1,
         product={'id': 1, 'serial': 'NK_APL_50', 'name': 'APL 50 MCIO'},
         sop=state['sop'],
         temperature=TEMPERATURE.status(),
-        input=INPUTS.status() if INPUTS is not None else {
+        input=INPUTS.status() if INPUTS is not None and not state.get('status_stale') else {
             'mode': 'demo' if demo_source else 'camera',
             'name': demo_path.name if demo_source else 'Live camera',
         },
@@ -585,12 +667,15 @@ def edge_snapshot():
 @app.route('/api/edge/record/start', methods=['POST'])
 def edge_record_start():
     data = request.get_json(silent=True) or {}
-    return jsonify(EDGE.start_recording(data.get('mode')))
+    result = EDGE.start_recording(data.get('mode'))
+    if result.get('success'):
+        camera_lifecycle().reset_recording()
+    return jsonify(result)
 
 
 @app.route('/api/edge/record/stop', methods=['POST'])
 def edge_record_stop():
-    return jsonify(EDGE.stop_recording())
+    return jsonify(camera_lifecycle().stop_recording())
 
 
 @app.route('/api/edge/media', methods=['GET'])
@@ -649,16 +734,73 @@ def edge_sop_ack():
 
 
 def _shutdown():
-    if SCANNER is not None:
-        SCANNER.stop()
-    try:
-        EDGE.stop()
-    except Exception:
-        pass
-    if STATION is not None:
-        STATION.close()
-    if INPUTS is not None:
-        INPUTS.close()
+    global _shutdown_result
+    _shutdown_requested.set()
+    camera_lifecycle().closing = True
+    with _shutdown_lock:
+        if _shutdown_result is not None:
+            return dict(_shutdown_result)
+        errors = []
+        safe = False
+        try:
+            result = camera_lifecycle().stop()
+            safe = result.get('safe', result.get('success', False))
+            if not result.get('success'):
+                errors.append(result.get('error') or 'Camera shutdown failed')
+        except Exception as exc:
+            errors.append(f'Camera shutdown failed: {exc}')
+        if SCANNER is not None:
+            scanner_done = threading.Event()
+            def stop_scanner():
+                try:
+                    SCANNER.stop()
+                except Exception as exc:
+                    errors.append(f'Scanner shutdown failed: {exc}')
+                finally:
+                    scanner_done.set()
+            threading.Thread(target=stop_scanner, daemon=True, name='scanner-shutdown').start()
+            if not scanner_done.wait(2.0):
+                errors.append('Scanner shutdown timed out')
+        # Do not close station storage while its runtime is still producing data.
+        if not (EDGE.thread and EDGE.thread.is_alive()) and not camera_lifecycle().notification_pending:
+            if _station_lock.acquire(timeout=3.0):
+                try:
+                    # VideoTestInputs owns both production and test station storage.
+                    target = INPUTS if INPUTS is not None else STATION
+                    if target is not None:
+                        try:
+                            close_done = threading.Event()
+                            def close_station():
+                                try:
+                                    target.close()
+                                except Exception as exc:
+                                    errors.append(f'Station shutdown failed: {exc}')
+                                finally:
+                                    close_done.set()
+                            threading.Thread(target=close_station, daemon=True, name='station-close').start()
+                            if not close_done.wait(2.0):
+                                errors.append('Station close timed out; storage is still owned by its writer')
+                        except Exception as exc:
+                            errors.append(f'Station shutdown failed: {exc}')
+                finally:
+                    _station_lock.release()
+            else:
+                errors.append('Station storage retained: request is still in progress')
+        else:
+            errors.append('Station storage retained: runtime is still alive')
+        _shutdown_result = {'success': safe and not errors, 'safe': safe, 'error': '; '.join(errors)}
+        print(f'[VisionEdge] shutdown result: {_shutdown_result}', flush=True)
+        return dict(_shutdown_result)
+
+
+def _request_shutdown(signum, frame):
+    if _shutdown_requested.is_set():
+        return
+    _shutdown_requested.set()
+    EDGE.stop_event.set()
+    camera_lifecycle().closing = True
+    if _http_server is not None:
+        threading.Thread(target=_http_server.shutdown, daemon=True, name='apl-http-stop').start()
 
 
 atexit.register(_shutdown)
@@ -724,6 +866,7 @@ def _lock_instance(data_dir):
 
 
 def _serve(host, port, tls_context, threads):
+    global _http_server
     from werkzeug.serving import ThreadedWSGIServer, WSGIRequestHandler
 
     class StationRequestHandler(WSGIRequestHandler):
@@ -766,24 +909,21 @@ def _serve(host, port, tls_context, threads):
             finally:
                 self.slots.release()
 
+    if _shutdown_requested.is_set():
+        return
     httpd = StationHTTPServer()
-    stopping = threading.Event()
-
-    def stop_server(signum, frame):
-        if not stopping.is_set():
-            stopping.set()
-            threading.Thread(target=httpd.shutdown, daemon=True).start()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, stop_server)
+    _http_server = httpd
     try:
+        if _shutdown_requested.is_set():
+            return
         httpd.serve_forever(poll_interval=0.25)
     finally:
         _shutdown()
         httpd.server_close()
+        _http_server = None
 
 
-def main():
+def _main():
     global SCANNER, DEMO
     cfg = ServerConfig.load()
     parser = argparse.ArgumentParser(description='VisionEdge AI Camera server')
@@ -859,7 +999,7 @@ def main():
     SCANNER.start()
 
     # Camera auto-start happens only after TLS + port preflight succeeds.
-    if EDGE.cfg.auto_start:
+    if EDGE.cfg.auto_start and not _shutdown_requested.is_set():
         result = EDGE.start()
         if not result.get('success'):
             print(f"[VisionEdge] camera auto-start failed: {result.get('error', 'unknown error')}")
@@ -874,6 +1014,17 @@ def main():
 
     print('APL DMZ mode: ' + station().status()['dmz']['label'])
     _serve(host, port, tls_context, threads)
+
+
+def main():
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _request_shutdown)
+    try:
+        _main()
+    finally:
+        result = _shutdown()
+        if not result.get('success'):
+            raise SystemExit(70)
 
 
 if __name__ == '__main__':

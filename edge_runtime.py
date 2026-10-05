@@ -17,12 +17,17 @@ handoff used by smartcam_webserver.
 from __future__ import annotations
 
 import configparser
+import copy
 import datetime as _dt
 import json
+import logging
 import math
 import os
 import queue
 import shutil
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, asdict
@@ -48,6 +53,7 @@ EDGE_RUNTIME_DIR = BASE_DIR / 'runtime_data' / 'edge'
 EDGE_PHOTO_DIR = EDGE_RUNTIME_DIR / 'photos'
 EDGE_RECORD_DIR = EDGE_RUNTIME_DIR / 'recordings'
 EDGE_LOG_DIR = EDGE_RUNTIME_DIR / 'logs'
+log = logging.getLogger('camera.lifecycle')
 
 
 def _ensure_dirs() -> None:
@@ -449,8 +455,18 @@ class EdgeConfig:
         if cp.has_section('edge'):
             cp.remove_section('edge')
         cp['edge'] = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in asdict(self).items()}
-        with path.open('w', encoding='utf-8') as f:
-            cp.write(f)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                             prefix=path.name + '.', suffix='.tmp', delete=False) as f:
+                temporary = Path(f.name)
+                cp.write(f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def public(self) -> Dict[str, Any]:
         return asdict(self)
@@ -756,6 +772,9 @@ class GstH264Mp4Recorder:
         self.frames = 0
         self.lock = threading.RLock()
 
+        self._stop_lock = threading.Lock()
+        self._stop_result = None
+
     def start(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.pipeline = Gst.Pipeline.new('edge-mp4-recorder')
@@ -814,36 +833,65 @@ class GstH264Mp4Recorder:
                 # Never let a mux failure destroy the camera streaming thread.
                 return
 
-    def stop(self) -> Dict[str, Any]:
-        with self.lock:
-            if not self.started:
-                return {'success': True, 'path': str(self.path), 'frames': self.frames}
-            self.started = False
-            src, pipeline = self.src, self.pipeline
-            self.src = None
-            self.pipeline = None
-        error = ''
+    def stop(self, timeout=8.0) -> Dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        if not self._stop_lock.acquire(timeout=max(0.0, timeout)):
+            return {'success': False, 'recorder_null': False, 'error': 'Recorder stop lock timed out'}
         try:
-            if src is not None:
-                src.emit('end-of-stream')
-            if pipeline is not None:
-                bus = pipeline.get_bus()
-                msg = bus.timed_pop_filtered(5 * Gst.SECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
-                if msg is None:
-                    error = 'MP4 finalize timed out before EOS'
-                elif msg.type == Gst.MessageType.ERROR:
-                    err, dbg = msg.parse_error()
-                    error = f'{err}: {dbg}'
-                pipeline.set_state(Gst.State.NULL)
-                pipeline.get_state(2 * Gst.SECOND)
-        except Exception as exc:
-            error = str(exc)
-        if self.frames == 0:
+            if self._stop_result is not None:
+                return dict(self._stop_result)
+            if not self.lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+                return {'success': False, 'recorder_null': False, 'error': 'Recorder push drain timed out'}
             try:
-                self.path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        return {'success': not bool(error), 'error': error, 'path': str(self.path), 'frames': self.frames}
+                was_started = self.started
+                self.started = False
+                src, pipeline = self.src, self.pipeline
+            finally:
+                self.lock.release()
+            errors = []
+            finalized = not was_started
+            null = pipeline is None
+            try:
+                if was_started and src is not None and pipeline is not None:
+                    if src.emit('end-of-stream') != Gst.FlowReturn.OK:
+                        raise RuntimeError('Recorder rejected EOS')
+                    remaining = min(5.0, max(0.0, deadline - time.monotonic()))
+                    msg = pipeline.get_bus().timed_pop_filtered(
+                        int(remaining * Gst.SECOND), Gst.MessageType.EOS | Gst.MessageType.ERROR)
+                    if msg is None:
+                        raise RuntimeError('MP4 finalize timed out before EOS')
+                    if msg.type == Gst.MessageType.ERROR:
+                        err, dbg = msg.parse_error()
+                        raise RuntimeError(f'{err}: {dbg}')
+                    finalized = True
+            except Exception as exc:
+                errors.append(str(exc))
+            try:
+                if pipeline is not None:
+                    ret = pipeline.set_state(Gst.State.NULL)
+                    remaining = min(2.0, max(0.0, deadline - time.monotonic()))
+                    result, state, _ = pipeline.get_state(int(remaining * Gst.SECOND))
+                    null = (ret != Gst.StateChangeReturn.FAILURE
+                            and result != Gst.StateChangeReturn.FAILURE and state == Gst.State.NULL)
+                    if not null:
+                        raise RuntimeError('Recorder did not reach NULL')
+            except Exception as exc:
+                errors.append(str(exc))
+            if null:
+                self.src = self.pipeline = None
+            if self.frames == 0 and null:
+                if was_started:
+                    errors.append('Recording contains no encoded frames')
+                try:
+                    self.path.unlink(missing_ok=True)
+                except OSError as exc:
+                    errors.append(f'Empty recording cleanup failed: {exc}')
+            self._stop_result = {'success': finalized and null and not errors,
+                                 'error': '; '.join(errors), 'path': str(self.path), 'frames': self.frames,
+                                 'recorder_finalized': finalized, 'recorder_null': null}
+            return dict(self._stop_result)
+        finally:
+            self._stop_lock.release()
 
 
 class QtiGstCameraBackend(CameraBackend):
@@ -862,6 +910,9 @@ class QtiGstCameraBackend(CameraBackend):
         self._recorder: Optional[GstH264Mp4Recorder] = None
         self._record_path = ''
         self._record_lock = threading.RLock()
+        self._record_stop_lock = threading.Lock()
+        self._record_stopping = False
+        self._unreleased_recorder = None
         self._bus_stop = threading.Event()
         self._bus_thread = None
         self._last_error = ''
@@ -870,6 +921,9 @@ class QtiGstCameraBackend(CameraBackend):
         self._sample_stopping = threading.Event()
         self._sample_lock = threading.Lock()
         self._h264_lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self._release_result = None
+        self._recorder_release = None
         self.display_actual = 'headless'
 
     @staticmethod
@@ -896,6 +950,8 @@ class QtiGstCameraBackend(CameraBackend):
         if self._sample_stopping.is_set() or not self._sample_lock.acquire(blocking=False):
             return Gst.FlowReturn.OK
         try:
+            if self._sample_stopping.is_set():
+                return Gst.FlowReturn.OK
             return self._frame_sample_impl(sink)
         finally:
             self._sample_lock.release()
@@ -934,6 +990,8 @@ class QtiGstCameraBackend(CameraBackend):
         if self._sample_stopping.is_set() or not self._h264_lock.acquire(blocking=False):
             return Gst.FlowReturn.OK
         try:
+            if self._sample_stopping.is_set():
+                return Gst.FlowReturn.OK
             return self._h264_sample_impl(sink)
         finally:
             self._h264_lock.release()
@@ -1252,22 +1310,10 @@ class QtiGstCameraBackend(CameraBackend):
 
             self._bus_thread = threading.Thread(target=self._bus_loop, daemon=True, name='edge-qti-bus')
             self._bus_thread.start()
-        except Exception:
-            # A failed QMMF start must be returned to NULL synchronously.  This
-            # avoids leaving cam-server with a half-open RecorderClient session
-            # before a retry or application restart.
-            self._bus_stop.set()
-            if self._overlay is not None and not self._overlay.stop():
-                raise RuntimeError('Cairo callback drain timeout during startup cleanup')
-            if pipeline is not None:
-                pipeline.set_state(Gst.State.NULL)
-                _, cleanup_state, _ = pipeline.get_state(2 * Gst.SECOND)
-                if cleanup_state != Gst.State.NULL:
-                    raise RuntimeError('Camera startup cleanup did not reach NULL')
-            self.pipeline = None
-            self.frame_sink = None
-            self.h264_sink = None
-            self.encoder = None
+        except Exception as exc:
+            result = self.stop()
+            if not result.get('safe'):
+                raise RuntimeError(f'{exc}; startup cleanup failed: {result.get("error")}') from exc
             raise
 
     def read(self, timeout: float = 1.0) -> Optional[np.ndarray]:
@@ -1280,6 +1326,9 @@ class QtiGstCameraBackend(CameraBackend):
 
     def start_recording(self, path: Path) -> Tuple[bool, str]:
         with self._record_lock:
+            if (self._sample_stopping.is_set() or self._record_stopping
+                    or self._recorder_release and self._recorder_release.get('recorder_null') is False):
+                return False, 'Camera or recorder release is pending'
             if self._recorder is not None:
                 return False, 'recording already active'
             caps = None
@@ -1290,51 +1339,104 @@ class QtiGstCameraBackend(CameraBackend):
             if caps is None:
                 return False, 'H.264 encoder caps not ready yet; retry after live view is running'
             rec = GstH264Mp4Recorder(path, caps)
-            rec.start()
             self._recorder = rec
+            self._recorder_release = None
+            rec.start()
             self._record_path = str(path)
             # With a one-second GOP, the recorder begins on the next IDR even if
             # the vendor force-key-unit event is unavailable.
             return True, str(path)
 
-    def stop_recording(self) -> Dict[str, Any]:
-        with self._record_lock:
-            rec = self._recorder
-            self._recorder = None
-            self._record_path = ''
-        if rec is None:
-            return {'success': False, 'error': 'not recording'}
-        return rec.stop()
-
-    def stop(self) -> None:
-        if self._overlay is not None:
-            if not self._overlay.stop():
-                raise RuntimeError('Cairo callback drain timeout')
-            self._overlay = None
-        self._sample_stopping.set()
-        if not self._sample_lock.acquire(timeout=3.0):
-            raise RuntimeError('Camera sample callback drain timeout')
-        self._sample_lock.release()
-        if not self._h264_lock.acquire(timeout=3.0):
-            raise RuntimeError('H264 sample callback drain timeout')
-        self._h264_lock.release()
+    def stop_recording(self, timeout=8.0) -> Dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        if not self._record_stop_lock.acquire(timeout=max(0.0, timeout)):
+            return {'success': False, 'recorder_null': False, 'error': 'Recorder stop is still in progress'}
         try:
-            self.stop_recording()
-        except Exception:
-            pass
-        self._bus_stop.set()
-        if self.pipeline is not None:
-            try:
-                self.pipeline.set_state(Gst.State.NULL)
-                _, state, _ = self.pipeline.get_state(2 * Gst.SECOND)
-                if state != Gst.State.NULL:
-                    raise RuntimeError('Camera did not reach NULL before timeout')
-            except Exception as exc:
-                raise RuntimeError(f'Camera release failed: {exc}') from exc
-            self.pipeline = None
-        if self._bus_thread and self._bus_thread.is_alive():
-            self._bus_thread.join(timeout=1.0)
-        self._bus_thread = None
+            with self._record_lock:
+                rec = self._recorder
+                self._recorder = None
+                self._record_path = ''
+                self._record_stopping = True
+                if rec is not None:
+                    self._unreleased_recorder = rec
+            if rec is None:
+                return self._recorder_release or {'success': True, 'not_recording': True,
+                                                 'recorder_null': None, 'recorder_finalized': None}
+            result = rec.stop(timeout=max(0.0, deadline - time.monotonic()))
+            self._recorder_release = result
+            if result.get('recorder_null') is True:
+                self._unreleased_recorder = None
+            return result
+        except Exception as exc:
+            self._recorder_release = {'success': False, 'recorder_null': False,
+                                      'recorder_finalized': False, 'error': str(exc)}
+            return dict(self._recorder_release)
+        finally:
+            with self._record_lock:
+                self._record_stopping = False
+            self._record_stop_lock.release()
+
+    def stop(self) -> Dict[str, Any]:
+        with self._stop_lock:
+            if self._release_result is not None:
+                return dict(self._release_result)
+            deadline = time.monotonic() + 20.0
+            remaining = lambda cap: min(cap, max(0.0, deadline - time.monotonic()))
+            errors = []
+            drained = True
+            null = self.pipeline is None
+            self._sample_stopping.set()
+            log.info('CALLBACK_DRAIN pid=%s', os.getpid())
+            if self._overlay is not None:
+                self._overlay.prevent_new_draws()
+                try:
+                    if not self._overlay.stop(timeout=remaining(3.0)):
+                        raise RuntimeError('Cairo callback drain timeout')
+                    self._overlay = None
+                except Exception as exc:
+                    drained = False
+                    errors.append(str(exc))
+            for label, lock in (('Camera sample', self._sample_lock), ('H264 sample', self._h264_lock)):
+                if lock.acquire(timeout=remaining(3.0)):
+                    lock.release()
+                else:
+                    drained = False
+                    errors.append(f'{label} callback drain timeout')
+            recorder = self._recorder_release or {}
+            if drained:
+                log.info('RECORDER_FINALIZE pid=%s', os.getpid())
+                try:
+                    recorder = self.stop_recording(timeout=remaining(8.0))
+                    if not recorder.get('success'):
+                        errors.append(recorder.get('error') or 'Recorder finalize failed')
+                except Exception as exc:
+                    recorder = {'recorder_null': False, 'recorder_finalized': False}
+                    errors.append(str(exc))
+                log.info('PIPELINE_NULL pid=%s', os.getpid())
+                try:
+                    if self.pipeline is not None:
+                        ret = self.pipeline.set_state(Gst.State.NULL)
+                        result, state, _ = self.pipeline.get_state(int(remaining(2.0) * Gst.SECOND))
+                        null = (ret != Gst.StateChangeReturn.FAILURE
+                                and result != Gst.StateChangeReturn.FAILURE and state == Gst.State.NULL)
+                        if not null:
+                            raise RuntimeError('Camera did not reach NULL before timeout')
+                        self.pipeline = None
+                        self.frame_sink = self.h264_sink = self.encoder = None
+                except Exception as exc:
+                    errors.append(f'Camera release failed: {exc}')
+            self._bus_stop.set()
+            if self._bus_thread and self._bus_thread.is_alive():
+                self._bus_thread.join(timeout=remaining(1.0))
+                if self._bus_thread.is_alive():
+                    errors.append('Camera bus thread did not stop')
+            safe = drained and null and recorder.get('recorder_null') is not False
+            self._release_result = {'success': safe and not errors, 'safe': safe,
+                                    'callbacks_drained': drained, 'camera_null': null,
+                                    'recorder_null': recorder.get('recorder_null'),
+                                    'recorder_finalized': recorder.get('recorder_finalized'),
+                                    'error': '; '.join(errors), 'errors': errors}
+            return dict(self._release_result)
 
     def set_overlay(self, state):
         if self._overlay is not None:
@@ -1365,9 +1467,15 @@ class SoftwareRecorder:
         self.size: Optional[Tuple[int, int]] = None
         self.fps: float = 0.0
         self.lock = threading.RLock()
+        self._stop_lock = threading.Lock()
+        self._stop_result = None
+        self.finalizing = False
+        self._unreleased_writer = None
 
     def start(self, frame: np.ndarray, path: Path, mode: str, fps: Optional[float] = None) -> Tuple[bool, str]:
         with self.lock:
+            if self.finalizing or self._unreleased_writer is not None:
+                return False, 'Previous recording is still finalizing'
             if self.writer is not None:
                 return False, 'recording already active'
             h, w = frame.shape[:2]
@@ -1390,6 +1498,7 @@ class SoftwareRecorder:
                 writer.release()
                 return False, 'OpenCV VideoWriter cannot open mp4v or MJPG encoder'
             self.writer = writer
+            self._stop_result = None
             self.path = path
             self.frames = 0
             self.started_at = time.time()
@@ -1412,6 +1521,21 @@ class SoftwareRecorder:
                 pass
 
     def stop(self) -> Dict[str, Any]:
+        if not self._stop_lock.acquire(timeout=8.0):
+            return {'success': False, 'recorder_null': False, 'error': 'Software recorder finalization timed out'}
+        self.finalizing = True
+        try:
+            if self._stop_result is None:
+                self._stop_result = self._finish()
+            return dict(self._stop_result)
+        except Exception as exc:
+            self._stop_result = {'success': False, 'recorder_null': False, 'error': str(exc)}
+            return dict(self._stop_result)
+        finally:
+            self.finalizing = False
+            self._stop_lock.release()
+
+    def _finish(self) -> Dict[str, Any]:
         with self.lock:
             writer, path = self.writer, self.path
             frames = self.frames
@@ -1424,10 +1548,15 @@ class SoftwareRecorder:
             self.size = None
             self.fps = 0.0
         if writer is None:
-            return {'success': False, 'error': 'not recording'}
+            return {'success': True, 'not_recording': True, 'recorder_null': None}
+        self._unreleased_writer = writer
         writer.release()
+        self._unreleased_writer = None
         return {
-            'success': True,
+            'success': frames > 0,
+            'error': '' if frames > 0 else 'Recording contains no frames',
+            'recorder_null': True,
+            'recorder_finalized': frames > 0,
             'path': str(path) if path else '',
             'frames': frames,
             'duration_sec': round(time.time() - started, 2) if started else 0,
@@ -1452,6 +1581,19 @@ class EdgeRuntime:
         self.stop_event = threading.Event()
         self.thread = None
         self.backend: Optional[CameraBackend] = None
+        self._pending_backend = None
+        self._camera_generation = 0
+        self._pending_config = None
+        self._configuring = False
+        self._record_result = None
+        self._record_finalizing = False
+        self._record_command_lock = threading.Lock()
+        self._station_fault_thread = None
+        self._probe_process = None
+        self._stop_lock = threading.Lock()
+        self._stopping = False
+        self._release_failed = False
+        self._cleanup_result = None
         self.soft_rec = SoftwareRecorder(self.cfg)
         self.cache_mgr = None
         self.engine = None
@@ -1572,9 +1714,37 @@ class EdgeRuntime:
         self.rules = []
         self.frame_pass = False
 
+    def _probe_qti(self) -> bool:
+        if not GST_AVAILABLE:
+            return False
+        proc = subprocess.Popen([sys.executable, '-B', str(BASE_DIR / 'camera_worker.py'), '--probe-qti'],
+                                start_new_session=(os.name == 'posix'))
+        self._probe_process = proc
+        deadline = time.monotonic() + 10.0
+        try:
+            while proc.poll() is None:
+                if self.stop_event.wait(0.1):
+                    raise RuntimeError('Camera startup cancelled during plugin discovery')
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('QTI plugin discovery timed out')
+            if proc.returncode not in (0, 1):
+                raise RuntimeError(f'QTI plugin discovery failed ({proc.returncode})')
+            return proc.returncode == 0
+        finally:
+            if proc.poll() is None:
+                if os.name == 'posix':
+                    import signal
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            proc.wait(timeout=2.0)
+            self._probe_process = None
+
     def _make_backend(self) -> CameraBackend:
         requested = self.cfg.backend.lower()
-        qti_available = QtiGstCameraBackend.available()
+        if self.stop_event.is_set():
+            raise RuntimeError('Camera startup cancelled')
+        qti_available = requested == 'qti' or (requested == 'auto' and self._probe_qti())
 
         # On Qualcomm camera images, the presence of qtiqmmfsrc means QTI is the
         # authoritative camera path.  Falling back to OpenCV after QTI *starts*
@@ -1590,16 +1760,16 @@ class EdgeRuntime:
                 # camera owner in this web process.
                 from camera_worker import WorkerCameraBackend
                 b = WorkerCameraBackend(self.cfg)
+                with self.lock:
+                    self._pending_backend = b
+                    if self.stop_event.is_set():
+                        b.request_stop()
                 b.start()
                 self.actual_backend = 'qti'
                 return b
             except Exception as exc:
                 self.actual_backend = 'qti'
-                hint = (
-                    f'QTI camera failed to start: {exc}. '
-                    f'Camera {self.cfg.camera} may already be in use by another '
-                    'VisionEdge/SmartCam process or service.'
-                )
+                hint = f'QTI camera failed to start: {exc}'
                 self.last_warning = ''
                 raise RuntimeError(hint) from exc
 
@@ -1607,15 +1777,29 @@ class EdgeRuntime:
             raise RuntimeError('QTI backend requested but qtiqmmfsrc is unavailable')
 
         b = OpenCVCameraBackend(self.cfg)
+        with self.lock:
+            self._pending_backend = b
+        if self.stop_event.is_set():
+            raise RuntimeError('Camera startup cancelled')
         b.start()
         self.actual_backend = 'opencv'
         return b
 
     def start(self) -> Dict[str, Any]:
         with self.lock:
+            if self._station_fault_thread and self._station_fault_thread.is_alive():
+                return {'success': False, 'error': 'Station interruption update is still pending'}
+            if self._stopping or self._release_failed or self._configuring or self._record_finalizing:
+                return {'success': False, 'error': self.last_error or 'Camera release is pending'}
             if self.thread and self.thread.is_alive():
                 return {'success': True, 'already_running': True, 'status': self.status()}
             self.stop_event.clear()
+            self._camera_generation += 1
+            if self._pending_config is not None:
+                self.cfg = self._pending_config
+                self.soft_rec.cfg = self.cfg
+                self._pending_config = None
+            self._cleanup_result = None
             self.status_text = 'STARTING'
             self.last_error = ''
             self.last_warning = ''
@@ -1641,20 +1825,45 @@ class EdgeRuntime:
         return {'success': True}
 
     def stop(self) -> Dict[str, Any]:
-        self.stop_event.set()
-        t = self.thread
-        if t and t.is_alive():
-            t.join(timeout=30.0)
-        with self.lock:
-            alive = bool(t and t.is_alive())
-            if alive:
+        with self._stop_lock:
+            deadline = time.monotonic() + 32.0
+            with self.lock:
+                self._stopping = True
+                self.stop_event.set()
+                t = self.thread
+                pending = self._pending_backend or self.backend
                 self.status_text = 'STOPPING'
-                return {'success': False, 'error': 'runtime thread did not stop within timeout'}
-            self.thread = None
-            self.status_text = 'STOPPED'
-            self.source_fps = 0.0
-            self.infer_actual_fps = 0.0
-        return {'success': True}
+            supervision_error = ''
+            if pending is not None and hasattr(pending, 'request_stop'):
+                try:
+                    pending.request_stop()
+                    # Supervise QTI even if the runtime is blocked in matching.
+                    pending.stop()
+                except Exception as exc:
+                    supervision_error = f'Worker supervision failed: {exc}'
+            if t and t.is_alive():
+                t.join(timeout=max(0.0, deadline - time.monotonic()))
+            with self.lock:
+                if t and t.is_alive():
+                    self.last_error = 'Runtime thread did not stop within timeout'
+                    self._release_failed = True
+                    self.status_text = 'RELEASE_FAILED'
+                    return {'success': False, 'safe': False, 'error': self.last_error}
+                self.thread = None
+                self._stopping = False
+                result = self._cleanup_result or {'success': not self._release_failed,
+                                                  'safe': not self._release_failed, 'error': self.last_error}
+                if supervision_error:
+                    self._release_failed = True
+                    self.last_error = supervision_error
+                    result = {**result, 'success': False, 'safe': False, 'error': supervision_error}
+                    self._cleanup_result = result
+                self.status_text = 'RELEASE_FAILED' if not result.get('safe', True) else 'STOPPED'
+                self.source_fps = self.infer_actual_fps = 0.0
+                self.latest_raw = self.latest_result = None
+                self.latest_raw_jpeg = self.latest_result_jpeg = b''
+                self.last_frame_at = None
+                return dict(result)
 
     def restart(self) -> Dict[str, Any]:
         result = self.stop()
@@ -1664,13 +1873,33 @@ class EdgeRuntime:
 
     def update_config(self, data: Dict[str, Any], restart: bool = False) -> Dict[str, Any]:
         with self.lock:
+            if self._configuring or self._stopping or self._release_failed:
+                return {'success': False, 'error': 'Camera transition is in progress'}
             was_running = bool(self.thread and self.thread.is_alive())
-            self.cfg.update(data)
-            self.cfg.save(self.config_path)
-            self.soft_rec.cfg = self.cfg
+            candidate = copy.deepcopy(self._pending_config or self.cfg)
+            candidate.update(data)
+            self._configuring = True
+        try:
+            if restart and was_running:
+                result = self.stop()
+                if not result.get('success'):
+                    return {**result, 'config': self.cfg.public(), 'restart_required': True}
+            candidate.save(self.config_path)
+            with self.lock:
+                if was_running and not restart:
+                    self._pending_config = candidate
+                else:
+                    self.cfg = candidate
+                    self.soft_rec.cfg = candidate
+                    self._pending_config = None
+            result = {'success': True, 'config': candidate.public(),
+                      'effective_config': self.cfg.public(), 'restart_required': bool(was_running and not restart)}
+        finally:
+            with self.lock:
+                self._configuring = False
         if restart and was_running:
-            self.restart()
-        return {'success': True, 'config': self.cfg.public(), 'restart_required': bool(was_running and not restart)}
+            return self.start()
+        return result
 
     def _rotate_if_needed(self, frame: np.ndarray) -> np.ndarray:
         # QTI applies rotation in hardware. OpenCV fallback mirrors the same setting.
@@ -1708,6 +1937,9 @@ class EdgeRuntime:
             backend = self._make_backend()
             with self.lock:
                 self.backend = backend
+                self._pending_backend = None
+                if self.stop_event.is_set():
+                    return
                 self.status_text = 'LIVE'
             next_infer = 0.0
             replay_count = 0
@@ -1731,12 +1963,17 @@ class EdgeRuntime:
                         except Exception:
                             pass
                     # File/USB OpenCV EOF may recover by reopen; QTI errors also get a clean restart.
-                    backend.stop()
+                    released = backend.stop()
+                    if isinstance(released, dict) and not released.get('safe', released.get('success', True)):
+                        raise RuntimeError(released.get('error') or 'Camera release failed during reconnect')
                     if self.stop_event.wait(self.cfg.reconnect_sec):
                         break
                     backend = self._make_backend()
                     with self.lock:
                         self.backend = backend
+                        self._pending_backend = None
+                        if self.stop_event.is_set():
+                            break
                         self.status_text = 'LIVE'
                         self.last_error = ''
                     continue
@@ -1810,18 +2047,12 @@ class EdgeRuntime:
                 if (self.soft_rec.active or backend_status.get('recording')) and now - self._last_storage_check >= 2.0:
                     self._last_storage_check = now
                     if not self._storage_ok():
-                        stopped = False
-                        if self.soft_rec.active:
-                            self.soft_rec.stop()
-                            stopped = True
-                        elif backend_status.get('recording'):
-                            backend.stop_recording()
-                            stopped = True
-                        if stopped:
-                            self._bump_media_version()
+                        self.stop_recording()
                         self.last_warning = 'Recording auto-stopped: low/unavailable storage'
 
                 with self.frame_cond:
+                    if self.stop_event.is_set():
+                        break
                     self.latest_raw = frame
                     self.latest_raw_jpeg = raw_jpg
                     self.frame_seq += 1
@@ -1833,36 +2064,71 @@ class EdgeRuntime:
             with self.lock:
                 self.status_text = 'ERROR'
                 self.last_error = str(exc)
-            if self.station is not None:
-                try:
-                    self.station.camera_fault('Camera runtime error: ' + str(exc))
-                except Exception:
-                    pass
+            # Hardware cleanup must precede station storage work.
         finally:
+            backend = self._pending_backend or backend
             had_recording = self.soft_rec.active
             if backend is not None:
                 try:
                     had_recording = had_recording or bool(backend.status().get('recording'))
                 except Exception:
                     pass
+            errors = []
+            release = {'safe': True, 'success': True}
+            software_release = {}
             try:
-                self.soft_rec.stop()
-            except Exception:
-                pass
+                software_release = self.soft_rec.stop()
+                if not software_release.get('success'):
+                    errors.append(software_release.get('error') or 'Software recorder finalization failed')
+            except Exception as exc:
+                errors.append(f'Software recorder stop failed: {exc}')
             if backend is not None:
                 try:
-                    backend.stop()
+                    result = backend.stop()
+                    if isinstance(result, dict):
+                        release = result
+                        if not result.get('success', True):
+                            errors.append(result.get('error') or 'Camera cleanup failed')
                 except Exception as exc:
-                    with self.lock:
-                        self.status_text = 'ERROR'
-                        self.last_error = str(exc)
+                    release = {'safe': False, 'success': False}
+                    errors.append(str(exc))
+            if self._probe_process is not None and self._probe_process.poll() is None:
+                errors.append('QTI discovery process did not exit')
+                release = {**release, 'safe': False, 'success': False,
+                           'probe_reaped': False, 'probe_pid': self._probe_process.pid}
+                try:
+                    from camera_worker import _persist_recovery
+                    _persist_recovery(errors[-1], f'probe-{self._probe_process.pid}',
+                                      self._probe_process.pid, self.cfg.camera, release)
+                except OSError as exc:
+                    errors.append(f'Recovery marker write failed: {exc}')
+            if software_release.get('recorder_null') is False:
+                release = {**release, 'safe': False, 'software_recorder_null': False}
             if had_recording:
                 self._bump_media_version()
             self._release_inference()
             with self.lock:
-                self.backend = None
-                if self.status_text != 'ERROR':
+                self._release_failed = not release.get('safe', release.get('success', True))
+                self._cleanup_result = {**release, 'success': not errors and release.get('success', True),
+                                        'error': '; '.join(errors)}
+                if errors:
+                    self.last_error = '; '.join(filter(None, [self.last_error, *errors]))
+                if self._release_failed:
+                    self.status_text = 'RELEASE_FAILED'
+                else:
+                    self.backend = self._pending_backend = None
+                if self.status_text not in ('ERROR', 'RELEASE_FAILED'):
                     self.status_text = 'STOPPED'
+            if self.station is not None and self.status_text == 'ERROR' and not self.stop_event.is_set():
+                target = self.station
+                def notify_fault():
+                    try:
+                        target.camera_fault('Camera runtime stopped after source error')
+                    except Exception:
+                        log.exception('Station interruption update failed after camera cleanup')
+                self._station_fault_thread = threading.Thread(target=notify_fault, daemon=True,
+                                                             name='camera-fault-notify')
+                self._station_fault_thread.start()
 
     def _storage_status(self) -> Dict[str, Any]:
         try:
@@ -1898,6 +2164,7 @@ class EdgeRuntime:
                 'backend_requested': self.cfg.backend,
                 'backend': self.actual_backend or backend_status.get('backend', ''),
                 'backend_status': backend_status,
+                'release': self._cleanup_result,
                 'frame_seq': self.frame_seq,
                 'infer_seq': self.infer_seq,
                 'source_fps': round(self.source_fps, 2),
@@ -1913,6 +2180,8 @@ class EdgeRuntime:
                 'rules': self.rules,
                 'sop': self.sop,
                 'recording': recording,
+                'recording_state': 'FINALIZING' if self._record_finalizing else 'RECORDING' if recording else 'FAILED' if self._record_result and not self._record_result.get('success') else 'IDLE',
+                'recording_result': self._record_result,
                 'record_path': (str(self.soft_rec.path) if self.soft_rec.active and self.soft_rec.path else str(backend_status.get('record_path') or '')),
                 'media_version': self.media_version,
                 'has_raw': bool(self.latest_raw_jpeg),
@@ -1937,6 +2206,8 @@ class EdgeRuntime:
     def snapshot(self, mode: str = 'result') -> Dict[str, Any]:
         mode = str(mode or 'result').lower()
         with self.lock:
+            if self._stopping or self._release_failed:
+                return {'success': False, 'error': 'Camera release is pending'}
             if mode == 'raw':
                 frame = self.latest_raw.copy() if self.latest_raw is not None else None
             else:
@@ -1980,7 +2251,12 @@ class EdgeRuntime:
         if frame is None:
             return {'success': False, 'error': 'No decoded frame is available for inspection'}
         source = dict(source_context or {})
-        result = station.inspect_snapshot(frame, source=source, quality=self.cfg.snapshot_quality)
+        generation = getattr(self, '_camera_generation', 0)
+        cancelled = (lambda: self.stop_event.is_set() or generation != self._camera_generation) if source.get('mode') == 'camera' else None
+        result = station.inspect_snapshot(frame, source=source, quality=self.cfg.snapshot_quality,
+                                          cancelled=cancelled)
+        if cancelled is not None and cancelled():
+            return {'success': False, 'error': 'Camera stopped during inspection'}
         if result.get('success'):
             snapshot = station.status()
             result_frame = station.matcher.draw(frame, snapshot) if station.matcher is not None else frame
@@ -1995,6 +2271,8 @@ class EdgeRuntime:
 
     def capture_and_inspect(self, source_context=None) -> Dict[str, Any]:
         with self.lock:
+            if self.stop_event.is_set() or self._stopping or self._release_failed:
+                return {'success': False, 'error': 'Camera release is pending'}
             station = self.station
             backend = self.backend
             last_frame_at = self.last_frame_at
@@ -2015,6 +2293,17 @@ class EdgeRuntime:
         return self.inspect_frame(frame, source)
 
     def start_recording(self, mode: Optional[str] = None) -> Dict[str, Any]:
+        if not self._record_command_lock.acquire(blocking=False):
+            return {'success': False, 'error': 'Recording transition is in progress'}
+        try:
+            result = self._start_recording(mode)
+            if result.get('success'):
+                self._record_result = None
+            return result
+        finally:
+            self._record_command_lock.release()
+
+    def _start_recording(self, mode: Optional[str] = None) -> Dict[str, Any]:
         mode = str(mode or self.cfg.record_source).lower()
         if mode not in ('raw', 'result'):
             mode = 'raw'
@@ -2022,6 +2311,8 @@ class EdgeRuntime:
             return {'success': False, 'error': f'free space below min_free_mb={self.cfg.min_free_mb} or unavailable'}
         with self.lock:
             backend = self.backend
+            if self.stop_event.is_set() or self._stopping or self._release_failed:
+                return {'success': False, 'error': 'Camera release is pending'}
             if mode == 'result':
                 src = self.latest_result if self.latest_result is not None else self.latest_raw
             else:
@@ -2056,6 +2347,22 @@ class EdgeRuntime:
         }
 
     def stop_recording(self) -> Dict[str, Any]:
+        if not self._record_command_lock.acquire(timeout=10.0):
+            self.stop_event.set()
+            return {'success': False, 'requires_camera_stop': True, 'error': 'Recording command did not finish'}
+        self._record_finalizing = True
+        try:
+            result = self._stop_recording()
+            self._record_result = result
+            if result.get('recorder_null') is False or result.get('requires_camera_stop'):
+                self.stop_event.set()
+                result['requires_camera_stop'] = True
+            return result
+        finally:
+            self._record_finalizing = False
+            self._record_command_lock.release()
+
+    def _stop_recording(self) -> Dict[str, Any]:
         with self.lock:
             backend = self.backend
         if self.soft_rec.active:
@@ -2063,7 +2370,7 @@ class EdgeRuntime:
         elif backend is not None and backend.hardware_recording:
             result = backend.stop_recording()
         else:
-            result = {'success': False, 'error': 'not recording'}
+            result = self._record_result or {'success': True, 'not_recording': True}
         if result.get('path'):
             try:
                 p = Path(result['path'])

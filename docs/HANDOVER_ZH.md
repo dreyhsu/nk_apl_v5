@@ -5,7 +5,7 @@
 PC 原始碼：
 
 ```text
-D:\work_project\smartcam\NK_APL\VisionEdge_APL_COVER_CLOSED_CARD_PRESENT_CROOP
+D:\work_project\smartcam\NK_APL\APL_cowork_2\nk_apl_v5
 ```
 
 SmartCam 直接部署慣用目錄：
@@ -16,6 +16,10 @@ SmartCam 直接部署慣用目錄：
 
 這是獨立的單張判定版本。`NK_APL/VisionEdge_APL` 的多步流程是另一個 lineage，
 不可互相覆蓋設定或程式。
+
+2026-10-05 本次修正基準為 `feature/sfis-bypass-switch` 的 `34d0833`（17:19:51 +08:00）。
+相機釋放修正尚在 working tree；來源、實際部署目錄與執行程序要分別核對。
+即使裝置目錄叫 Go Live，也不能據此認定執行的是自動錄影模式。
 
 ## 2. 功能目標
 
@@ -226,7 +230,9 @@ cd /var/rootdirs/opt/VisionEdge_APL
 /usr/bin/python3 -B -u visionedge_server.py
 ```
 
-停止使用 `Ctrl+C`。啟動前確認：
+停止使用 `Ctrl+C`，等待回到 shell prompt 及停止結果，不要連續重開或跳過收尾。
+若實際部署在別的目錄，先確認該目錄的程式／設定，再替換上述 `cd`。
+啟動前確認：
 
 ```bash
 ps -ef | grep -E 'visionedge|python3' | grep -v grep
@@ -235,6 +241,46 @@ ss -lntup | grep -E ':(8765|8889|5000)\b'
 ```
 
 不要停止平台 `cam-server`；它是 Qualcomm 相機服務的一部分。
+
+### 停止與重新啟動（2026-10-05 本機修正）
+
+2026-10-06 第二階段已補 Web Stop Camera 與站台紀錄／鎖的隔離。Ctrl+C 和 Web Stop 共用 `camera_lifecycle.py`；GET `/api/edge/lifecycle` 可查 operation、phase、station_update 和 release 結果。全業務階段、錄影停止與 UI 修正及限制見[計畫第 12 節](CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md#12-第二階段所有業務階段都能停止與回收)。
+
+Stop Recording 只回收錄影資源並保留預覽；Stop Camera／Ctrl+C 才要求回收相機來源。不能用錄影狀態變成 IDLE 當成 camera 已釋放的證據。工號、SN 錯誤不得阻擋相機停止，這項完整矩陣尚未驗收。
+
+正常停止依序封鎖新工作、排空 callback、錄影 EOS／mux finalize、驗證 recorder／camera NULL，
+回傳 worker ACK，再由父程序 wait/reap。日誌可定位：
+
+```text
+STOP_REQUESTED → CALLBACK_DRAIN → RECORDER_FINALIZE → PIPELINE_NULL
+→ WORKER_ACK → WORKER_REAP → STOP_COMPLETE / RELEASE_FAILED
+```
+
+初始化途中也能取消；第二次 Ctrl+C 不會跳過收尾。父程序 graceful wait 上限 22 秒，
+必要時 TERM 3 秒、KILL／wait 2 秒；正常停止通常更快。重複 stop 使用同一結果。
+runtime 停止協調 deadline 32 秒；網頁 Stop 及設定重啟最多等待 45 秒才視為 HTTP 逾時。
+
+`RELEASE_FAILED` 表示安全釋放無法確認，禁用重新啟動、實體相機拍照及錄影。
+程式關閉失敗回傳 exit code 70。錄影 finalize 失敗但相機已安全 NULL，仍會回報失敗，
+不能顯示成保存成功；不能把安全釋放與 MP4 完整性混為一談。
+
+正常退出後可用下列只讀指令確認：
+
+```bash
+echo "last_exit=$?"
+pgrep -af 'visionedge_server|camera_worker'
+cat /proc/sys/kernel/random/boot_id
+cat runtime_data/edge/camera_recovery_required.json
+cat /run/visionedge-camera-0.recovery.json
+```
+
+`echo` 必須緊接在前景程式退出後。正常情況沒有 recovery JSON，`cat` 找不到檔案並不代表失敗。
+camera ID 不為 0 時替換 `/run` 檔名；lock 檔存在本身不代表有人持鎖。
+本機 marker 及 Linux `/run` 共享 guard 防止同 boot 不確定釋放後再取得；不要刪 marker 強行解鎖。
+發生強制退出或未確認 NULL 時先保存日誌，必要時依維護程序 reboot，不能宣稱 kill 後相機必已恢復。
+
+完整範圍與待驗收清單見 [相機停止修正紀錄](CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md#11-2026-10-05-實作與驗證紀錄)。
+第二階段 PC 回歸為 271 項、267 通過、4 跳過；尚未部署或完成 Qualcomm 實機重複取得驗收。Stop Recording 等待 11 秒後仍未完成會升級停止相機；站台通知未完成時禁止重新啟動，不會假裝資料已保存。
 
 ## 13. 部署內容
 
@@ -257,10 +303,15 @@ ss -lntup | grep -E ':(8765|8889|5000)\b'
 
 TLS private key 必須受控，不應任意散布或放入一般交接壓縮檔。
 
+此次釋放修正需同批更新 `camera_lifecycle.py`（新增）、`camera_worker.py`、`edge_runtime.py`、`overlay_renderer.py`、
+`visionedge_server.py`、`apl_station.py`、`static/edge_dashboard.html` 與 `static/apl_ui.js`，避免漏掉新模組或新版父程序配舊 IPC worker。
+不覆蓋設備憑證、業務設定或 runtime 資料；不需要新增 service 或套件。
+
 ## 14. 上線驗收清單
 
 - [ ] SmartCam 時間正確，重開後不會回到錯誤日期。
 - [ ] 相機只有一個 owner。
+- [ ] 同 boot 完成 Ctrl+C／重新啟動 30 輪、初始化中取消 10 輪、網頁 Stop／Start 20 輪；每輪驗證新 frame 與 worker reap。
 - [ ] HTTPS 頁面可開啟。
 - [ ] Live 畫面與判定座標一致。
 - [ ] MediaMTX／WHEP 可長時間顯示。

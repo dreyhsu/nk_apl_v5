@@ -1,10 +1,65 @@
 """Static operator UI checks that do not require the Flask runtime."""
 
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 
 class OperatorInputUITests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_release_status_controls_execute_without_a_browser(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        functions = html.split('function stateClass(status)', 1)[1].split('function stateLabel', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+const nodes=new Map();
+const $=id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id)};
+let lastStatus={},cameraBusy=false,recordBusy=false,viewMode='raw',recSince=null,lastWarning='';
+const fmtDuration=()=>'',fmtGb=()=>'',renderFlow=()=>{},renderStation=()=>{},renderStreamStatus=()=>{},updateSettingsActionState=()=>{},message=()=>{},updateSnapshotLabel=()=>{},reloadStream=()=>{};
+''' + 'function stateClass(status)' + functions + '''
+renderStatus({status:'RELEASE_FAILED',running:true,has_raw:true});
+assert.equal(stateClass('RELEASE_FAILED'),'bad');
+assert.equal($('cameraToggle').disabled,true);
+assert.equal($('snapshotBtn').disabled,true);
+assert.equal($('recordToggle').disabled,true);
+assert.match($('cameraHint').textContent,/unconfirmed/);
+renderStatus({status:'STOPPING',running:true,has_raw:true});
+assert.equal($('snapshotBtn').disabled,true);
+renderStatus({status:'LIVE',running:true,has_raw:true});
+assert.equal($('cameraToggle').disabled,false);
+assert.equal($('snapshotBtn').disabled,false);
+assert.equal($('recordToggle').disabled,false);
+renderStatus({status:'STARTING',running:true});
+assert.equal($('cameraToggle').disabled,false);
+assert.equal($('cameraToggle').textContent,'Cancel Camera Start');
+renderStatus({status:'LIVE',running:true,has_raw:true,recording:true});
+assert.equal($('cameraToggle').disabled,false);
+renderStatus({status:'LIVE',running:true,has_raw:true,recording_state:'FINALIZING'});
+assert.equal($('recordToggle').disabled,true);
+assert.equal($('recordState').textContent,'FINALIZING');
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failed_camera_release_disables_camera_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        self.assertIn("status==='RELEASE_FAILED'||status==='ALARM')return'bad'", html)
+        self.assertIn("cameraUnavailable=releaseFailed||status==='STOPPING'", html)
+        self.assertIn("camBtn.disabled=cameraBusy||cameraUnavailable", html)
+        self.assertIn("$('snapshotBtn').disabled=!hasFrame||cameraBusy||cameraUnavailable", html)
+        self.assertIn('recBtn.disabled=!running||!hasFrame||recordBusy||cameraUnavailable', html)
+
+    def test_station_errors_do_not_disable_camera_stop(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn("station?.status_stale!==true", script)
+        self.assertIn("if((!fresh||activeCycle)&&!lastStatus.running&&lastStatus.status!=='STARTING')", script)
+        self.assertNotIn("if(!fresh||activeCycle)$('cameraToggle').disabled=true", script)
+
     def test_sn_input_is_read_only_and_ime_mutations_are_blocked(self):
         root = Path(__file__).resolve().parents[1]
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
@@ -90,7 +145,7 @@ class OperatorInputUITests(unittest.TestCase):
         # The MCIO field must carry the same IME and keyboard-layout guards as the SN field.
         self.assertEqual(html.count('inputmode="none"'), 2)
         self.assertEqual(html.count('readonly disabled'), 2)
-        self.assertIn("submitScan('mcioInput')", html)
+        self.assertIn("attachFixedScanner('mcioInput')", script)
         self.assertIn("mcioInput:{field:'mcio_sn'", script)
         self.assertIn("WAITING_MCIO_SN:'Scan MCIO Card SN'", script)
         self.assertIn("WAITING_MCIO_SN:'Product serial number accepted.", script)

@@ -271,7 +271,7 @@ async function saveScannerSelection(){
 
 function renderStation(station){
   logStationState(station);pollSfisLog();
-  const fresh=stationFresh(),available=!!station,freshStation=fresh&&available;
+  const fresh=stationFresh()&&station?.status_stale!==true,available=!!station,freshStation=fresh&&available;
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;
   const operatorRequired=station?.operator_required!==false;
@@ -338,7 +338,7 @@ function renderStation(station){
   const result=station?.last_result;
   $('lastResult').textContent=result?'Last '+(result.test_mode?'test':'inspection')+': '+result.sn+' · '+(result.visual_result||result.result||result.cycle_status||'CLOSED')+' · '+(result.upload_status||result.reason||'Saved locally'):'';
   const activeCycle=available&&station.state!=='WAITING_SN';
-  if(!fresh||activeCycle)$('cameraToggle').disabled=true;
+  if((!fresh||activeCycle)&&!lastStatus.running&&lastStatus.status!=='STARTING')$('cameraToggle').disabled=true;
   if(!fresh){$('snapshotBtn').disabled=true;$('recordToggle').disabled=true}
   if(!freshStation&&station){$('verdict').textContent='Offline';$('verdict').className='state warn';$('flowPct').textContent='Unavailable'}
   renderInput();

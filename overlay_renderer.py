@@ -74,8 +74,11 @@ class OverlayRenderer:
         self._element = element
         self._handler = element.connect('draw', self.draw)
 
-    def stop(self, timeout=3.0):
+    def prevent_new_draws(self):
         self._stopping.set()
+
+    def stop(self, timeout=3.0):
+        self.prevent_new_draws()
         if not self._draw_lock.acquire(timeout=timeout):
             return False
         try:

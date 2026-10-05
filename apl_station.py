@@ -803,8 +803,10 @@ class APLStation:
                 snapshot = self._snapshot()
             return self._frame_result(frame, snapshot)
 
-    def inspect_snapshot(self, frame, source=None, quality=92):
+    def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None):
         with self.lock:
+            if cancelled is not None and cancelled():
+                return self._reply('Camera stopped before inspection')
             self._check_cycle(self.cycle_id)
             if not self.snapshot_mode:
                 return self._reply("Capture & Inspect is only available in snapshot mode")
@@ -827,7 +829,8 @@ class APLStation:
                         self._save("INSPECTION_FAILED", {"error": self.last_error})
                     return self._reply(self.last_error)
             with self.lock:
-                if self.closed or token != self.generation or self.cycle_id != cycle_id or self.state != "JUDGING":
+                if (self.closed or token != self.generation or self.cycle_id != cycle_id
+                        or self.state != "JUDGING" or (cancelled is not None and cancelled())):
                     return self._reply("Inspection result was discarded because the cycle changed")
                 accepted = bool(match.get("accepted"))
                 self.matching = match
