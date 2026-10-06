@@ -1,5 +1,6 @@
 """Supervision faults must not leave an owner or report a safe release."""
 import json
+import logging
 import dataclasses
 import os
 import subprocess
@@ -152,6 +153,34 @@ class WorkerShutdownTests(unittest.TestCase):
                 patch.object(worker.os, '_exit', side_effect=lambda code: order.append(code)):
             worker._watchdog_exit('session', 0, {})
         self.assertEqual(order, ['guard', 70])
+
+    def test_lifecycle_file_log_is_bounded_and_configured_once(self):
+        logger = logging.Logger('camera-test')
+        with tempfile.TemporaryDirectory() as folder, patch.object(worker, 'BASE_DIR', Path(folder)), \
+                patch.object(worker, 'log', logger):
+            try:
+                worker._configure_lifecycle_file_log('worker')
+                worker._configure_lifecycle_file_log('worker')
+                self.assertEqual(len(logger.handlers), 1)
+                handler = logger.handlers[0]
+                self.assertEqual(handler.maxBytes, 2 * 1024 * 1024)
+                self.assertEqual(handler.backupCount, 3)
+                logger.warning('PIPELINE_NULL_RESULT session=test')
+                handler.flush()
+                self.assertIn('PIPELINE_NULL_RESULT',
+                              (Path(folder) / 'runtime_data/edge/logs/camera_worker.log').read_text())
+            finally:
+                for handler in logger.handlers:
+                    handler.close()
+
+    def test_error_from_worker_is_not_duplicated_in_parent_result(self):
+        backend = self.backend()
+        backend._safe_stop = False
+        backend._fatal = 'StopCamera failed'
+        backend._release['errors'] = ['StopCamera failed']
+        with patch.object(backend, '_mark_recovery'):
+            result = backend.stop()
+        self.assertEqual(result['errors'], ['StopCamera failed'])
 
 
 FAKE_WORKER = '''

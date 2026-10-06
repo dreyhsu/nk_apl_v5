@@ -6,6 +6,7 @@ import dataclasses
 import hmac
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import queue
@@ -36,6 +37,22 @@ if not log.handlers:
     log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = False
+
+
+def _configure_lifecycle_file_log(role):
+    name = f'camera_{role}.log'
+    if any(getattr(handler, '_camera_log_role', None) == role for handler in log.handlers):
+        return
+    try:
+        directory = BASE_DIR / 'runtime_data' / 'edge' / 'logs'
+        directory.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(directory / name, maxBytes=2 * 1024 * 1024,
+                                      backupCount=3, encoding='utf-8')
+        handler._camera_log_role = role
+        handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+        log.addHandler(handler)
+    except OSError as exc:
+        log.warning('Camera lifecycle file log unavailable: %s', exc)
 
 
 def _shared_recovery_file(camera):
@@ -237,6 +254,7 @@ class WorkerCameraBackend:
 
     def start(self):
         global _owner
+        _configure_lifecycle_file_log('parent')
         with _owner_lock:
             if self._cancel.is_set() or self._stop_result is not None:
                 raise RuntimeError('Camera startup cancelled')
@@ -468,6 +486,7 @@ class WorkerCameraBackend:
                 except OSError as exc:
                     errors.append(f'Recovery marker write failed: {exc}')
             errors.extend(self._release.get('errors') or [])
+            errors = list(dict.fromkeys(errors))
             self._stop_result = {**self._release, 'success': safe and not errors, 'safe': safe,
                                  'worker_reaped': reaped, 'forced_exit': forced,
                                  'error': '; '.join(errors), 'errors': errors, 'session': self.session}
@@ -489,6 +508,7 @@ class WorkerCameraBackend:
 
 
 def worker_main(port):
+    _configure_lifecycle_file_log('worker')
     bootstrap = json.loads(sys.stdin.readline())
     sock = socket.create_connection(('127.0.0.1', port), timeout=5.0)
     sock.settimeout(1.0)
@@ -507,6 +527,7 @@ def worker_main(port):
     loop = None
     session = bootstrap['session']
     last_frame = [time.monotonic()]
+    log.info('WORKER_BOOT session=%s pid=%s camera=%s', session, os.getpid(), bootstrap['config']['camera'])
 
     def request_stop(*args):
         stop_event.set()

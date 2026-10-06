@@ -11,10 +11,11 @@ import visionedge_server as web
 
 
 def fake_gst():
-    return SimpleNamespace(State=SimpleNamespace(NULL='NULL'),
+    return SimpleNamespace(State=SimpleNamespace(NULL='NULL', PLAYING='PLAYING', PAUSED='PAUSED'),
                            StateChangeReturn=SimpleNamespace(FAILURE='FAILURE', SUCCESS='SUCCESS'),
                            FlowReturn=SimpleNamespace(OK=0),
-                           MessageType=SimpleNamespace(EOS=1, ERROR=2), SECOND=1000000000)
+                           MessageType=SimpleNamespace(EOS=1, ERROR=2, WARNING=4),
+                           Event=SimpleNamespace(new_eos=lambda: 'EOS'), SECOND=1000000000)
 
 
 class PipelineShutdownTests(unittest.TestCase):
@@ -26,6 +27,7 @@ class PipelineShutdownTests(unittest.TestCase):
         self.pipeline = Mock()
         self.pipeline.set_state.return_value = 'SUCCESS'
         self.pipeline.get_state.return_value = ('SUCCESS', 'NULL', None)
+        self.pipeline.get_by_name.return_value = None
         self.backend.pipeline = self.pipeline
 
     def tearDown(self):
@@ -61,7 +63,78 @@ class PipelineShutdownTests(unittest.TestCase):
 
     def test_failed_null_return_is_unsafe_even_when_state_says_null(self):
         self.pipeline.set_state.return_value = 'FAILURE'
-        self.assertFalse(self.backend.stop()['safe'])
+        result = self.backend.stop()
+        self.assertFalse(result['safe'])
+        self.assertIn('state change failed', result['error'])
+        self.assertNotIn('before deadline', result['error'])
+        self.assertEqual(result['camera_state_change']['set_return'], 'FAILURE')
+
+    def playing_pipeline(self):
+        self.pipeline.get_state.side_effect = [('SUCCESS', 'PLAYING', None), ('SUCCESS', 'NULL', None)]
+        self.pipeline.send_event.return_value = True
+        self.pipeline.get_bus.return_value.timed_pop_filtered.return_value = SimpleNamespace(type=1)
+
+    def test_main_eos_precedes_null_and_is_not_recorder_eos(self):
+        self.playing_pipeline()
+        order = []
+        self.pipeline.send_event.side_effect = lambda event: order.append(event) or True
+        self.pipeline.set_state.side_effect = lambda state: order.append(state) or 'SUCCESS'
+        result = self.backend.stop()
+        self.assertTrue(result['safe'])
+        self.assertTrue(result['camera_eos'])
+        self.assertEqual(order, ['EOS', 'NULL'])
+        self.assertGreater(self.pipeline.get_state.call_args.args[0], 2 * runtime.Gst.SECOND)
+
+    def test_main_eos_timeout_falls_back_to_confirmed_null(self):
+        self.playing_pipeline()
+        self.pipeline.get_bus.return_value.timed_pop_filtered.return_value = None
+        result = self.backend.stop()
+        self.assertTrue(result['safe'])
+        self.assertFalse(result['camera_eos'])
+        self.assertIn('EOS wait timed out', result['camera_eos_warning'])
+        self.pipeline.set_state.assert_called_once_with('NULL')
+
+    def test_eos_native_exception_does_not_skip_null(self):
+        self.playing_pipeline()
+        self.pipeline.send_event.side_effect = RuntimeError('source EOS failure')
+        result = self.backend.stop()
+        self.assertTrue(result['safe'])
+        self.assertIn('source EOS failure', result['camera_eos_warning'])
+        self.pipeline.set_state.assert_called_once_with('NULL')
+
+    def test_null_timeout_keeps_pipeline_and_element_diagnostics(self):
+        self.playing_pipeline()
+        self.pipeline.get_state.side_effect = [('SUCCESS', 'PLAYING', None), ('ASYNC', 'READY', 'NULL')]
+        element = Mock()
+        element.get_state.return_value = ('FAILURE', 'READY', 'NULL')
+        self.pipeline.get_by_name.return_value = element
+        with patch.object(self.backend, '_startup_bus_error', return_value='camsrc: StopCamera failed'):
+            result = self.backend.stop()
+        self.assertFalse(result['safe'])
+        self.assertIs(self.backend.pipeline, self.pipeline)
+        self.assertIn('before deadline', result['error'])
+        self.assertIn('StopCamera failed', result['error'])
+        self.assertEqual(result['camera_elements']['camsrc']['current'], 'READY')
+
+    def test_unfinished_bus_reader_does_not_race_stop_bus_consumer(self):
+        self.backend._bus_thread = Mock()
+        self.backend._bus_thread.is_alive.return_value = True
+        result = self.backend.stop()
+        self.assertFalse(result['safe'])
+        self.assertIn('before EOS', result['error'])
+        self.pipeline.send_event.assert_not_called()
+
+    def test_async_null_snapshot_is_not_a_completed_release(self):
+        self.pipeline.get_state.side_effect = [('SUCCESS', 'NULL', None), ('ASYNC', 'NULL', 'READY')]
+        with patch.object(self.backend, '_startup_bus_error', return_value=''):
+            self.assertFalse(self.backend.stop()['safe'])
+
+    def test_sink_release_settings_are_supported_and_applied(self):
+        sink = Mock()
+        for prop in ('enable-last-sample', 'wait-on-eos'):
+            self.assertTrue(self.backend._set_if_property(sink, prop, False))
+        self.assertEqual(sink.set_property.call_args_list[0].args, ('enable-last-sample', False))
+        self.assertEqual(sink.set_property.call_args_list[1].args, ('wait-on-eos', False))
 
     def test_successful_shutdown_is_idempotent(self):
         first = self.backend.stop()

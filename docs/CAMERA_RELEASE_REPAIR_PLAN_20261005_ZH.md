@@ -457,3 +457,81 @@ PC 驗證：Windows、既有 `amr_pol_ocr`、Node.js；完整 unittest **271 項
 同批部署檔案：`camera_lifecycle.py`、`camera_worker.py`、`edge_runtime.py`、`overlay_renderer.py`、`visionedge_server.py`、`apl_station.py`、`static/edge_dashboard.html`、`static/apl_ui.js`。其中 overlay 為第一階段變更，本次保留。不要只更新 Web 或漏掉新模組；保留設備自己的 config、certs、runtime_data。沒有安裝新套件、沒有新增 service、沒有 commit／push。
 
 仍待驗收：第 12.8 節的開發機同 boot 重複取放、實際 USB／SFIS 慢回覆、Qualcomm callback/encoder/NULL 卡死、MP4 播放完整性與 Linux 程序群組回收。PC 對各 business state 的 Stop 測試使用替身，不能證明每個產線故障都已重現；不能將本次交付標示為硬體問題已完全解決。
+
+## 13. 實機失敗定位與主 pipeline 停止修正（2026-10-06）
+
+### 13.1 這次不是單純逾時
+
+唯讀 SSH 查詢對象：`usi-smartcam-056325`、`192.168.50.212`，BSP 為
+`v2.4-20-dev`、BUILD_TIMESTAMP `202606261504`。以下時間是設備 journal 的 UTC。
+故障發生於 `2026-10-06 00:29:37 UTC`，即台灣時間 08:29:37。
+
+已核對板端核心檔案與本機 `3edc07f` 相同：
+
+- `edge_runtime.py` SHA-256：`c1ca884e99fc188961312256679db7a7a4b0e78628a3f3dc7cdef87e877e5875`
+- `camera_worker.py` SHA-256：`09067128134934495776352126eae556cb25552b38f1ec6cad43739984b4c9a1`
+
+故障鏈：
+
+1. recovery JSON 顯示 `callbacks_drained=true`、`recorder_null=true`、
+   `recorder_finalized=true`，只有 `camera_null=false`。
+2. worker `6187` 請求 StopCamera；QMMF 刪除 video track 並進入 HAL CLOSE。
+3. cam-server `597` 在 CamX session destroy 記錄 `2 devices orphaned` 與
+   `Stale device handles on Close`，涉及 Sensor／CSIPHY；同時有 FastRPC unmap 錯誤。
+4. systemd 確認 `cam-server.service` 主程序 `status=6/ABRT`，之後重啟為 `7317`。
+5. worker 出現 `RecorderClient: connection closed`、`StopCamera failed`。
+   coordinator 記錄約 0.951 秒即失敗、`worker_reaped=true`、`forced_exit=false`。
+6. 重啟的 cam-server 又有 sensor power-up／CCI 錯誤，不能據此視為恢復成功。
+
+因此，先前將任何 NULL 確認失敗都顯示成「Camera did not reach NULL before
+timeout」是不準確的：這次是服務崩潰造成停止失敗，不是 worker 被父程序強殺，
+也不能靠延長逾時或刪除 guard 當成修復。Sensor／CSIPHY stale handles 是實際
+故障位置；BSP 內部為何 abort，尚無此次 backtrace，不能直接斷言是線材或硬體損壞。
+
+### 13.2 程式停止流程的缺口與修正
+
+參照 HPH_3 `smartcam_inference.py` 的 `handle_interrupt_signal`：先送主 pipeline
+EOS、給 stream 有界收尾時間，再排空 callback、封檔、NULL。舊 APL 只對獨立
+MP4 recorder 送 EOS，主相機直接 NULL。這是已確認的實作差異，不是已證明 BSP
+abort 的唯一原因；不能宣稱補 EOS 必定解決 vendor close bug。
+
+此次僅修改停止流程及診斷：
+
+- callback 排空與獨立 recorder finalize 後，停止並 join bus reader，確保 EOS／
+  ERROR 只有一個 bus consumer；主 pipeline 若仍 PLAYING／PAUSED，送 EOS 並最多
+  等待 2 秒。EOS 拒絕、例外或超時仍繼續嘗試 NULL，保留警告。
+- NULL 確認最多使用剩餘清理預算中的 8 秒；必須 wait return 為 SUCCESS 且 current
+  為 NULL，才確認完成。FAILURE 明確報 state change failed；ASYNC／未達 NULL
+  才報 deadline，記錄 set return、wait return、current、pending、耗時及分支狀態。
+- appsink 設 `wait-on-eos=false`，因為停止時 Python consumer 已禁止新工作；全部
+  顯示／RTP／appsink sink 禁用 `enable-last-sample`，避免額外持有最後一幀。
+- worker 與 parent 的 lifecycle log 各使用 2 MiB、3 個備份的 rotating file。
+  記錄 session／PID、PIPELINE_EOS、PIPELINE_NULL_RESULT、失敗分支，parent 不重複
+  拼接相同錯誤。位置是 `runtime_data/edge/logs/camera_worker.log` 與 `camera_parent.log`。
+- 沿用總 cleanup 20 秒、parent grace 22 秒／TERM 3 秒／KILL 2 秒；native 呼叫本身
+  仍由 worker watchdog／parent 監督。沒有無界重試，沒有 Gst.deinit()，沒有自動
+  重啟 cam-server、刪除 guard 或對仍不安全的相機重新取得。
+
+與 HPH 的實際 EOS 放置次序並非逐字複製：APL 有獨立 recorder、callback gate
+及 worker，需先隔離 Python consumer；main pipeline EOS 只用於 drain 主串流，
+不替代 recorder 的 MP4 EOS。選定 BSP 是否接受此路徑仍需實機驗證。
+
+未修改 `auto_start`、rotation、MediaMTX、掃碼槍、工號、SN、SFIS Step1／Step4
+契約或 payload。此次是 `3edc07f` 之後的本機未提交修改，尚未部署。
+
+### 13.3 驗證及現場下一步
+
+Windows 既有 amr_pol_ocr：unittest **280 項，276 通過、4 缺影片跳過、0 failure／error**。
+新增主 EOS 在 NULL 之前、EOS 超時／例外仍 NULL、bus consumer 排他、native FAILURE
+不誤報 timeout、ASYNC 的 NULL 快照不冒稱完成、失敗分支診斷、log 輪替與錯誤去重。
+這些是替身測試，不是 BSP／sensor 資源釋放成功證據。
+
+板端此次只有唯讀查詢，未 stop/restart 程序、未更新任何現場檔案、未 reboot。
+部署需更新本次 `edge_runtime.py` 與 `camera_worker.py`；其前提是完整的 `3edc07f`
+核心／UI 已部署，不能與更早的 IPC 版本混用，且保留 config／certs／runtime_data。
+
+當前開發機已因 cam-server abort 進入 same-boot guard。需先取得設備更新及一次
+reboot 的核准，不能刪除 marker 跳過 guard。更新後按照第 12.8 節測 UI Stop/Start、
+Ctrl+C、錄影封檔与再次取得新幀；各輪保留新 log 與 cam-server journal。如果 cam-server
+再度 ABRT，記錄第一次失敗即停止重試，交 BSP／camera 團隊查 HAL close 資源管理。
+未完成以上步驟前，不標示「硬體釋放已解決」。

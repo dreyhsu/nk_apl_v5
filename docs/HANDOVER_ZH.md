@@ -309,6 +309,14 @@ TLS private key 必須受控，不應任意散布或放入一般交接壓縮檔�
 
 ## 14. 上線驗收清單
 
+2026-10-06 開發機 `056325` 已出現 HAL close 時 cam-server `SIGABRT`，不是單純
+NULL 等待逾時。主 pipeline EOS／NULL 診斷修正見
+[修復紀錄第 13 節](CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md#13-實機失敗定位與主-pipeline-停止修正2026-10-06)。
+這次修正尚未部署驗收，不可把 PC 通過當成硬體已修復。
+停止階段 log 保存在 `runtime_data/edge/logs/camera_parent.log` 與 `camera_worker.log`，
+每檔 2 MiB、3 個備份；查主 pipeline EOS、NULL 回傳值與分支 state，並核對
+`journalctl -b -u cam-server.service`。cam-server 重啟不代表 sensor 已恢復。
+
 - [ ] SmartCam 時間正確，重開後不會回到錯誤日期。
 - [ ] 相機只有一個 owner。
 - [ ] 同 boot 完成 Ctrl+C／重新啟動 30 輪、初始化中取消 10 輪、網頁 Stop／Start 20 輪；每輪驗證新 frame 與 worker reap。

@@ -1105,6 +1105,77 @@ class QtiGstCameraBackend(CameraBackend):
         except Exception:
             return ''
 
+    @staticmethod
+    def _state_name(value):
+        return str(getattr(value, 'value_nick', value))
+
+    def _stop_camera_pipeline(self, deadline):
+        """Drain the main stream before closing the QMMF camera."""
+        pipeline = self.pipeline
+        detail = {'camera_eos': None, 'camera_state_change': {}, 'camera_elements': {}}
+        errors = []
+        if pipeline is None:
+            return True, detail, errors
+        remaining = lambda cap: min(cap, max(0.0, deadline - time.monotonic()))
+        # A single bus consumer owns the stop-time EOS/ERROR messages.
+        self._bus_stop.set()
+        if self._bus_thread and self._bus_thread.is_alive():
+            self._bus_thread.join(timeout=remaining(1.0))
+            if self._bus_thread.is_alive():
+                errors.append('Camera bus thread did not stop before EOS')
+                return False, detail, errors
+        try:
+            _, initial, _ = pipeline.get_state(0)
+            if initial in (Gst.State.PLAYING, Gst.State.PAUSED):
+                log.info('PIPELINE_EOS pid=%s state=%s', os.getpid(), self._state_name(initial))
+                try:
+                    if not pipeline.send_event(Gst.Event.new_eos()):
+                        raise RuntimeError('Camera pipeline rejected EOS')
+                    msg = pipeline.get_bus().timed_pop_filtered(
+                        int(remaining(2.0) * Gst.SECOND), Gst.MessageType.EOS | Gst.MessageType.ERROR)
+                    if msg is None:
+                        raise RuntimeError('Camera pipeline EOS wait timed out')
+                    if msg.type == Gst.MessageType.ERROR:
+                        err, debug = msg.parse_error()
+                        raise RuntimeError(f'{err}: {debug}')
+                    detail['camera_eos'] = True
+                except Exception as exc:
+                    detail['camera_eos'] = False
+                    detail['camera_eos_warning'] = str(exc)
+                    log.warning('PIPELINE_EOS_FALLBACK pid=%s error=%s', os.getpid(), exc)
+            log.info('PIPELINE_NULL pid=%s', os.getpid())
+            started = time.monotonic()
+            ret = pipeline.set_state(Gst.State.NULL)
+            result, state, pending = pipeline.get_state(int(remaining(8.0) * Gst.SECOND))
+            detail['camera_state_change'] = {
+                'set_return': self._state_name(ret), 'wait_return': self._state_name(result),
+                'current': self._state_name(state), 'pending': self._state_name(pending),
+                'elapsed_seconds': round(time.monotonic() - started, 3),
+            }
+            log.info('PIPELINE_NULL_RESULT pid=%s state=%s', os.getpid(), detail['camera_state_change'])
+            null = (ret != Gst.StateChangeReturn.FAILURE
+                    and result == Gst.StateChangeReturn.SUCCESS and state == Gst.State.NULL)
+            if not null:
+                failed = ret == Gst.StateChangeReturn.FAILURE or result == Gst.StateChangeReturn.FAILURE
+                reason = 'state change failed' if failed else 'did not reach NULL before deadline'
+                errors.append(f'Camera release {reason}: {detail["camera_state_change"]}')
+                bus_error = self._startup_bus_error(pipeline)
+                if bus_error:
+                    errors.append(f'Camera bus during release: {bus_error}')
+                for name in ('camsrc', 'encoder', 'frame_sink', 'h264_sink', 'stream_udp', 'display'):
+                    element = pipeline.get_by_name(name)
+                    if element is not None:
+                        ret, current, pending = element.get_state(0)
+                        detail['camera_elements'][name] = {
+                            'return': self._state_name(ret), 'current': self._state_name(current),
+                            'pending': self._state_name(pending),
+                        }
+                log.error('PIPELINE_RELEASE_FAILED pid=%s elements=%s', os.getpid(), detail['camera_elements'])
+            return null, detail, errors
+        except Exception as exc:
+            errors.append(f'Camera release failed: {exc}')
+            return False, detail, errors
+
     def start(self) -> None:
         Gst.init(None)
         import cairo  # Registers the native context type used by cairooverlay.
@@ -1164,6 +1235,7 @@ class QtiGstCameraBackend(CameraBackend):
                 self.display_actual = 'headless'
             self._set_if_property(display, 'sync', False)
             self._set_if_property(display, 'async', False)
+            self._set_if_property(display, 'enable-last-sample', False)
             cairo_caps.set_property('caps', Gst.Caps.from_string('video/x-raw,format=BGRx'))
             output_caps.set_property('caps', Gst.Caps.from_string('video/x-raw,format=NV12'))
             self._overlay = OverlayRenderer(self.cfg.width, self.cfg.height)
@@ -1185,6 +1257,7 @@ class QtiGstCameraBackend(CameraBackend):
                 udp.set_property('port', self.cfg.stream_rtp_port)
                 udp.set_property('sync', False)
                 udp.set_property('async', False)
+                self._set_if_property(udp, 'enable-last-sample', False)
                 stream_elements = [stream_q, pay, udp]
 
             self._set_if_property(camsrc, 'camera', int(self.cfg.camera))
@@ -1217,6 +1290,8 @@ class QtiGstCameraBackend(CameraBackend):
                 self._set_if_property(sink, 'sync', False)
                 self._set_if_property(sink, 'max-buffers', max_buffers)
                 self._set_if_property(sink, 'drop', drop)
+                self._set_if_property(sink, 'enable-last-sample', False)
+                self._set_if_property(sink, 'wait-on-eos', False)
 
             self._set_if_property(encoder, 'capture-io-mode', 0)
             self._set_if_property(encoder, 'output-io-mode', 0)
@@ -1403,6 +1478,7 @@ class QtiGstCameraBackend(CameraBackend):
                     drained = False
                     errors.append(f'{label} callback drain timeout')
             recorder = self._recorder_release or {}
+            camera_detail = {}
             if drained:
                 log.info('RECORDER_FINALIZE pid=%s', os.getpid())
                 try:
@@ -1412,26 +1488,18 @@ class QtiGstCameraBackend(CameraBackend):
                 except Exception as exc:
                     recorder = {'recorder_null': False, 'recorder_finalized': False}
                     errors.append(str(exc))
-                log.info('PIPELINE_NULL pid=%s', os.getpid())
-                try:
-                    if self.pipeline is not None:
-                        ret = self.pipeline.set_state(Gst.State.NULL)
-                        result, state, _ = self.pipeline.get_state(int(remaining(2.0) * Gst.SECOND))
-                        null = (ret != Gst.StateChangeReturn.FAILURE
-                                and result != Gst.StateChangeReturn.FAILURE and state == Gst.State.NULL)
-                        if not null:
-                            raise RuntimeError('Camera did not reach NULL before timeout')
-                        self.pipeline = None
-                        self.frame_sink = self.h264_sink = self.encoder = None
-                except Exception as exc:
-                    errors.append(f'Camera release failed: {exc}')
+                null, camera_detail, camera_errors = self._stop_camera_pipeline(deadline)
+                errors.extend(camera_errors)
+                if null:
+                    self.pipeline = None
+                    self.frame_sink = self.h264_sink = self.encoder = None
             self._bus_stop.set()
             if self._bus_thread and self._bus_thread.is_alive():
                 self._bus_thread.join(timeout=remaining(1.0))
                 if self._bus_thread.is_alive():
                     errors.append('Camera bus thread did not stop')
             safe = drained and null and recorder.get('recorder_null') is not False
-            self._release_result = {'success': safe and not errors, 'safe': safe,
+            self._release_result = {**camera_detail, 'success': safe and not errors, 'safe': safe,
                                     'callbacks_drained': drained, 'camera_null': null,
                                     'recorder_null': recorder.get('recorder_null'),
                                     'recorder_finalized': recorder.get('recorder_finalized'),
