@@ -167,7 +167,16 @@ class APLStation:
         if self.cycle_operator and not self.operator:
             self.operator = self.cycle_operator
         self.matching = detail.get("matching") or self._empty_matching()
-        if self.snapshot_mode and row["state"] == "WAITING_MCIO_SN":
+        if self.snapshot_mode and row["state"] in {"SN_CONFIRM", "WAITING_DMZ"}:
+            # Step1 was either never answered or was refused: the product SN is
+            # valid and nothing was captured, so reopen as the sticky retry
+            # state. Restoring last_error is what makes the retry discriminator
+            # (and therefore can_terminate / active_scan_field) correct at boot.
+            self.state = "SN_CONFIRM"
+            self.last_error = ("Recovered a product SN whose SFIS Step1 did not complete."
+                               " Scan the same product serial number again to retry Step1,"
+                               " or terminate this inspection.")
+        elif self.snapshot_mode and row["state"] == "WAITING_MCIO_SN":
             self.state = row["state"]
             self.last_error = "Recovered a product SN waiting for the MCIO card serial number. Scan the MCIO card serial number or terminate this inspection."
         elif self.snapshot_mode and row["state"] in {"WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM"}:
@@ -348,13 +357,17 @@ class APLStation:
         transport["configuration_matches_cycle"] = self._same_transport()
         transport["configured"] = bool(current_transport.get("configured")) and transport["configuration_matches_cycle"]
         transport["configured_mode"] = current_transport.get("mode")
-        can_terminate = self.state in {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
+        # SN_CONFIRM is momentary on a passing Step1 but sticky on a failed one;
+        # the sticky state must be terminable or a refused Step1 is a dead end.
+        step1_retry = self._step1_retry_locked()
+        can_terminate = self.state in {"SN_CONFIRM", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
         return copy.deepcopy({
             "inspection_mode": self.inspection_mode, "state": self.state,
             "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
             "mcio_sn": self.mcio_sn, "sn_prefix": self._serial_prefix("sn"),
             "mcio_sn_prefix": self._serial_prefix("mcio"),
-            "active_scan_field": "sn" if self.state == "WAITING_SN" else "mcio_sn" if self.state == "WAITING_MCIO_SN" else "",
+            "active_scan_field": "sn" if self.state == "WAITING_SN" or step1_retry else "mcio_sn" if self.state == "WAITING_MCIO_SN" else "",
+            "step1_retry_required": step1_retry,
             "operator": self.operator, "cycle_operator": self.cycle_operator,
             "operator_required": self._operator_required(),
             "local_mode": self.local_mode, "test_mode": self.test_mode,
@@ -380,6 +393,9 @@ class APLStation:
         with self.lock:
             enabled = bool(enabled)
             if self.cycle_id:
+                # SN_CONFIRM is deliberately excluded: attaching a browser video
+                # rewrites cycle_profile, which would make _same_transport() fail
+                # and the retried Step1 reject permanently as a profile mismatch.
                 if not enabled or self.state not in {'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
                     raise ValueError('Test mode can only be enabled before snapshot inspection')
                 self.test_mode = True
@@ -441,6 +457,22 @@ class APLStation:
         haystack = str(text or "").upper()
         return any(str(marker).upper() in haystack for marker in markers)
 
+    def _step1_retry_locked(self):
+        # The sticky state a refused Step1 leaves the cycle in: the product SN
+        # and cycle are kept, last_error names the reason, no request is in
+        # flight. _accept_sn_locked clears last_error before scan() releases the
+        # lock, so this is false inside the lock-release window and a concurrent
+        # retry or operator change in that window is refused rather than torn.
+        return (self.snapshot_mode and self.state == "SN_CONFIRM"
+                and bool(self.last_error) and self.request_token is None)
+
+    def _operator_editable_locked(self):
+        # The Step1 retry state exists so a NO EMP rejection can be fixed in
+        # place: the empNo must be changeable there, and only there, mid-cycle.
+        if self.request_token is not None:
+            return False
+        return self.state == "WAITING_SN" or self._step1_retry_locked()
+
     def set_operator(self, emp_no):
         if not isinstance(emp_no, str):
             raise ValueError("Employee number must be text")
@@ -453,18 +485,28 @@ class APLStation:
                 return self._reply("Station is closed")
             if self.storage_error:
                 return self._reply(self.storage_error)
-            if self.state != "WAITING_SN" or self.request_token is not None:
+            if not self._operator_editable_locked():
                 return self._reply("Finish the current inspection before changing the operator")
             self.operator = emp_no
+            if self.cycle_id:
+                # Retrying Step1 after a NO EMP: _payload reads cycle_operator,
+                # so the next attempt must carry the corrected employee number.
+                previous = self.cycle_operator
+                self.cycle_operator = emp_no
+                self._save("OPERATOR_CHANGED", {"from": previous or "", "to": emp_no})
             return self._reply()
 
     def clear_operator(self):
         with self.lock:
             if self.closed:
                 return self._reply("Station is closed")
-            if self.state != "WAITING_SN" or self.request_token is not None:
+            if not self._operator_editable_locked():
                 return self._reply("Finish the current inspection before changing the operator")
             self.operator = ""
+            if self.cycle_id:
+                previous = self.cycle_operator
+                self.cycle_operator = None
+                self._save("OPERATOR_CHANGED", {"from": previous or "", "to": ""})
             return self._reply()
 
     def _clean_serial(self, value, label, max_key, default_max=128):
@@ -502,27 +544,39 @@ class APLStation:
             if self.snapshot_mode and self.state == "WAITING_MCIO_SN":
                 reply, gate_cycle = self._accept_mcio_locked(sn, source)
             else:
-                reply = self._accept_sn_locked(sn, source)
+                reply, gate_cycle = self._accept_sn_locked(sn, source)
         if gate_cycle is None:
             return reply
         return self._gate_step1(gate_cycle)
 
     def _accept_sn_locked(self, sn, source):
         if not self.snapshot_mode and self.state == "SN_CONFIRM" and self.sn == sn:
-            return self._reply()
+            return self._reply(), None
+        if self._step1_retry_locked() and self.sn == sn:
+            # Step1 was refused for this product SN and the cycle was kept. A
+            # re-scan of the same label is the retry trigger: mint a fresh
+            # request id (the retry may now carry a different empNo, so SFIS
+            # must not dedupe it against the first attempt) and re-send Step1.
+            # This must precede the duplicate guard below, which would otherwise
+            # swallow the re-scan as a silent success.
+            self.sn_request_id = uuid.uuid4().hex
+            self.last_error = ""
+            self._save("SN_RESCANNED_FOR_STEP1_RETRY",
+                       {"source": str(source)[:40], "request_id": self.sn_request_id})
+            return self._reply(), self.cycle_id
         if self.snapshot_mode and self.cycle_id and sn in {self.sn, self.mcio_sn}:
             # A scanner that fires the same label twice must not raise the
             # locked-SN alarm; the step has simply already been completed.
-            return self._reply()
+            return self._reply(), None
         if self.state != "WAITING_SN":
-            return self._reply("The current SN is locked. Upload successfully or terminate the inspection before scanning another SN")
+            return self._reply("The current SN is locked. Upload successfully or terminate the inspection before scanning another SN"), None
         if self._operator_required() and not self.operator:
-            return self._reply("Enter an operator employee number before scanning")
+            return self._reply("Enter an operator employee number before scanning"), None
         prefix = self._serial_prefix("sn")
         if prefix and not sn.upper().startswith(prefix.upper()):
             # No cycle exists yet, so this rejection must not journal a row.
             return self._reject_scan_locked(self._wrong_label_error(
-                "product serial number", prefix, "Scan the product serial number label", sn))
+                "product serial number", prefix, "Scan the product serial number label", sn)), None
         self.cycle_id = uuid.uuid4().hex
         self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
         self.sn, self.source = sn, str(source)[:40]
@@ -534,14 +588,18 @@ class APLStation:
         self.cycle_profile = self._transport_profile()
         self.cycle_fingerprints = {"config_sha256": self.config_fingerprint, "templates_sha256": self.template_fingerprint}
         self.cycle_station_id = str(self.config.get("station_id", "NK_APL_50"))
-        self.state = "WAITING_MCIO_SN" if self.snapshot_mode else "SN_CONFIRM"
+        # Step1 fires on the product SN, before the MCIO card is scanned: its
+        # payload never carried the MCIO serial, so there is no reason to make
+        # the operator install a card before the unit is validated.
+        auto_sfis_check = self.snapshot_mode and not self.local_mode and not self.test_mode
+        self.state = ("SN_CONFIRM" if auto_sfis_check else "WAITING_MCIO_SN") if self.snapshot_mode else "SN_CONFIRM"
         self.result = None
         self.step_index, self.step_times = 0, []
         self.last_error = ""
         self._clear_matching()
         self._save("SN_SCANNED_AND_STARTED" if self.snapshot_mode else "SN_SCANNED",
                    {"source": self.source})
-        return self._reply()
+        return self._reply(), (self.cycle_id if auto_sfis_check else None)
 
     def _accept_mcio_locked(self, value, source):
         if self.request_token is not None:
@@ -554,34 +612,37 @@ class APLStation:
                 "MCIO_SN_REJECTED"), None
         self.mcio_sn = value
         self.last_error = ""
-        auto_sfis_check = self.snapshot_mode and not self.local_mode and not self.test_mode
-        self.state = "SN_CONFIRM" if auto_sfis_check else "WAITING_CAPTURE"
+        # Step1 already passed on the product SN; the MCIO scan only opens capture.
+        self.state = "WAITING_CAPTURE"
         self._save("MCIO_SN_SCANNED", {"source": str(source)[:40]})
-        return self._reply(), (self.cycle_id if auto_sfis_check else None)
+        return self._reply(), None
 
     def _gate_step1(self, cycle_id):
         result = self._confirm(cycle_id, result=False)
         if result.get("success"):
             return result
-        # Step1 is a pre-inspection gate. A rejection or connection failure must
-        # not leave the scanner locked before any image has been inspected.
+        # Step1 is a pre-inspection gate. A rejection or connection failure keeps
+        # the product SN and cycle: the operator fixes the cause (e.g. a wrong
+        # employee number) and re-scans the same product SN to retry. _confirm
+        # has already returned the station to SN_CONFIRM with last_error set and
+        # journaled SN_CHECK_FAILED, so this only refines the operator-facing
+        # message and traces the retry requirement — no extra _save.
         with self.lock:
             if self.cycle_id == cycle_id and self.state == "SN_CONFIRM":
                 error = self.last_error or result.get("error") or "SFIS Step1 failed"
-                self._save("SFIS_STEP1_REJECTED", {"error": error}, state_override="TERMINATED")
-                operator_rejected = self._is_operator_error(error)
-                self._record_sfis({"step": "step1", "phase": "rolled_back", "detail": error,
-                                   "operator_cleared": operator_rejected,
-                                   "hint": "Step1 is a pre-inspection gate: the cycle is dropped and both"
-                                           " serial numbers must be scanned again"
-                                           + (" after a fresh employee sign-in" if operator_rejected else "")})
-                self._clear_cycle()
-                if operator_rejected:
-                    # SFIS rejected the employee number itself; force a fresh sign-in.
-                    self.operator = ""
-                    self.last_error = "Employee number rejected by SFIS. Enter the employee number again."
+                operator_error = self._is_operator_error(error)
+                if operator_error:
+                    self.last_error = ("Employee number rejected by SFIS. Select Switch operator,"
+                                       " enter the correct employee number, then scan the same product"
+                                       " serial number again. SFIS said: " + error)
                 else:
                     self.last_error = error
+                self._record_sfis({"step": "step1", "phase": "retry_required", "detail": error,
+                                   "operator_error": operator_error,
+                                   "hint": "The product serial number is kept. Scan the same product"
+                                           " serial number again to retry Step1, or terminate this"
+                                           " inspection."
+                                           + (" Change the employee number first." if operator_error else "")})
                 result = self._reply(self.last_error)
         return result
 
@@ -633,7 +694,8 @@ class APLStation:
             token = uuid.uuid4().hex
             self.request_token = token
             self.state, self.last_error = pending, ""
-            self._save("REPORT_REQUESTED" if result else "SN_CHECK_REQUESTED", outbox="pending" if result else None)
+            self._save("REPORT_REQUESTED" if result else "SN_CHECK_REQUESTED",
+                       {"request_id": payload["request_id"]}, outbox="pending" if result else None)
             self._record_sfis({"step": step_name, "phase": "begin", "path": path,
                                "request_id": payload["request_id"],
                                "transport_mode": profile.get("mode"),
@@ -667,7 +729,9 @@ class APLStation:
                 self._save("PASS_ACKNOWLEDGED", state_override="COMPLETE", outbox=response)
                 self._clear_cycle()
             else:
-                self.state = "WAITING_CAPTURE" if self.snapshot_mode else "RUNNING"
+                # Snapshot mode validates on the product SN, so a passed Step1
+                # advances to the MCIO scan rather than straight to capture.
+                self.state = "WAITING_MCIO_SN" if self.snapshot_mode else "RUNNING"
                 self.started_at = time.time()
                 self._clear_matching()
                 self._save("SN_ACCEPTED")
@@ -696,7 +760,7 @@ class APLStation:
                 return self._reply("Terminate Inspection is only available in snapshot mode")
             if self.request_token is not None or self.state in {"JUDGING", "UPLOADING"}:
                 return self._reply("Wait for the current operation to finish before terminating")
-            if self.state not in {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"}:
+            if self.state not in {"SN_CONFIRM", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"}:
                 return self._reply("Terminate Inspection is unavailable in the current state")
             self._finish_without_report("OPERATOR_SELECTED_NO_UPLOAD")
             return self._reply()
@@ -722,7 +786,11 @@ class APLStation:
             if self.closed or self.storage_error:
                 return self._reply(self.storage_error or "Station is closed")
             self._clear_matching()
-            active_states = {"WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "JUDGING"} if self.snapshot_mode else {"RUNNING", "WAITING_DMZ"}
+            # SN_CONFIRM/WAITING_DMZ (the Step1 gate) are pre-capture with no
+            # outbox row, so a lost camera there kills the cycle like the MCIO
+            # step already does; a late DMZ answer is still discarded by the
+            # cycle/token guard in _confirm.
+            active_states = {"SN_CONFIRM", "WAITING_DMZ", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "JUDGING"} if self.snapshot_mode else {"RUNNING", "WAITING_DMZ"}
             if self.state in active_states:
                 self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
                 self.request_token = None

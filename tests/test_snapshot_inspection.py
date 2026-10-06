@@ -78,7 +78,7 @@ class SnapshotInspectionTests(unittest.TestCase):
         return np.full((8, 8, 3), 1 if accepted else 0, dtype=np.uint8)
 
     def start_cycle(self, sn="K2V5-001", mcio="APL-001"):
-        """Snapshot mode collects both serials; SFIS Step1 runs on the MCIO scan."""
+        """Snapshot mode runs SFIS Step1 on the product scan, then scans MCIO."""
         self.station.scan(sn)
         return self.station.scan(mcio)
 
@@ -194,17 +194,20 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(self.station.status()["mcio_sn"], "APL-001")
         self.assertFalse(self.station.scan("K2V5-002")["success"])
 
-    def test_failed_step1_releases_sn_for_rescan(self):
+    def test_failed_step1_keeps_the_sn_and_a_rescan_retries_it(self):
         self.transport.fail = True
-        rejected = self.start_cycle(sn="K2V5-BAD", mcio="APL-BAD")
+        rejected = self.station.scan("K2V5-BAD")
         self.assertFalse(rejected["success"])
-        self.assertEqual(rejected["station"]["state"], "WAITING_SN")
-        self.assertEqual(rejected["station"]["sn"], "")
-        self.assertEqual(rejected["station"]["mcio_sn"], "")
+        self.assertEqual(rejected["station"]["state"], "SN_CONFIRM")
+        self.assertEqual(rejected["station"]["sn"], "K2V5-BAD")
+        self.assertTrue(rejected["station"]["step1_retry_required"])
+        # Re-scanning the same product SN re-sends Step1; it passes this time.
         self.transport.fail = False
-        accepted = self.start_cycle(sn="K2V5-GOOD", mcio="APL-GOOD")
-        self.assertTrue(accepted["success"])
-        self.assertEqual(accepted["station"]["state"], "WAITING_CAPTURE")
+        retried = self.station.scan("K2V5-BAD")
+        self.assertTrue(retried["success"])
+        self.assertEqual(retried["station"]["state"], "WAITING_MCIO_SN")
+        checks = [call for call in self.transport.calls if call[0] == "/sn/check"]
+        self.assertEqual(len(checks), 2)
 
     def test_terminate_after_ok_preserves_visual_result_without_pass_upload(self):
         cycle = self.start_cycle()["station"]["cycle_id"]

@@ -320,7 +320,13 @@ def apl_scan():
         wanted = {'sn': 'WAITING_SN', 'mcio_sn': 'WAITING_MCIO_SN'}.get(expect)
         if wanted is None:
             raise ValueError('Scan field must be sn or mcio_sn')
-        if station().status()['state'] != wanted:
+        snapshot = station().status()
+        # Snapshot mode publishes the field it will actually accept: 'sn' both at
+        # WAITING_SN and in the Step1 retry state (SN_CONFIRM + last_error).
+        # Legacy has no such key, so fall back to the raw state comparison.
+        field = snapshot.get('active_scan_field')
+        accepted = field == expect if field is not None else snapshot['state'] == wanted
+        if not accepted:
             return jsonify({'success': False, 'station': station_status(),
                             'error': 'The station moved to a different step. Check the panel and scan again.'}), 409
     return station_response(station().scan(data.get('sn', ''), source='web'))

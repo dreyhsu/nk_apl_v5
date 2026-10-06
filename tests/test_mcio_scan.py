@@ -1,4 +1,4 @@
-"""Two-serial snapshot flow: product SN, then MCIO card SN, then SFIS Step1."""
+"""Two-serial snapshot flow: product SN then SFIS Step1, then MCIO card SN."""
 
 import json
 import contextlib
@@ -71,7 +71,8 @@ class MCIOScanTests(unittest.TestCase):
 
     # --- the two accepted steps -------------------------------------------------
 
-    def test_product_scan_waits_for_the_mcio_card_serial_number(self):
+    def test_product_scan_sends_step1_before_the_mcio_step(self):
+        # Step1 fires on the product SN; the MCIO card is scanned afterwards.
         reply = self.station.scan("K2V5-001")
         station = reply["station"]
         self.assertTrue(reply["success"])
@@ -81,17 +82,20 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(station["active_scan_field"], "mcio_sn")
         self.assertFalse(station["can_capture"])
         self.assertTrue(station["can_terminate"])
-        self.assertEqual(self.transport.calls, [])
+        self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check"])
+        # The Step1 payload never carried the MCIO serial, which is why the gate
+        # can run before the card is scanned.
+        self.assertNotIn("mcio_sn", self.transport.calls[0][1])
 
-    def test_mcio_scan_sends_step1_and_opens_capture(self):
+    def test_mcio_scan_opens_capture_without_a_second_step1(self):
         station = self.start_cycle()["station"]
         self.assertEqual(station["state"], "WAITING_CAPTURE")
         self.assertEqual(station["mcio_sn"], "APL-001")
         self.assertEqual(station["active_scan_field"], "")
         self.assertTrue(station["can_capture"])
         self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check"])
-        self.assertEqual(self.events(), ["SN_SCANNED_AND_STARTED", "MCIO_SN_SCANNED",
-                                         "SN_CHECK_REQUESTED", "SN_ACCEPTED"])
+        self.assertEqual(self.events(), ["SN_SCANNED_AND_STARTED", "SN_CHECK_REQUESTED",
+                                         "SN_ACCEPTED", "MCIO_SN_SCANNED"])
 
     def test_snapshot_publishes_both_prefixes_for_the_operator_panel(self):
         station = self.station.status()
@@ -121,7 +125,8 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(reply["station"]["state"], "WAITING_MCIO_SN")
         self.assertEqual(reply["station"]["sn"], "K2V5-001")
         self.assertEqual(reply["station"]["mcio_sn"], "")
-        self.assertEqual(self.transport.calls, [])
+        # Step1 already ran on the product SN; the rejected MCIO label adds none.
+        self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check"])
         self.assertIn("MCIO_SN_REJECTED", self.events())
 
     def test_prefix_matching_ignores_scanner_case(self):
@@ -185,28 +190,161 @@ class MCIOScanTests(unittest.TestCase):
         self.assertFalse(self.station.clear_operator()["success"])
         self.assertEqual(self.station.operator, "M031978")
 
-    # --- Step1 rollback --------------------------------------------------------
+    # --- Step1 failure keeps the SN for a re-scan retry ------------------------
 
-    def test_step1_rejection_on_the_mcio_scan_rolls_the_whole_cycle_back(self):
+    def test_step1_failure_keeps_the_product_sn_in_a_sticky_retry_state(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
-        reply = self.start_cycle()
+        reply = self.station.scan("K2V5-001")
+        station = reply["station"]
         self.assertFalse(reply["success"])
+        self.assertEqual(station["state"], "SN_CONFIRM")
+        self.assertEqual(station["sn"], "K2V5-001")
+        self.assertEqual(station["mcio_sn"], "")
+        self.assertTrue(station["step1_retry_required"])
+        self.assertEqual(station["active_scan_field"], "sn")
+        self.assertTrue(station["can_terminate"])
+        self.assertFalse(station["can_capture"])
+        self.assertFalse(station["request_in_flight"])
+        self.assertEqual(self.station.operator, "M031978")
+        self.assertEqual(self.events(), ["SN_SCANNED_AND_STARTED", "SN_CHECK_REQUESTED",
+                                         "SN_CHECK_FAILED"])
+        self.assertNotIn("SFIS_STEP1_REJECTED", self.events())
+        state = self.station.db.execute("SELECT state FROM cycles").fetchone()["state"]
+        self.assertEqual(state, "SN_CONFIRM")
+
+    def test_rescanning_the_same_product_sn_refires_step1(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        self.station.scan("K2V5-001")
+        self.transport.fail_message = None
+        reply = self.station.scan("K2V5-001")
+        station = reply["station"]
+        self.assertTrue(reply["success"])
+        self.assertEqual(station["state"], "WAITING_MCIO_SN")
+        checks = [call for call in self.transport.calls if call[0] == "/sn/check"]
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(checks[0][1]["cycle_id"], checks[1][1]["cycle_id"])
+        self.assertNotEqual(checks[0][1]["request_id"], checks[1][1]["request_id"])
+        self.assertIn("SN_RESCANNED_FOR_STEP1_RETRY", self.events())
+
+    def test_a_different_product_sn_during_the_retry_is_still_refused(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        self.station.scan("K2V5-001")
+        reply = self.station.scan("K2V5-999")
+        self.assertFalse(reply["success"])
+        self.assertIn("locked", reply["error"])
+        self.assertEqual(reply["station"]["state"], "SN_CONFIRM")
+        self.assertEqual(reply["station"]["sn"], "K2V5-001")
+        self.assertEqual(len([c for c in self.transport.calls if c[0] == "/sn/check"]), 1)
+
+    def test_terminate_clears_a_failed_step1_cycle(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        cycle = self.station.scan("K2V5-001")["station"]["cycle_id"]
+        reply = self.station.terminate(cycle)
+        self.assertTrue(reply["success"])
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
         self.assertEqual(reply["station"]["sn"], "")
-        self.assertEqual(reply["station"]["mcio_sn"], "")
-        self.assertEqual(self.events(), ["SN_SCANNED_AND_STARTED", "MCIO_SN_SCANNED",
-                                         "SN_CHECK_REQUESTED", "SN_CHECK_FAILED",
-                                         "SFIS_STEP1_REJECTED"])
+        self.assertEqual(reply["station"]["last_result"]["cycle_status"], "TERMINATED")
         state = self.station.db.execute("SELECT state FROM cycles").fetchone()["state"]
         self.assertEqual(state, "TERMINATED")
-        self.assertEqual(self.station.operator, "M031978")
 
-    def test_no_emp_rejection_on_the_mcio_scan_clears_the_operator(self):
+    def test_a_step1_retry_cannot_capture_or_upload(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        cycle = self.station.scan("K2V5-001")["station"]["cycle_id"]
+        self.assertFalse(self.station.inspect_snapshot(object())["success"])
+        self.assertFalse(self.station.confirm_result(cycle)["success"])
+
+    def test_a_browser_video_cannot_be_attached_during_a_step1_retry(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        self.station.scan("K2V5-001")
+        with self.assertRaises(ValueError):
+            self.station.set_test_mode(True)
+
+    # --- NO EMP clears nothing, only prompts a fix -----------------------------
+
+    def test_no_emp_keeps_the_operator_the_sn_and_the_cycle(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
-        reply = self.start_cycle()
+        reply = self.station.scan("K2V5-001")
+        station = reply["station"]
         self.assertFalse(reply["success"])
-        self.assertEqual(self.station.operator, "")
-        self.assertIn("Employee number rejected by SFIS", reply["station"]["last_error"])
+        self.assertEqual(self.station.operator, "M031978")
+        self.assertEqual(self.station.cycle_operator, "M031978")
+        self.assertEqual(station["sn"], "K2V5-001")
+        self.assertNotEqual(station["cycle_id"], "")
+        self.assertEqual(station["state"], "SN_CONFIRM")
+        self.assertIn("employee number", station["last_error"].lower())
+
+    def test_changing_the_employee_number_during_the_retry_feeds_the_next_step1(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
+        self.station.scan("K2V5-001")
+        self.assertTrue(self.station.clear_operator()["success"])
+        self.assertTrue(self.station.set_operator("TW031561")["success"])
+        self.transport.fail_message = None
+        reply = self.station.scan("K2V5-001")
+        self.assertTrue(reply["success"])
+        checks = [call for call in self.transport.calls if call[0] == "/sn/check"]
+        self.assertEqual(checks[-1][1]["emp_no"], "TW031561")
+        self.assertIn("OPERATOR_CHANGED", self.events())
+
+    def test_the_operator_and_terminate_are_refused_while_step1_is_in_flight(self):
+        inside = {}
+
+        def blocking_send(path, payload):
+            inside["state"] = self.station.state
+            inside["set_operator"] = self.station.set_operator("TW031561")["success"]
+            inside["clear_operator"] = self.station.clear_operator()["success"]
+            inside["terminate"] = self.station.terminate(self.station.cycle_id)["success"]
+            inside["can_terminate"] = self.station.status()["can_terminate"]
+            raise DMZError("SFIS unavailable")
+
+        self.transport.send = blocking_send
+        self.station.scan("K2V5-001")
+        self.assertEqual(inside["state"], "WAITING_DMZ")
+        self.assertFalse(inside["set_operator"])
+        self.assertFalse(inside["clear_operator"])
+        self.assertFalse(inside["terminate"])
+        self.assertFalse(inside["can_terminate"])
+
+    def test_a_repeat_scan_while_step1_is_in_flight_is_a_silent_no_op(self):
+        inside = {}
+
+        def blocking_send(path, payload):
+            inside["reply"] = self.station.scan("K2V5-001")
+            inside["checks"] = len([c for c in self.transport.calls if c[0] == "/sn/check"])
+            raise DMZError("SFIS unavailable")
+
+        self.transport.send = blocking_send
+        self.station.scan("K2V5-001")
+        self.assertTrue(inside["reply"]["success"])
+        # The in-flight request is the only /sn/check; the re-scan was swallowed.
+        self.assertEqual(inside["checks"], 0)
+
+    def test_a_cycle_interrupted_at_the_step1_gate_reopens_as_a_retry(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        self.station.scan("K2V5-001")
+        self.station.close()
+        self.station = self.open_station()
+        station = self.station.status()
+        self.assertEqual(station["state"], "SN_CONFIRM")
+        self.assertEqual(station["sn"], "K2V5-001")
+        self.assertTrue(station["step1_retry_required"])
+        self.assertTrue(station["can_terminate"])
+        self.transport.fail_message = None
+        reply = self.station.scan("K2V5-001")
+        self.assertTrue(reply["success"])
+        self.assertEqual(reply["station"]["state"], "WAITING_MCIO_SN")
+
+    def test_a_cycle_interrupted_mid_step1_reopens_as_a_retry(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,PASM1"
+        self.station.scan("K2V5-001")
+        # Force the persisted row to the in-flight state the station can crash in.
+        with self.station.lock:
+            self.station.db.execute("UPDATE cycles SET state='WAITING_DMZ'")
+            self.station.db.commit()
+        self.station.close()
+        self.station = self.open_station()
+        station = self.station.status()
+        self.assertEqual(station["state"], "SN_CONFIRM")
+        self.assertTrue(station["step1_retry_required"])
 
     # --- modes that never contact SFIS ----------------------------------------
 

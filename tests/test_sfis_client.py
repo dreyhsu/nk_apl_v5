@@ -255,16 +255,16 @@ class SnapshotSFISGateTests(unittest.TestCase):
         self.temp.cleanup()
 
     def start_cycle(self, sn="K2V5-001", mcio="APL-001"):
-        """Step1 runs on the MCIO scan, once both serials have been collected."""
+        """Step1 runs on the product scan; the MCIO scan then opens capture."""
         self.station.scan(sn)
         return self.station.scan(mcio)
 
-    def test_product_scan_alone_never_touches_sfis(self):
+    def test_product_scan_runs_step1_immediately(self):
         reply = self.station.scan("K2V5-001")
         self.assertTrue(reply["success"])
         self.assertEqual(reply["station"]["state"], "WAITING_MCIO_SN")
         self.assertEqual(reply["station"]["mcio_sn"], "")
-        self.assertEqual(self.transport.calls, [])
+        self.assertEqual([call[0] for call in self.transport.calls], ["/sn/check"])
 
     def test_mcio_scan_runs_step1_before_enabling_capture(self):
         reply = self.start_cycle()
@@ -280,27 +280,31 @@ class SnapshotSFISGateTests(unittest.TestCase):
         self.assertEqual(reply["station"]["state"], "WAITING_SN")
         self.assertEqual(self.transport.calls, [])
 
-    def test_step1_failure_releases_both_serial_numbers(self):
+    def test_step1_failure_keeps_the_product_sn_for_a_rescan(self):
         self.transport.fail = True
-        reply = self.start_cycle(mcio="APL-FAIL")
+        reply = self.station.scan("K2V5-001")
         self.assertFalse(reply["success"])
-        self.assertEqual(reply["station"]["state"], "WAITING_SN")
-        self.assertEqual(reply["station"]["sn"], "")
+        self.assertEqual(reply["station"]["state"], "SN_CONFIRM")
+        self.assertEqual(reply["station"]["sn"], "K2V5-001")
         self.assertEqual(reply["station"]["mcio_sn"], "")
+        self.assertTrue(reply["station"]["step1_retry_required"])
 
-    def test_no_emp_rejection_clears_operator(self):
+    def test_no_emp_rejection_keeps_the_operator(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
-        reply = self.start_cycle()
-        self.assertFalse(reply["success"])
-        self.assertEqual(self.station.operator, "")
-        self.assertEqual(reply["station"]["operator"], "")
-
-    def test_other_business_failure_keeps_operator_signed_in(self):
-        self.transport.fail_message = "SFIS business validation failed: FAIL1,HS_ASSY"
-        reply = self.start_cycle()
+        reply = self.station.scan("K2V5-001")
         self.assertFalse(reply["success"])
         self.assertEqual(self.station.operator, "M031978")
         self.assertEqual(reply["station"]["operator"], "M031978")
+        self.assertEqual(reply["station"]["sn"], "K2V5-001")
+
+    def test_other_business_failure_keeps_operator_signed_in(self):
+        self.transport.fail_message = "SFIS business validation failed: FAIL1,HS_ASSY"
+        reply = self.station.scan("K2V5-001")
+        self.assertFalse(reply["success"])
+        self.assertEqual(self.station.operator, "M031978")
+        self.assertEqual(reply["station"]["operator"], "M031978")
+        self.assertEqual(reply["station"]["sn"], "K2V5-001")
+        self.assertEqual(reply["station"]["state"], "SN_CONFIRM")
 
     def test_step4_payload_carries_both_serial_numbers(self):
         self.start_cycle()
@@ -381,29 +385,28 @@ class SFISTraceTests(SnapshotSFISGateTests):
     def phases(self):
         return [(item["step"], item["phase"]) for item in self.station.sfis_log()]
 
-    def test_accepted_step1_is_traced_with_both_serial_numbers(self):
+    def test_accepted_step1_is_traced_with_the_product_sn_and_empno(self):
         self.start_cycle()
         self.assertEqual(self.phases(), [("step1", "begin"), ("step1", "accepted")])
         entry = self.station.sfis_log()[0]
+        # Step1 runs on the product SN, before the MCIO card exists.
         self.assertEqual((entry["sn"], entry["mcio_sn"], entry["emp_no"]),
-                         ("K2V5-001", "APL-001", "M031978"))
+                         ("K2V5-001", "", "M031978"))
 
-    def test_rejected_step1_traces_the_rollback_and_the_reason(self):
+    def test_rejected_step1_traces_the_retry_requirement_and_the_reason(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1,HS_ASSY"
-        self.start_cycle()
+        self.station.scan("K2V5-001")
         self.assertEqual(self.phases(),
-                         [("step1", "begin"), ("step1", "failed"), ("step1", "rolled_back")])
-        rollback = self.station.sfis_log()[-1]
-        self.assertIn("HS_ASSY", rollback["detail"])
-        self.assertFalse(rollback["operator_cleared"])
-        # The trace must still name the serials the operator has to scan again,
-        # because _clear_cycle has already dropped them from the snapshot.
-        self.assertEqual((rollback["sn"], rollback["mcio_sn"]), ("K2V5-001", "APL-001"))
+                         [("step1", "begin"), ("step1", "failed"), ("step1", "retry_required")])
+        retry = self.station.sfis_log()[-1]
+        self.assertIn("HS_ASSY", retry["detail"])
+        self.assertFalse(retry["operator_error"])
+        self.assertEqual((retry["sn"], retry["mcio_sn"]), ("K2V5-001", ""))
 
     def test_operator_rejection_is_marked_in_the_trace(self):
         self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
-        self.start_cycle()
-        self.assertTrue(self.station.sfis_log()[-1]["operator_cleared"])
+        self.station.scan("K2V5-001")
+        self.assertTrue(self.station.sfis_log()[-1]["operator_error"])
 
     def test_log_cursor_only_returns_new_entries(self):
         self.start_cycle()

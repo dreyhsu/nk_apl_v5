@@ -6,7 +6,11 @@ let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,st
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
 const VIDEO_TEST_STATES=['WAITING_SN','WAITING_MCIO_SN','WAITING_CAPTURE','NOT_MATCHED'];
 const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_MCIO_SN:'Scan MCIO Card SN',SN_CONFIRM:'Validating with SFIS',WAITING_DMZ:'Validating with SFIS',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
-const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product and MCIO card.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK.',UPLOADING:'Sending SFIS Step4.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted by SFIS Step1. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product serial number.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK.',UPLOADING:'Sending SFIS Step4.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+// SN_CONFIRM is momentary while Step1 is sent, but sticky when Step1 is refused;
+// the backend's step1_retry_required flag picks these out for that sticky case.
+const STEP1_RETRY_LABEL='SFIS Step1 Failed';
+const STEP1_RETRY_HINT='SFIS did not accept this product serial number. Scan the same product serial number again to retry, or select Terminate Inspection. If the employee number was rejected, select Switch operator first, then sign in with the correct number.';
 let videoChoice=null,videoBusy=false,videoSeeking=false,historyBusy=false;
 let browserVideoURL='',browserVideoReady=false,browserCaptureTime=null;
 const SCAN_FIELDS={snInput:{field:'sn',label:'product serial number',expect:'WAITING_SN'},mcioInput:{field:'mcio_sn',label:'MCIO card serial number',expect:'WAITING_MCIO_SN'}};
@@ -152,7 +156,7 @@ function attachFixedScanner(id){
 const SFIS_TAG='font-weight:bold;color:#0b8457';
 const SFIS_TAG_BAD='font-weight:bold;color:#c0392b';
 const SFIS_TAG_WARN='font-weight:bold;color:#b8860b';
-const SFIS_PHASE_STYLE={error:SFIS_TAG_BAD,failed:SFIS_TAG_BAD,rolled_back:SFIS_TAG_BAD,
+const SFIS_PHASE_STYLE={error:SFIS_TAG_BAD,failed:SFIS_TAG_BAD,retry_required:SFIS_TAG_BAD,
                         bypass:SFIS_TAG_WARN,local:SFIS_TAG_WARN,ignored:SFIS_TAG_WARN};
 let sfisLogCursor=0,sfisLogBusy=false,sfisLogAt=0,sfisLogDisabled=false,sfisHistory=[];
 let lastLoggedStationState=null;
@@ -197,21 +201,24 @@ async function pollSfisLog(force=false){
   }finally{sfisLogBusy=false}
 }
 
+let lastStep1Retry=false;
 function logStationState(station){
   const state=station?.state??null;
-  if(state===lastLoggedStationState)return;
-  const previous=lastLoggedStationState;lastLoggedStationState=state;
-  // Step1 runs inside the single /api/apl/scan request, so SN_CONFIRM and
-  // WAITING_DMZ are usually too short-lived for this tab to ever poll them:
-  // the transition a rolled-back cycle actually shows is MCIO -> WAITING_SN.
-  const rolledBack=state==='WAITING_SN'&&!!station?.last_error
-    &&['WAITING_MCIO_SN','SN_CONFIRM','WAITING_DMZ'].includes(previous);
-  const style=rolledBack?SFIS_TAG_BAD:SFIS_TAG;
-  console.log(`%c[APL] state%c ${previous===null?'(page load)':previous||'offline'} → ${state||'offline'}`,style,'color:inherit;font-weight:normal',
-    {sn:station?.sn||'',mcio_sn:station?.mcio_sn||'',operator:station?.operator||'',
-     cycle_id:station?.cycle_id||'',last_error:station?.last_error||'',
-     dmz_mode:station?.dmz?.mode||'',bypass:station?.dmz?.bypass===true});
-  if(rolledBack)console.error('%c[APL]%c SFIS Step1 refused this unit, so the whole cycle was dropped: the product SN and the MCIO SN must both be scanned again.'+(station?.operator?'':' The employee number was rejected too, so sign in again first.')+' Reason: '+(station?.last_error||'unknown'),SFIS_TAG_BAD,'color:inherit');
+  // Step1 keeps the product SN when it fails, so the console cue is the
+  // step1_retry_required flag rising rather than a cycle-dropping transition.
+  // The sticky SN_CONFIRM shares its state string with the momentary one, so
+  // the retry edge is watched independently of the state-change log.
+  const retry=station?.step1_retry_required===true;
+  const enteredRetry=retry&&!lastStep1Retry;lastStep1Retry=retry;
+  if(enteredRetry)console.error('%c[APL]%c SFIS Step1 refused this product serial number. The SN is kept: scan the SAME product serial number again to retry, or terminate. If the employee number was rejected, select Switch operator and sign in with the correct number first. Reason: '+(station?.last_error||'unknown'),SFIS_TAG_BAD,'color:inherit');
+  if(state!==lastLoggedStationState){
+    const previous=lastLoggedStationState;lastLoggedStationState=state;
+    const style=enteredRetry?SFIS_TAG_BAD:SFIS_TAG;
+    console.log(`%c[APL] state%c ${previous===null?'(page load)':previous||'offline'} → ${state||'offline'}`,style,'color:inherit;font-weight:normal',
+      {sn:station?.sn||'',mcio_sn:station?.mcio_sn||'',operator:station?.operator||'',
+       cycle_id:station?.cycle_id||'',last_error:station?.last_error||'',
+       dmz_mode:station?.dmz?.mode||'',bypass:station?.dmz?.bypass===true});
+  }else if(!enteredRetry)return;
   pollSfisLog(true);
 }
 
@@ -276,12 +283,14 @@ function renderStation(station){
   const signedIn=!!station?.operator;
   const operatorRequired=station?.operator_required!==false;
   if(operatorRequired&&!signedIn&&(fixedBuffers.snInput||fixedBuffers.mcioInput))clearScanBuffers();
-  const snEditable=freshStation&&!busy&&station.state==='WAITING_SN'&&(!operatorRequired||signedIn);
+  // A refused Step1 keeps the SN field live so the same label can be re-scanned.
+  const retry=station?.step1_retry_required===true;
+  const snEditable=freshStation&&!busy&&(station.state==='WAITING_SN'||retry)&&(!operatorRequired||signedIn);
   const mcioEditable=freshStation&&!busy&&station.state==='WAITING_MCIO_SN';
   const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
   connection.classList.toggle('hidden',freshStation);
-  const canEditOperator=freshStation&&!busy&&station.state==='WAITING_SN';
+  const canEditOperator=freshStation&&!busy&&(station.state==='WAITING_SN'||retry);
   $('operatorSignIn').classList.toggle('hidden',signedIn);
   $('operatorBadge').classList.toggle('hidden',!signedIn);
   $('opName').textContent=station?.operator||'—';
@@ -305,9 +314,9 @@ function renderStation(station){
   $('retryStep4').disabled=!awaitingStep4||busy;
   if(freshStation&&station.state!=='PASS_CONFIRM'&&step4Recovery)step4Recovery='';
   $('stationRecovery').textContent=step4Recovery;
-  $('stationState').textContent=freshStation?(STATION_LABELS[station.state]||station.state):'Offline';
-  $('stationState').className='state '+(!freshStation?'warn':station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  $('stationState').textContent=freshStation?(retry?STEP1_RETRY_LABEL:STATION_LABELS[station.state]||station.state):'Offline';
+  $('stationState').className='state '+(!freshStation?'warn':retry||station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
+  const instruction=retry?STEP1_RETRY_HINT:operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   renderStepFlow(station,freshStation);
@@ -359,7 +368,9 @@ function stepStatuses(station,freshStation){
   // A disconnected scanner warns but never blocks: the fields still accept typing.
   const scannerReady=station.scanner?.connected===true||station.scanner?.enabled!==true;
   const done={2:station.operator_required===false||!!station.operator,
-              3:!!station.sn,
+              // A failed Step1 keeps station.sn, but the operator is back on the
+              // SN field retrying it, so step 3 is not done until Step1 passes.
+              3:!!station.sn&&station.step1_retry_required!==true,
               4:!mcioRequired||!!station.mcio_sn,
               // Step 5 closes the cycle: on success every step resets at once, so a
               // visible PASS_CONFIRM means the unit is NOT finished yet.
@@ -392,8 +403,8 @@ function renderStepFlow(station,freshStation){
 function activeScanStep(station){
   if(!stationFresh()||!station)return '';
   if(station.operator_required!==false&&!station.operator)return 'operator';
-  if(station.state==='WAITING_SN')return 'sn';
-  if(station.state==='WAITING_MCIO_SN')return 'mcio';
+  if(station.active_scan_field==='sn')return 'sn';
+  if(station.active_scan_field==='mcio_sn')return 'mcio';
   return 'other';
 }
 
@@ -520,7 +531,11 @@ async function selectBrowserInput(camera=false){
 
 async function submitScan(id){
   const spec=SCAN_FIELDS[id],station=lastStatus.station;
-  if(!stationFresh()||stationBusy||station?.request_in_flight||station?.state!==spec.expect)return;
+  // Snapshot mode publishes active_scan_field (it reads 'sn' both at WAITING_SN
+  // and in the Step1 retry state); legacy has no such key, so fall back to the
+  // raw state the way the server's /api/apl/scan guard does.
+  const fieldOk=station?.active_scan_field!==undefined?station.active_scan_field===spec.field:station?.state===spec.expect;
+  if(!stationFresh()||stationBusy||station?.request_in_flight||!fieldOk)return;
   if(spec.field==='sn'&&station.operator_required!==false&&!station.operator){clearScanBuffers();$('opInput').focus();return}
   const value=fixedBuffers[id];if(!value){$(id).focus();return}
   const prefix=spec.field==='sn'?station.sn_prefix:station.mcio_sn_prefix;
@@ -537,7 +552,7 @@ async function submitScan(id){
 }
 
 function scanAcceptedMessage(station){
-  if(station?.state==='WAITING_MCIO_SN')return 'Product serial number accepted. Scan the MCIO card serial number.';
+  if(station?.state==='WAITING_MCIO_SN')return 'Product serial number accepted by SFIS Step1. Scan the MCIO card serial number.';
   if(station?.state==='WAITING_CAPTURE')return 'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.';
   return 'Serial number accepted.';
 }
@@ -574,7 +589,7 @@ async function sendStep4(station){
 async function stationAction(action){
   const station=lastStatus.station,permission={'confirm-result':'can_confirm_result',terminate:'can_terminate'}[action];
   if(!permission||!stationFresh()||stationBusy||station?.request_in_flight||station?.[permission]!==true)return;
-  if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nMCIO SN: '+(station.mcio_sn||'—')+'\nBoth serial numbers will be cleared. The saved inspection evidence will be retained.'))return;
+  if(action==='terminate'&&!confirm('Terminate this inspection without uploading?\nSN: '+(station.sn||'—')+'\nMCIO SN: '+(station.mcio_sn||'—')+'\nThe serial numbers will be cleared. The saved inspection evidence will be retained.'))return;
   stationBusy=true;stationLocalError='';renderStation(station);
   try{
     if(action==='confirm-result'){await sendStep4(station)}

@@ -54,6 +54,17 @@ class StationAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.station.scan.assert_not_called()
 
+    def test_scan_expect_sn_is_accepted_in_the_step1_retry_state(self):
+        # A refused Step1 sits in SN_CONFIRM but publishes active_scan_field 'sn',
+        # so a product re-scan must be accepted rather than 409'd on the state.
+        self.station.status.return_value = {
+            'state': 'SN_CONFIRM', 'active_scan_field': 'sn', 'sn': 'K2V5-001',
+            'cycle_id': 'abc', 'step1_retry_required': True, 'sop': {},
+        }
+        retried = self.client.post('/api/apl/scan', json={'sn': 'K2V5-001', 'expect': 'sn'})
+        self.assertEqual(retried.status_code, 200)
+        self.station.scan.assert_called_once_with('K2V5-001', source='web')
+
     def test_scanner_candidates_and_selection(self):
         device = {'path': '/dev/input/event6', 'name': 'USB scanner', 'vendor_id': '0c2e',
                   'product_id': '0b41', 'serial': '', 'phys': 'usb-1'}

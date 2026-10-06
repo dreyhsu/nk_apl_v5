@@ -98,7 +98,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261005-6-sfis-console', html)
+        self.assertIn('apl_ui.js?v=20261006-1-step1-on-product-sn', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -148,8 +148,13 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn("attachFixedScanner('mcioInput')", script)
         self.assertIn("mcioInput:{field:'mcio_sn'", script)
         self.assertIn("WAITING_MCIO_SN:'Scan MCIO Card SN'", script)
-        self.assertIn("WAITING_MCIO_SN:'Product serial number accepted.", script)
+        self.assertIn("WAITING_MCIO_SN:'Product serial number accepted by SFIS Step1.", script)
         self.assertIn("expect:spec.field", script)
+        # The Step1 retry surface is driven by the backend flag, not re-derived.
+        self.assertIn("step1_retry_required", script)
+        self.assertIn("STEP1_RETRY_LABEL", script)
+        self.assertIn("active_scan_field", script)
+        self.assertNotIn("rolled_back", script)
 
     def test_guided_steps_dim_without_disabling_terminate(self):
         root = Path(__file__).resolve().parents[1]

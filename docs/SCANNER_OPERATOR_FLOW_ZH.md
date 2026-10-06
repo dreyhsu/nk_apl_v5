@@ -8,17 +8,19 @@ Serial Number 區是五步引導流程，同一時間只有一個輸入框可用
 
 1. **Scanner ready**：顯示掃碼槍連線狀態。未連線只是警告，不會擋住後續手動輸入。
 2. **Employee number**：輸入員工工號，按 `Sign In`。
-3. **Product serial number**：掃產品 SN，必須 `K2V5` 開頭。此時**還不會**呼叫 SFIS。
-4. **MCIO card serial number**：掃 MCIO 卡 SN，必須 `APL` 開頭。收到後才送 SFIS Step1。
+3. **Product serial number**：掃產品 SN，必須 `K2V5` 開頭。收到後**立即**送 SFIS Step1（Step1 的 body 不含 MCIO 卡序號，所以不必先裝卡）。
+4. **MCIO card serial number**：掃 MCIO 卡 SN，必須 `APL` 開頭。此時 Step1 已通過，掃 MCIO**不再**呼叫 SFIS。
 5. **Capture & inspect**：拍照判定，OK 後送 Step4。
 
-未簽入時兩個掃碼欄位都停用；SmartCam 掃碼槍傳來的完整條碼會被站台拒絕，不會建立週期或呼叫 SFIS。掃錯標籤（在產品步驟掃到 `APL` 開頭、或在 MCIO 步驟掃到 `K2V5` 開頭）會顯示紅字並附上掃到的字串，狀態不變；前綴規則寫在 `config/apl_workflow.json` 的 `sn_prefix` 與 `mcio_sn_prefix`，比對不分大小寫。
+未簽入時兩個掃碼欄位都停用；SmartCam 掃碼槍傳來的完整條碼會被站台拒絕，不會建立週期或呼叫 SFIS。掃錯標籤（在產品步驟掃到 `APL` 開頭、或在 MCIO 步驟掃到 `K2V5` 開頭）會顯示紅字並附上掃到的字串，狀態不變；前綴規則寫在 `config/apl_workflow.json` 的 `sn_prefix` 與 `mcio_sn_prefix`，比對不分大小寫。（注意：Step1 失敗的重試狀態下掃到 MCIO 標籤，會先顯示「SN 已鎖定」而不是前綴錯誤，因為此時站台在等重掃產品 SN。）
 
-掃碼槍是後端獨占讀取，無法靠焦點決定這一槍要填哪一格，因此由**站台狀態**決定：`WAITING_SN` 收產品 SN、`WAITING_MCIO_SN` 收 MCIO 卡 SN。瀏覽器兩個欄位也送同一支 `/api/apl/scan`，並多帶一個 `expect` 欄位，避免畫面比站台慢一秒時填錯格。
+掃碼槍是後端獨占讀取，無法靠焦點決定這一槍要填哪一格，因此由**站台公布的 `active_scan_field`** 決定：產品步驟（`WAITING_SN` 與 Step1 失敗的重試狀態）收產品 SN、`WAITING_MCIO_SN` 收 MCIO 卡 SN。瀏覽器兩個欄位也送同一支 `/api/apl/scan`，並多帶一個 `expect` 欄位，避免畫面比站台慢一秒時填錯格。
 
-`Terminate Inspection` 固定放在面板底部，在等待 MCIO 卡序號的階段也可以按；按下後**兩個序號都會清空**並回到步驟 3。已簽入的工號會留在目前站台，後續 SN 可以連續使用。換人時須先完成或終止目前檢測，再按 `Switch operator`。
+**Step1 失敗時**：站台保留產品 SN，黏在 `SN_CONFIRM` 重試狀態。重掃同一張產品 SN 即重送 Step1；若是工號錯誤（`NO EMP`），先按 `Switch operator` 改用正確工號再重掃。此狀態的 SN 欄位與 Terminate 都可用。
 
-此順序同樣套用於 `--demo` 和 Browser Video Test。測試模式仍不送 SFIS；正式模式的 Step1／Step4 呼叫與 payload 沒有因本次修改而變更。切換到隔離的影片測試站台後，若畫面顯示未簽入，須在該測試站台再輸入工號。
+`Terminate Inspection` 固定放在面板底部，在等待 MCIO 卡序號或 Step1 重試的階段都可以按；按下後序號會清空並回到步驟 3（Step1 重試時只有產品 SN 一個序號）。已簽入的工號會留在目前站台，後續 SN 可以連續使用。換人時須先完成或終止目前檢測（Step1 重試狀態例外，可直接換人），再按 `Switch operator`。
+
+此順序同樣套用於 `--demo` 和 Browser Video Test。測試模式仍不送 SFIS；Step1／Step4 的 payload 欄位沒有因本次修改而變更，只是 Step1 的觸發時機從 MCIO 掃描提前到產品 SN 掃描。切換到隔離的影片測試站台後，若畫面顯示未簽入，須在該測試站台再輸入工號。
 
 ## 查找與更換掃碼槍
 

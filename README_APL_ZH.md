@@ -30,12 +30,13 @@ Python 程式。
 （未簽入）
   ↓ 輸入工號簽入
 WAITING_SN
-  ↓ 掃描產品 SN（必須 K2V5 開頭；此時尚未呼叫 SFIS）
-WAITING_MCIO_SN
-  ↓ 掃描 MCIO 卡 SN（必須 APL 開頭）→ 工號 + 產品 SN → SFIS Step1
-  ├─ Step1 回 NO EMP（工號錯誤）→ 清除簽入，需重新輸入工號
-  ├─ Step1 其他 FAIL / 連線失敗 → 保留簽入，兩個 SN 一併釋放可重掃
+  ↓ 掃描產品 SN（必須 K2V5 開頭）→ 工號 + 產品 SN → SFIS Step1
+SN_CONFIRM（送出 Step1）
+  ├─ Step1 回 NO EMP（工號錯誤）→ 不清除任何東西，提示按 Switch operator 改工號後重掃同一張產品 SN
+  ├─ Step1 其他 FAIL / 連線失敗 → 保留產品 SN 與簽入，重掃同一張產品 SN 即重送 Step1，或 Terminate
   └─ Step1 接受 ↓
+WAITING_MCIO_SN
+  ↓ 掃描 MCIO 卡 SN（必須 APL 開頭；不再呼叫 SFIS）
 WAITING_CAPTURE
   ↓ Capture & Inspect
 JUDGING
@@ -51,14 +52,14 @@ JUDGING
 - 工號每班簽入一次，存在站台端；之後可連續掃 SN。要換人時按 `Switch operator` 重新輸入。
 - `--demo` 與 Browser Video Test 也須先簽入工號才能掃 SN；測試不會呼叫 SFIS。切換隔離的影片測試站台後，若顯示未簽入，需在該站台再輸入工號。
 - 掃碼槍狀態下方有預設收合的 `Find or change scanner`；新裝置首次選擇後，成功連接過的掃碼槍會保存在 `runtime_data/barcode/scanner_selection.json`，拔插、重啟及已知裝置間更換會自動接回。只有新裝置或辨識不明才需要重新尋找。詳見 [工號與掃碼槍操作](docs/SCANNER_OPERATOR_FLOW_ZH.md)。
-- 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤，系統清除簽入並要求重新輸入工號。
+- 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤。系統**不清除任何東西**，只提示操作員按 Switch operator 改用正確工號，再重掃同一張產品 SN 重試。
 - Step4 目前 `step4_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
 - 同一輪未結束時，新掃碼不能覆蓋目前 SN。
 - 只有按下 `Capture & Inspect` 才執行正式判定。
 - `NOT_MATCHED` 可以用同一個 SN 重拍，每次證據都保留。
 - 視覺結果 OK 不代表已上傳，也不會自動解除 SN 鎖定。
-- 掃碼後先呼叫 SFIS Step1；只有 Step1 接受才可進入拍照判定。
+- 掃完產品 SN 立即呼叫 SFIS Step1；只有 Step1 接受才進入掃 MCIO 卡與拍照判定。Step1 失敗會保留產品 SN，重掃同一張即重試。
 - 只有 SFIS Step4 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
 
