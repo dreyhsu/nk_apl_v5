@@ -2103,6 +2103,7 @@ class EdgeRuntime:
                         if (self._auto['last_match'] is not None
                                 and station_state.get('can_capture') is True):
                             station_state['matching'] = self._auto['last_match']
+                            station_state['auto_capture'] = self._auto_overlay()
                         backend.set_overlay(station_state)
                         phase = station_state.get('state')
                         verdict = (
@@ -2433,6 +2434,18 @@ class EdgeRuntime:
             return 'committing'
         return ''
 
+    def _auto_overlay(self) -> Dict[str, Any]:
+        """Just what the overlay countdown needs, so neither draw path has to reach
+        into the full status block."""
+        cfg = self._auto_capture_settings()
+        config = getattr(self.station, 'config', None)
+        threshold = config.get('threshold', 0.8) if isinstance(config, dict) else None
+        return {'armed': True, 'elapsed': float(self._auto['elapsed'] or 0.0),
+                'timeout_sec': float(cfg.get('timeout_sec', 0.0)),
+                'hits': int(self._auto['hits']),
+                'required_hits': int(cfg.get('required_hits', 2)),
+                'score': self._auto['score'], 'threshold': threshold}
+
     def _auto_disarm(self, reason: str, station=None) -> None:
         self._auto.update(armed=False, reason=reason, hits=0)
         if self._auto['last_match'] is not None:
@@ -2487,7 +2500,7 @@ class EdgeRuntime:
             self._auto.update(score=score, reason=str(match.get('reason') or ''),
                               hits=self._auto['hits'] + 1 if match.get('accepted') else 0,
                               last_match=match)
-            station.set_preview_matching(match)
+            station.set_preview_matching(match, self._auto_overlay())
             if self._auto['hits'] >= int(cfg['required_hits']):
                 self._start_auto_commit(frame, station, cycle_id, 'accepted')
             elif float(cfg['timeout_sec']) > 0 and self._auto['elapsed'] >= float(cfg['timeout_sec']):

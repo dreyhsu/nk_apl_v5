@@ -12,6 +12,7 @@ import numpy as np
 from apl_matching import APLMatcher
 from apl_station import APLStation
 from edge_runtime import EdgeRuntime
+from workflow_view import AUTO_PHASE_LABELS, auto_capture_line, workflow_view
 
 
 class SnapshotMatcher:
@@ -514,6 +515,26 @@ class AutoCaptureProbeTests(unittest.TestCase):
         # The overlay draw path, though, sees the live scores.
         results = self.station.process_frame(self.frame(False))[2]
         self.assertEqual([row["score"] for row in results], [0.40])
+
+    def test_the_overlay_receives_the_automatic_capture_countdown(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=20.0)
+        self.tick(runtime, False, 0.0)
+        self.assertEqual(self.station.preview_auto["armed"], True)
+        self.assertEqual(self.station.preview_auto["timeout_sec"], 20.0)
+        self.assertEqual(self.station.preview_auto["required_hits"], 2)
+        # workflow_view reads auto_capture off the snapshot _frame_result builds.
+        seen = {}
+        self.station.matcher = SimpleNamespace(
+            evaluate_snapshot=self.matcher.evaluate_snapshot,
+            draw=lambda frame, snapshot: seen.update(snapshot) or frame)
+        self.station.process_frame(self.frame(False))
+        self.assertTrue(seen["auto_capture"]["armed"])
+        self.assertEqual(workflow_view(seen)["phase"],
+                         AUTO_PHASE_LABELS["WAITING_CAPTURE"])
+        self.assertIn("20s left", auto_capture_line(seen["auto_capture"]))
+        # And it disappears again the moment the probe stops.
+        self.station.set_preview_matching(None)
+        self.assertIsNone(self.station.preview_auto)
 
     def test_a_committed_attempt_clears_the_overlay_preview(self):
         runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)

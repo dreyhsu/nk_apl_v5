@@ -92,9 +92,11 @@ class APLStation:
         self.cycle_fingerprints = None
         self.cycle_station_id = None
         self.matching = self._empty_matching()
-        # Live probe scores for the overlay only. Never journaled, never saved as
-        # evidence, and never part of _snapshot() - see set_preview_matching.
+        # Live probe scores and countdown for the overlay only. Never journaled,
+        # never saved as evidence, never part of _snapshot() - see
+        # set_preview_matching.
         self.preview_matching = None
+        self.preview_auto = None
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(self.data_dir / "station.sqlite3"), check_same_thread=False, timeout=10)
@@ -173,12 +175,14 @@ class APLStation:
             raise ValueError("%s must be between %g and %g" % (key, low, high))
         return value
 
-    def set_preview_matching(self, match):
-        """Publish one live probe result for the overlay. It reaches draw() through
-        _frame_result only, so self.matching - which feeds the journal detail, the
-        evidence JSON and attempts.matching_json - is never touched."""
+    def set_preview_matching(self, match, auto=None):
+        """Publish one live probe result for the overlay, with the automatic-capture
+        countdown that goes beside it. Both reach draw() through _frame_result only,
+        so self.matching - which feeds the journal detail, the evidence JSON and
+        attempts.matching_json - is never touched."""
         with self.lock:
             self.preview_matching = dict(match) if match else None
+            self.preview_auto = dict(auto) if auto else None
 
     def _serial_prefix(self, which):
         # Prefix rules are a snapshot-mode operator aid; legacy serials stay free-form.
@@ -872,7 +876,8 @@ class APLStation:
         # instead, on this throwaway copy of the snapshot only.
         if (self.snapshot_mode and self.preview_matching
                 and snapshot.get("state") in {"WAITING_CAPTURE", "NOT_MATCHED"}):
-            snapshot = {**snapshot, "matching": self.preview_matching}
+            snapshot = {**snapshot, "matching": self.preview_matching,
+                        "auto_capture": self.preview_auto or {}}
         vis = self.matcher.draw(frame, snapshot) if hasattr(self.matcher, "draw") else frame
         accepted = snapshot["matching"]["raw"]
         results = [{"label": name, "score": score, "pass": name == accepted,
