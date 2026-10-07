@@ -290,7 +290,9 @@ function renderStation(station){
   const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
   connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
   connection.classList.toggle('hidden',freshStation);
-  const canEditOperator=freshStation&&!busy&&(station.state==='WAITING_SN'||retry);
+  // The employee number is never locked: Switch operator stays available in
+  // every state so a wrong number can always be corrected.
+  const canEditOperator=freshStation&&!busy;
   $('operatorSignIn').classList.toggle('hidden',signedIn);
   $('operatorBadge').classList.toggle('hidden',!signedIn);
   $('opName').textContent=station?.operator||'—';
@@ -330,7 +332,9 @@ function renderStation(station){
   $('sifiStatus').className='stationMeta '+(sifiConfigured&&!step4Blocked&&!sifiBypass?'sifiGood':'sifiWarn');
   // The station echoes the same text in last_error that the failed request just
   // returned, so dedupe instead of showing the operator the line twice.
-  $('stationError').textContent=[...new Set([stationLocalError,textValue(station?.last_error)].filter(Boolean))].join('\n');
+  // During a Step1 retry the station error is shown on the Employee-number row,
+  // so keep it out of the panel-level banner to avoid repeating it.
+  $('stationError').textContent=[...new Set([stationLocalError,retry?'':textValue(station?.last_error)].filter(Boolean))].join('\n');
   const scanner=station?.scanner,panel=$('scannerPanel');
   let scannerClass=' manual',scannerTitle='Scan or type a serial number',scannerDetail='Focus the SN field when using a scanner connected to this PC.';
   if(scanner?.connected){
@@ -387,6 +391,10 @@ function stepStatuses(station,freshStation){
 
 function renderStepFlow(station,freshStation){
   const statuses=stepStatuses(station,freshStation);
+  const retry=freshStation&&station?.step1_retry_required===true;
+  // A refused Step1 validates the employee number + product SN, so its reason
+  // belongs on the Employee-number row where the operator can act on it.
+  if(retry)statuses[2]='warn';
   const values={1:'',2:station?.operator||'',3:station?.sn||'',4:station?.mcio_sn||'',
                 5:station?.state==='PASS_CONFIRM'?'OK':''};
   for(const step of [1,2,3,4,5]){
@@ -394,6 +402,7 @@ function renderStepFlow(station,freshStation){
     row.className='stepRow '+statuses[step];
     $('step'+step+'Value').textContent=values[step];
   }
+  $('step2Error').textContent=retry?textValue(station?.last_error):'';
   // A legacy station never collects an MCIO card serial number.
   $('step4').classList.toggle('hidden',freshStation&&station.inspection_mode!=='single_snapshot_cover_card');
 }

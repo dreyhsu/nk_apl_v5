@@ -16,9 +16,9 @@ Serial Number 區是五步引導流程，同一時間只有一個輸入框可用
 
 掃碼槍是後端獨占讀取，無法靠焦點決定這一槍要填哪一格，因此由**站台公布的 `active_scan_field`** 決定：產品步驟（`WAITING_SN` 與 Step1 失敗的重試狀態）收產品 SN、`WAITING_MCIO_SN` 收 MCIO 卡 SN。瀏覽器兩個欄位也送同一支 `/api/apl/scan`，並多帶一個 `expect` 欄位，避免畫面比站台慢一秒時填錯格。
 
-**Step1 失敗時**：站台保留產品 SN，黏在 `SN_CONFIRM` 重試狀態。重掃同一張產品 SN 即重送 Step1；若是工號錯誤（`NO EMP`），先按 `Switch operator` 改用正確工號再重掃。此狀態的 SN 欄位與 Terminate 都可用。
+**Step1 失敗時**：站台保留產品 SN，黏在 `SN_CONFIRM` 重試狀態，**失敗原因會顯示在步驟 2（Employee number）那一列**（因為 Step1 驗的是工號 + 產品 SN）。重掃同一張產品 SN 即重送 Step1；若是工號錯誤（`NO EMP`），先按 `Switch operator` 改用正確工號再重掃。此狀態的 SN 欄位與 Terminate 都可用。
 
-`Terminate Inspection` 固定放在面板底部，在等待 MCIO 卡序號或 Step1 重試的階段都可以按；按下後序號會清空並回到步驟 3（Step1 重試時只有產品 SN 一個序號）。已簽入的工號會留在目前站台，後續 SN 可以連續使用。換人時須先完成或終止目前檢測（Step1 重試狀態例外，可直接換人），再按 `Switch operator`。
+`Terminate Inspection` 固定放在面板底部，在等待 MCIO 卡序號或 Step1 重試的階段都可以按；按下後序號會清空並回到步驟 3（Step1 重試時只有產品 SN 一個序號）。已簽入的工號會留在目前站台，後續 SN 可以連續使用。**工號在任何狀態都可修改**：隨時可按 `Switch operator` 換人，不必先結束目前檢測；mid-cycle 換人會更新該 cycle 送 SFIS 的工號。
 
 此順序同樣套用於 `--demo` 和 Browser Video Test。測試模式仍不送 SFIS；Step1／Step4 的 payload 欄位沒有因本次修改而變更，只是 Step1 的觸發時機從 MCIO 掃描提前到產品 SN 掃描。切換到隔離的影片測試站台後，若畫面顯示未簽入，須在該測試站台再輸入工號。
 

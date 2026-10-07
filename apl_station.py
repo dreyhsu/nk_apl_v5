@@ -466,13 +466,6 @@ class APLStation:
         return (self.snapshot_mode and self.state == "SN_CONFIRM"
                 and bool(self.last_error) and self.request_token is None)
 
-    def _operator_editable_locked(self):
-        # The Step1 retry state exists so a NO EMP rejection can be fixed in
-        # place: the empNo must be changeable there, and only there, mid-cycle.
-        if self.request_token is not None:
-            return False
-        return self.state == "WAITING_SN" or self._step1_retry_locked()
-
     def set_operator(self, emp_no):
         if not isinstance(emp_no, str):
             raise ValueError("Employee number must be text")
@@ -485,12 +478,12 @@ class APLStation:
                 return self._reply("Station is closed")
             if self.storage_error:
                 return self._reply(self.storage_error)
-            if not self._operator_editable_locked():
-                return self._reply("Finish the current inspection before changing the operator")
+            # The employee number is never locked: an operator must be able to
+            # correct it in any state, above all after a NO EMP Step1 rejection.
             self.operator = emp_no
             if self.cycle_id:
-                # Retrying Step1 after a NO EMP: _payload reads cycle_operator,
-                # so the next attempt must carry the corrected employee number.
+                # _payload reads cycle_operator, so a mid-cycle change (e.g. a
+                # Step1 retry) carries the corrected number on the next SFIS call.
                 previous = self.cycle_operator
                 self.cycle_operator = emp_no
                 self._save("OPERATOR_CHANGED", {"from": previous or "", "to": emp_no})
@@ -500,8 +493,8 @@ class APLStation:
         with self.lock:
             if self.closed:
                 return self._reply("Station is closed")
-            if not self._operator_editable_locked():
-                return self._reply("Finish the current inspection before changing the operator")
+            if self.storage_error:
+                return self._reply(self.storage_error)
             self.operator = ""
             if self.cycle_id:
                 previous = self.cycle_operator

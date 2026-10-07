@@ -98,7 +98,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261006-1-step1-on-product-sn', html)
+        self.assertIn('apl_ui.js?v=20261007-1-step1-error-row', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -155,6 +155,9 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn("STEP1_RETRY_LABEL", script)
         self.assertIn("active_scan_field", script)
         self.assertNotIn("rolled_back", script)
+        # The Step1 reason is rendered on the Employee-number (step 2) row.
+        self.assertIn('id="step2Error"', html)
+        self.assertIn("step2Error", script)
 
     def test_guided_steps_dim_without_disabling_terminate(self):
         root = Path(__file__).resolve().parents[1]
@@ -203,7 +206,9 @@ assert.equal($('recordState').textContent,'FINALIZING');
         # The retry button is hidden outside the failure case, not merely disabled.
         self.assertIn("$('retryStep4').classList.toggle('hidden',!awaitingStep4)", script)
         # The SFIS text arrives both in the response and in station.last_error.
-        self.assertIn("[...new Set([stationLocalError,textValue(station?.last_error)].filter(Boolean))]", script)
+        # During a Step1 retry the station error moves to the step-2 row, so it
+        # is suppressed from the banner here (shown via step2Error instead).
+        self.assertIn("[...new Set([stationLocalError,retry?'':textValue(station?.last_error)].filter(Boolean))]", script)
         self.assertIn("const awaitingStep4=freshStation&&station.state==='PASS_CONFIRM'&&station.can_confirm_result===true", script)
 
     def test_scan_focus_follows_step_transitions_only(self):

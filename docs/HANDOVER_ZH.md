@@ -171,7 +171,7 @@ OK、NOT_MATCHED 與終止紀錄必須分開理解。視覺 OK 不代表已上�
 
 正式串接使用 `station_mode=remote`、`dmz.api_style=sfis`，且必須設 `dmz.bypass_sfis=false`。目前版控設定為工程測試用的 `bypass_sfis=true`；這會在本地接受 Step1／Step4，完全不送 SFIS，不能當作正式過帳成功：
 
-- 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時鎖進該 cycle 並帶入 Step1／Step4 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear`。
+- 操作員先在頁面輸入工號簽入（`POST /api/apl/operator`），工號存在站台端記憶體，掃碼時帶入 cycle 並作為 Step1／Step4 的 `empNo`。切換操作員用 `POST /api/apl/operator/clear` 再重新簽入。**工號在任何狀態都可修改、不再鎖定**：mid-cycle 改工號會同步更新 `cycle_operator`（記 `OPERATOR_CHANGED`），下一次 SFIS 呼叫即帶新工號；已在途（request 進行中）的那次沿用建構時的工號。這讓 NO EMP 可原地修正。
 - Step1：**掃完產品 SN 後立即**呼叫 `/api/SFISAPI/Step1`（不等 MCIO 卡），由 SFIS 驗證「工號 + 產品 SN」組合。Step1 的 body 不含 MCIO 卡序號，所以無須先裝卡即可驗證。
 - Step4：影像 OK 且操作員確認後呼叫 `/api/SFISAPI/Step4`。
 - Step4 有獨立安全開關 `step4_enabled`，預設為 `false`；未明確開啟時不會送出 HTTP request，畫面並會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561）。

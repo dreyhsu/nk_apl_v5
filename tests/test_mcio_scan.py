@@ -184,11 +184,14 @@ class MCIOScanTests(unittest.TestCase):
         self.assertFalse(reply["success"])
         self.assertIn("unavailable in the current state", reply["error"])
 
-    def test_the_operator_cannot_be_changed_at_the_mcio_step(self):
+    def test_the_operator_can_be_changed_at_the_mcio_step(self):
+        # The employee number is never locked; a change mid-cycle also rewrites
+        # cycle_operator so the next SFIS call carries it.
         self.station.scan("K2V5-001")
-        self.assertFalse(self.station.set_operator("TW031561")["success"])
-        self.assertFalse(self.station.clear_operator()["success"])
-        self.assertEqual(self.station.operator, "M031978")
+        self.assertTrue(self.station.set_operator("TW031561")["success"])
+        self.assertEqual(self.station.operator, "TW031561")
+        self.assertEqual(self.station.cycle_operator, "TW031561")
+        self.assertIn("OPERATOR_CHANGED", self.events())
 
     # --- Step1 failure keeps the SN for a re-scan retry ------------------------
 
@@ -285,13 +288,14 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(checks[-1][1]["emp_no"], "TW031561")
         self.assertIn("OPERATOR_CHANGED", self.events())
 
-    def test_the_operator_and_terminate_are_refused_while_step1_is_in_flight(self):
+    def test_terminate_is_refused_while_step1_is_in_flight_but_operator_is_not(self):
         inside = {}
 
         def blocking_send(path, payload):
             inside["state"] = self.station.state
+            # The operator can be corrected at any time, even mid-request; the
+            # in-flight payload was already built, so this only affects retries.
             inside["set_operator"] = self.station.set_operator("TW031561")["success"]
-            inside["clear_operator"] = self.station.clear_operator()["success"]
             inside["terminate"] = self.station.terminate(self.station.cycle_id)["success"]
             inside["can_terminate"] = self.station.status()["can_terminate"]
             raise DMZError("SFIS unavailable")
@@ -299,8 +303,7 @@ class MCIOScanTests(unittest.TestCase):
         self.transport.send = blocking_send
         self.station.scan("K2V5-001")
         self.assertEqual(inside["state"], "WAITING_DMZ")
-        self.assertFalse(inside["set_operator"])
-        self.assertFalse(inside["clear_operator"])
+        self.assertTrue(inside["set_operator"])
         self.assertFalse(inside["terminate"])
         self.assertFalse(inside["can_terminate"])
 

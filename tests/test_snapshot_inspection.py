@@ -141,11 +141,12 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(accepted["station"]["cycle_operator"], "M999")
         self.assertEqual(self.transport.calls, [])
 
-    def test_operator_cannot_switch_during_active_cycle(self):
+    def test_operator_can_switch_during_an_active_cycle(self):
+        # The employee number is never locked, so it stays correctable mid-cycle.
         self.station.scan("K2V5-001")
-        self.assertFalse(self.station.set_operator("M888")["success"])
-        self.assertFalse(self.station.clear_operator()["success"])
-        self.assertEqual(self.station.operator, "OP-TEST")
+        self.assertTrue(self.station.set_operator("M888")["success"])
+        self.assertEqual(self.station.operator, "M888")
+        self.assertEqual(self.station.cycle_operator, "M888")
 
     def test_scan_starts_and_locks_until_termination(self):
         first = self.start_cycle()
