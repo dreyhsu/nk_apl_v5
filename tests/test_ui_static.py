@@ -98,7 +98,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261007-3-empno-switch-unlock', html)
+        self.assertIn('apl_ui.js?v=20261007-4-timeout-action', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -222,6 +222,12 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn("commit.trigger==='timeout'", script)
         # The toast still clears itself after 4.2 seconds; nobody touched it.
         self.assertIn("setTimeout(()=>x.className='toast',4200)", html)
+        # An auto-passed unit never matched, so it is never announced as an OK.
+        self.assertIn("commit.trigger==='timeout'&&commit.result==='PASS'", script)
+        self.assertIn('Auto-passed on timeout', html)
+        self.assertIn('auto-pass on timeout', script)
+        self.assertIn('last_commit?.timeout_pass===true', script)
+        self.assertIn('not visually matched', script)
         # The manual button stays an override and is never disabled by the probe.
         self.assertIn("$('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;", script)
 

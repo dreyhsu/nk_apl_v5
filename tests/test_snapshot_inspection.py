@@ -429,6 +429,68 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.assertTrue(auto["suspended"])
         self.assertEqual(auto["last_commit"]["trigger"], "timeout")
 
+    def test_timeout_action_pass_closes_the_unit_and_opens_step4(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2,
+                             timeout_sec=5.0, timeout_action="pass")
+        cycle_id = self.station.status()["cycle_id"]
+        self.tick(runtime, False, 0.0)
+        self.assertEqual(self.attempts(), 0)
+        self.tick(runtime, False, 5.0)
+        state = self.station.status()
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(state["state"], "PASS_CONFIRM")
+        self.assertEqual(state["result"], "PASS")
+        # This is the gate the dashboard polls before sending Step4 by itself.
+        self.assertTrue(state["can_confirm_result"])
+        self.assertTrue(runtime._auto_capture_status()["last_commit"]["timeout_pass"])
+        # And Step4 really goes out for it.
+        self.assertTrue(self.station.confirm_result(cycle_id)["success"])
+        self.assertEqual(self.transport.calls[-1][0], "/result")
+        self.assertEqual(self.transport.calls[-1][1]["result"], "PASS")
+        self.assertEqual(self.station.status()["state"], "WAITING_SN")
+
+    def test_an_auto_passed_unit_is_never_recorded_as_a_visual_match(self):
+        """It closed on the clock, not on a match. The journal, the evidence row,
+        the filename and the saved JSON all have to say so."""
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2,
+                             timeout_sec=5.0, timeout_action="pass")
+        cycle_id = self.station.status()["cycle_id"]
+        self.tick(runtime, False, 0.0)
+        self.tick(runtime, False, 5.0)
+        attempt = self.station.history_detail(cycle_id)["attempts"][0]
+        self.assertEqual(attempt["visual_result"], "TIMEOUT_PASS")
+        self.assertIn("_TIMEOUT_PASS_", attempt["raw_path"])
+        # The real matcher verdict survives untouched beside the flag.
+        self.assertFalse(attempt["matching"]["accepted"])
+        self.assertEqual(attempt["matching"]["reason"], "below_threshold")
+        self.assertTrue(attempt["matching"]["timeout_auto_pass"])
+        self.assertEqual(attempt["source"]["auto_capture_timeout_action"], "pass")
+        payload = json.loads(
+            self.station.resolve_evidence(attempt["json_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(payload["matching"]["timeout_auto_pass"])
+        events = [row["event"] for row in self.station.db.execute(
+            "SELECT event FROM events WHERE cycle_id=?", (cycle_id,)).fetchall()]
+        self.assertIn("INSPECTION_TIMEOUT_PASS", events)
+        self.assertNotIn("INSPECTION_OK", events)
+
+    def test_a_real_match_still_wins_over_the_timeout_action(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2,
+                             timeout_sec=5.0, timeout_action="pass")
+        cycle_id = self.station.status()["cycle_id"]
+        self.tick(runtime, True, 0.0)
+        self.tick(runtime, True, 0.5)
+        attempt = self.station.history_detail(cycle_id)["attempts"][0]
+        self.assertEqual(attempt["visual_result"], "OK")
+        self.assertNotIn("timeout_auto_pass", attempt["matching"])
+        self.assertFalse(runtime._auto_capture_status()["last_commit"]["timeout_pass"])
+
+    def test_the_default_timeout_action_still_leaves_the_unit_not_matched(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)
+        self.tick(runtime, False, 0.0)
+        self.tick(runtime, False, 5.0)
+        self.assertEqual(self.station.status()["state"], "NOT_MATCHED")
+        self.assertFalse(self.station.status()["can_confirm_result"])
+
     def test_a_manual_capture_resumes_automatic_inspection_after_a_timeout(self):
         runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)
         self.tick(runtime, False, 0.0)

@@ -256,7 +256,7 @@ button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:no
       <div class="cardhead"><h2>Inspection History</h2><span class="grow"></span><span id="historyCount" class="subtle">0 inspections</span><button id="historyRefresh" class="mini" onclick="loadHistory()">Refresh</button></div>
       <div class="historyFilters">
         <label>Serial Number<input id="historySN" placeholder="Search SN" onkeydown="if(event.key==='Enter')loadHistory()"></label>
-        <label>Visual Result<select id="historyResult"><option value="">All results</option><option value="OK">OK</option><option value="NOT_MATCHED">Not Matched</option></select></label>
+        <label>Visual Result<select id="historyResult"><option value="">All results</option><option value="OK">OK</option><option value="NOT_MATCHED">Not Matched</option><option value="TIMEOUT_PASS">Auto-passed on timeout</option></select></label>
         <button class="action blue" onclick="loadHistory()">Search</button>
       </div>
       <div class="mediaScroll"><table class="mediaTable"><thead><tr><th>Updated</th><th>Serial Number</th><th>Visual Result</th><th>Cycle Status</th><th>Source</th><th>Attempts</th><th>Evidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="7" class="emptyMedia">Select History to load saved inspections.</td></tr></tbody></table></div>
@@ -412,6 +412,6 @@ setInterval(()=>{if(lastStatus.recording&&recSince)$('recTimer').textContent=fmt
 window.addEventListener('beforeunload',e=>{if(settingsDirty){e.preventDefault();e.returnValue=''}});
 for(const evt of ['change','input'])document.addEventListener(evt,e=>{if(e.target&&e.target.closest&&e.target.closest('#pageSettings'))markSettingsDirty()});
 </script>
-<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261007-3-empno-switch-unlock';document.body.appendChild(aplScript);</script>
+<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261007-4-timeout-action';document.body.appendChild(aplScript);</script>
 </body>
 </html>

@@ -11,7 +11,8 @@
     "enabled": true,
     "fps": 5.0,
     "required_hits": 2,
-    "timeout_sec": 20.0
+    "timeout_sec": 10.0,
+    "timeout_action": "pass"
   },
   "method": "TM_CCOEFF_NORMED",
   "template_root": "../templates",

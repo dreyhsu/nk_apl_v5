@@ -27,6 +27,9 @@ AUTO_PHASE_LABELS = {
     'WAITING_CAPTURE': 'Auto-inspecting - no button needed',
     'NOT_MATCHED': 'Not matched - auto-inspecting, adjust the product',
 }
+# A unit closed by auto_capture.timeout_action='pass' never matched; the overlay
+# must say so rather than showing the ordinary OK wording.
+TIMEOUT_PASS_LABEL = 'AUTO-PASS on timeout - NOT visually matched'
 BG = (0.035, 0.06, 0.10, 0.90)
 WHITE = (0.92, 0.95, 1.0, 1.0)
 MUTED = (0.57, 0.64, 0.74, 1.0)
@@ -83,7 +86,11 @@ def workflow_view(state, stale=False):
             label = STEP_LABELS.get(step['name'], step['name'])
         rows.append({'label': label, 'status': status})
     accent = RED if phase in {'NG', 'RECOVERY_REQUIRED', 'NOT_MATCHED'} else GREEN if phase in {'RESULT_CONFIRM', 'PASS_CONFIRM'} else AMBER if phase in {'RUNNING', 'SN_CONFIRM', 'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'JUDGING', 'UPLOADING'} else BLUE
-    label = (armed and AUTO_PHASE_LABELS.get(phase)) or PHASE_LABELS.get(phase, phase)
+    if not stale and (state.get('matching') or {}).get('timeout_auto_pass'):
+        accent = AMBER
+    timeout_pass = not stale and bool((state.get('matching') or {}).get('timeout_auto_pass'))
+    label = (TIMEOUT_PASS_LABEL if timeout_pass and phase in {'PASS_CONFIRM', 'UPLOADING'}
+             else (armed and AUTO_PHASE_LABELS.get(phase)) or PHASE_LABELS.get(phase, phase))
     return {'phase': label, 'rows': rows, 'done': 0 if stale else done,
             'accent': accent, 'auto': auto, 'armed': armed}
 

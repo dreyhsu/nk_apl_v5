@@ -313,7 +313,8 @@ class AutoCaptureConfigTests(unittest.TestCase):
     def test_auto_capture_defaults_to_disabled_when_absent(self):
         station = self.station()
         self.assertEqual(station.auto_capture, {"enabled": False, "fps": 5.0,
-                                                "required_hits": 2, "timeout_sec": 0.0})
+                                                "required_hits": 2, "timeout_sec": 0.0,
+                                                "timeout_action": "not_matched"})
 
     def test_required_hits_falls_back_to_stable_frames(self):
         station = self.station({"enabled": True})
@@ -329,6 +330,12 @@ class AutoCaptureConfigTests(unittest.TestCase):
         self.assertFalse(station.snapshot_mode)
         self.assertTrue(station.auto_capture["enabled"])
 
+    def test_timeout_action_defaults_to_leaving_the_unit_not_matched(self):
+        station = self.station({"enabled": True, "timeout_sec": 20.0})
+        self.assertEqual(station.auto_capture["timeout_action"], "not_matched")
+        passing = self.station({"enabled": True, "timeout_sec": 20.0, "timeout_action": "pass"})
+        self.assertEqual(passing.auto_capture["timeout_action"], "pass")
+
     def test_invalid_auto_capture_values_are_refused(self):
         for auto in ({"enabled": "yes"},
                      {"enabled": True, "fps": 0},
@@ -339,7 +346,12 @@ class AutoCaptureConfigTests(unittest.TestCase):
                      {"enabled": True, "timeout_sec": -1},
                      {"enabled": True, "timeout_sec": 0.5},
                      {"enabled": True, "timeout_sec": 601},
-                     {"enabled": True, "poll_ms": 100}):
+                     {"enabled": True, "poll_ms": 100},
+                     {"enabled": True, "timeout_sec": 20.0, "timeout_action": "PASS"},
+                     {"enabled": True, "timeout_sec": 20.0, "timeout_action": "ok"},
+                     # 'pass' with no timeout would never fire; that is a typo, not a config.
+                     {"enabled": True, "timeout_action": "pass"},
+                     {"enabled": True, "timeout_sec": 0, "timeout_action": "pass"}):
             with self.subTest(auto=auto):
                 with self.assertRaises(ValueError):
                     self.station(auto)

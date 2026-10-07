@@ -55,7 +55,8 @@ EDGE_RECORD_DIR = EDGE_RUNTIME_DIR / 'recordings'
 EDGE_LOG_DIR = EDGE_RUNTIME_DIR / 'logs'
 log = logging.getLogger('camera.lifecycle')
 # Mirrors APLStation._validated_auto_capture, for a runtime with no station.
-AUTO_CAPTURE_DEFAULTS = {'enabled': False, 'fps': 5.0, 'required_hits': 2, 'timeout_sec': 0.0}
+AUTO_CAPTURE_DEFAULTS = {'enabled': False, 'fps': 5.0, 'required_hits': 2, 'timeout_sec': 0.0,
+                         'timeout_action': 'not_matched'}
 
 
 def _new_auto_state() -> Dict[str, Any]:
@@ -2321,6 +2322,7 @@ class EdgeRuntime:
             'fps': float(cfg.get('fps', 5.0)),
             'required_hits': int(cfg.get('required_hits', 2)),
             'timeout_sec': float(cfg.get('timeout_sec', 0.0)),
+            'timeout_action': str(cfg.get('timeout_action', 'not_matched')),
             'threshold': threshold,
             'hits': int(self._auto['hits']),
             'score': self._auto['score'],
@@ -2442,6 +2444,7 @@ class EdgeRuntime:
         threshold = config.get('threshold', 0.8) if isinstance(config, dict) else None
         return {'armed': True, 'elapsed': float(self._auto['elapsed'] or 0.0),
                 'timeout_sec': float(cfg.get('timeout_sec', 0.0)),
+                'timeout_action': str(cfg.get('timeout_action', 'not_matched')),
                 'hits': int(self._auto['hits']),
                 'required_hits': int(cfg.get('required_hits', 2)),
                 'score': self._auto['score'], 'threshold': threshold}
@@ -2507,12 +2510,14 @@ class EdgeRuntime:
                 # One timeout attempt per cycle. The operator restarts the probe
                 # with the button, which clears suspended_cycle in inspect_frame.
                 self._auto['suspended_cycle'] = cycle_id
-                self._start_auto_commit(frame, station, cycle_id, 'timeout')
+                self._start_auto_commit(frame, station, cycle_id, 'timeout',
+                                        timeout_pass=cfg.get('timeout_action') == 'pass')
         except Exception as exc:
             log.exception('Automatic capture probe failed')
             self._auto.update(armed=False, hits=0, reason='probe_error', error=str(exc))
 
-    def _start_auto_commit(self, frame, station, cycle_id, trigger: str) -> None:
+    def _start_auto_commit(self, frame, station, cycle_id, trigger: str,
+                           timeout_pass: bool = False) -> None:
         """Hand the probed frame to a short-lived worker. The evidence write holds
         station.frame_lock and fsyncs SQLite, and inspect_snapshot may raise, so
         neither belongs on the camera thread."""
@@ -2522,11 +2527,14 @@ class EdgeRuntime:
                   'auto_capture_trigger': trigger,
                   'auto_capture_hits': int(self._auto['hits']),
                   'auto_capture_elapsed': round(float(self._auto['elapsed']), 3)}
+        if timeout_pass:
+            # Spelled out in the evidence: this unit closed on the clock, not on a match.
+            source['auto_capture_timeout_action'] = 'pass'
         snapshot = frame.copy()
 
         def commit():
             try:
-                result = self.inspect_frame(snapshot, source)
+                result = self.inspect_frame(snapshot, source, timeout_pass=timeout_pass)
                 if result.get('success'):
                     state = result.get('station') or {}
                     self._auto['last_commit'] = {
@@ -2534,6 +2542,7 @@ class EdgeRuntime:
                         'result': state.get('result'),
                         'state': state.get('state'),
                         'attempt_id': (result.get('attempt') or {}).get('attempt_id'),
+                        'timeout_pass': timeout_pass,
                         'at': time.time()}
                     self._auto['error'] = ''
                 else:
@@ -2554,7 +2563,7 @@ class EdgeRuntime:
         self._auto_thread = thread
         thread.start()
 
-    def inspect_frame(self, frame, source_context=None) -> Dict[str, Any]:
+    def inspect_frame(self, frame, source_context=None, timeout_pass=False) -> Dict[str, Any]:
         with self.lock:
             station = self.station
         if station is None:
@@ -2565,7 +2574,7 @@ class EdgeRuntime:
         generation = getattr(self, '_camera_generation', 0)
         cancelled = (lambda: self.stop_event.is_set() or generation != self._camera_generation) if source.get('mode') == 'camera' else None
         result = station.inspect_snapshot(frame, source=source, quality=self.cfg.snapshot_quality,
-                                          cancelled=cancelled)
+                                          cancelled=cancelled, timeout_pass=timeout_pass)
         if cancelled is not None and cancelled():
             return {'success': False, 'error': 'Camera stopped during inspection'}
         if result.get('success'):

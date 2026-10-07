@@ -142,7 +142,7 @@ class APLStation:
         raw = self.config.get("auto_capture") or {}
         if not isinstance(raw, dict):
             raise ValueError("auto_capture must be an object")
-        unknown = set(raw) - {"enabled", "fps", "required_hits", "timeout_sec"}
+        unknown = set(raw) - {"enabled", "fps", "required_hits", "timeout_sec", "timeout_action"}
         if unknown:
             raise ValueError("auto_capture has unsupported keys: " + ", ".join(sorted(unknown)))
         enabled = raw.get("enabled", False)
@@ -164,7 +164,13 @@ class APLStation:
         # Zero means the probe never gives up on its own.
         if timeout != 0.0 and not 1.0 <= timeout <= 600.0:
             raise ValueError("auto_capture.timeout_sec must be 0 or between 1 and 600 seconds")
-        return {"enabled": enabled, "fps": fps, "required_hits": hits, "timeout_sec": timeout}
+        action = raw.get("timeout_action", "not_matched")
+        if action not in {"not_matched", "pass"}:
+            raise ValueError("auto_capture.timeout_action must be 'not_matched' or 'pass'")
+        if action == "pass" and timeout == 0.0:
+            raise ValueError("auto_capture.timeout_action 'pass' needs a non-zero timeout_sec")
+        return {"enabled": enabled, "fps": fps, "required_hits": hits,
+                "timeout_sec": timeout, "timeout_action": action}
 
     @staticmethod
     def _validated_number(key, value, low, high):
@@ -929,7 +935,8 @@ class APLStation:
                 snapshot = self._snapshot()
             return self._frame_result(frame, snapshot)
 
-    def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None):
+    def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None,
+                         timeout_pass=False):
         with self.lock:
             if cancelled is not None and cancelled():
                 return self._reply('Camera stopped before inspection')
@@ -959,23 +966,33 @@ class APLStation:
                         or self.state != "JUDGING" or (cancelled is not None and cancelled())):
                     return self._reply("Inspection result was discarded because the cycle changed")
                 accepted = bool(match.get("accepted"))
+                # auto_capture.timeout_action='pass' closes the unit when the probe
+                # ran out of time. The real matcher verdict is kept verbatim and
+                # flagged, so neither the journal, the evidence nor the history can
+                # be read as a genuine visual match.
+                auto_pass = bool(timeout_pass) and not accepted
+                if auto_pass:
+                    match = {**match, "timeout_auto_pass": True}
+                passed = accepted or auto_pass
                 self.matching = match
-                self.result = "PASS" if accepted else "NOT_MATCHED"
-                self.state = "PASS_CONFIRM" if accepted else "NOT_MATCHED"
-                self.step_index = 1 if accepted else 0
-                self.completed_at = time.time() if accepted else None
-                self.step_times = [self.completed_at] if accepted else []
+                self.result = "PASS" if passed else "NOT_MATCHED"
+                self.state = "PASS_CONFIRM" if passed else "NOT_MATCHED"
+                self.step_index = 1 if passed else 0
+                self.completed_at = time.time() if passed else None
+                self.step_times = [self.completed_at] if passed else []
                 snapshot = self._snapshot()
                 result_frame = self.matcher.draw(frame, snapshot)
                 try:
                     attempt = self.evidence.save_attempt(
                         cycle_id=cycle_id, sn=sn, mcio_sn=mcio_sn,
-                        visual_result="OK" if accepted else "NOT_MATCHED",
+                        visual_result="OK" if accepted else "TIMEOUT_PASS" if auto_pass else "NOT_MATCHED",
                         raw_frame=frame, result_frame=result_frame, matching=match,
                         source=source, quality=quality,
                     )
-                    self._save("INSPECTION_OK" if accepted else "INSPECTION_NOT_MATCHED",
-                               {"attempt_id": attempt["attempt_id"], "reason": match.get("reason")})
+                    self._save("INSPECTION_OK" if accepted else "INSPECTION_TIMEOUT_PASS" if auto_pass
+                               else "INSPECTION_NOT_MATCHED",
+                               {"attempt_id": attempt["attempt_id"], "reason": match.get("reason"),
+                                "timeout_auto_pass": auto_pass})
                 except Exception as exc:
                     self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
                     self.last_error = "Inspection evidence could not be saved: " + str(exc)

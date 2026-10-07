@@ -3,7 +3,8 @@ OpenCV draw path and the QTI/Cairo one, which share overlay_commands."""
 
 import unittest
 
-from workflow_view import (AUTO_PHASE_LABELS, PHASE_LABELS, auto_capture_line,
+from workflow_view import (AMBER, AUTO_PHASE_LABELS, GREEN, PHASE_LABELS,
+                           TIMEOUT_PASS_LABEL, auto_capture_line,
                            auto_capture_remaining, overlay_commands, workflow_view)
 
 
@@ -83,6 +84,18 @@ class AutoCaptureOverlayTests(unittest.TestCase):
                 # Disarmed, the original wording comes back.
                 self.assertEqual(workflow_view({**payload, 'auto_capture': {'armed': False}})['phase'],
                                  PHASE_LABELS[phase])
+
+    def test_an_auto_passed_unit_is_labelled_as_such_not_as_an_ok(self):
+        payload = {**state(), 'state': 'PASS_CONFIRM'}
+        self.assertEqual(workflow_view(payload)['phase'], PHASE_LABELS['PASS_CONFIRM'])
+        payload['matching'] = {**payload['matching'], 'timeout_auto_pass': True}
+        view = workflow_view(payload)
+        self.assertEqual(view['phase'], TIMEOUT_PASS_LABEL)
+        self.assertIn('NOT visually matched', view['phase'])
+        # Amber, not the green a genuine match earns.
+        self.assertEqual(view['accent'], AMBER)
+        self.assertNotEqual(view['accent'], GREEN)
+        self.assertTrue(view['phase'].isascii())
 
     def test_an_overlay_with_no_auto_block_is_unchanged(self):
         """Every legacy caller - scripts/image_match_test.py, the offline video

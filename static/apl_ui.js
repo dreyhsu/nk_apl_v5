@@ -45,10 +45,12 @@ function step4RecoveryText(detail,timedOut){
   return STEP4_RETRY_GUIDANCE;
 }
 
+function autoTimeoutSeconds(){return Math.round(Number(lastStatus.auto_capture?.timeout_sec||0))}
 function fmtScore(value){return value===null||value===undefined||value===''||!Number.isFinite(Number(value))?'—':Number(value).toFixed(2)}
 function autoCaptureText(auto){
   const left=Number(auto.timeout_sec)>0?' · '+Math.max(0,Math.round(Number(auto.timeout_sec)-Number(auto.elapsed||0)))+'s left':'';
-  return `Auto-inspecting… score ${fmtScore(auto.score)} / ${fmtScore(auto.threshold)} · hit ${auto.hits||0}/${auto.required_hits||1}${left}`;
+  const onTimeout=Number(auto.timeout_sec)>0&&auto.timeout_action==='pass'?' · auto-pass on timeout':'';
+  return `Auto-inspecting… score ${fmtScore(auto.score)} / ${fmtScore(auto.threshold)} · hit ${auto.hits||0}/${auto.required_hits||1}${left}${onTimeout}`;
 }
 
 function step4BlockedGuidance(station){
@@ -291,7 +293,8 @@ function renderStation(station){
   const commit=lastStatus.auto_capture?.last_commit;
   if(commit?.attempt_id&&commit.attempt_id!==autoCommitSeen){
     autoCommitSeen=commit.attempt_id;
-    if(commit.trigger==='timeout')message('Not matched after '+Math.round(Number(lastStatus.auto_capture?.timeout_sec||0))+'s. Adjust the product, then select Capture & Inspect to resume.','warn');
+    if(commit.trigger==='timeout'&&commit.result==='PASS')message('No visual match in '+autoTimeoutSeconds()+'s. Auto-passed by configuration (timeout_action=pass).','warn');
+    else if(commit.trigger==='timeout')message('Not matched after '+autoTimeoutSeconds()+'s. Adjust the product, then select Capture & Inspect to resume.','warn');
     else if(commit.result!=='PASS')message('Not matched. Adjust the product and capture again.','warn');
     else if(station?.can_confirm_result!==true){
       // Step4 is off, unconfigured, or this is test data: PASS_CONFIRM is the end
@@ -640,7 +643,10 @@ async function maybeAutoStep4(){
   if(autoStep4Cycle===station.cycle_id)return;
   autoStep4Cycle=station.cycle_id;autoStep4Busy=true;stationBusy=true;stationLocalError='';
   renderStation(station);
-  message(station?.dmz?.bypass?'Inspection OK. Closing this unit (SFIS bypass)...':'Inspection OK. Sending SFIS Step4...','ok');
+  // An auto-passed unit never matched, so it is never announced as an OK.
+  const autoPassed=lastStatus.auto_capture?.last_commit?.timeout_pass===true&&station.cycle_id===autoStep4Cycle;
+  if(autoPassed)message('Auto-passed on timeout, not visually matched. '+(station?.dmz?.bypass?'Closing this unit (SFIS bypass)...':'Sending SFIS Step4...'),'warn');
+  else message(station?.dmz?.bypass?'Inspection OK. Closing this unit (SFIS bypass)...':'Inspection OK. Sending SFIS Step4...','ok');
   try{await sendStep4(station)}
   catch(error){applyStep4Failure(error)}
   finally{autoStep4Busy=false;stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}
