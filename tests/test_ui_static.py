@@ -98,7 +98,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261007-1-step1-error-row', html)
+        self.assertIn('apl_ui.js?v=20261007-3-empno-switch-unlock', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -159,6 +159,18 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn('id="step2Error"', html)
         self.assertIn("step2Error", script)
 
+    def test_the_employee_number_is_never_gated_on_a_station_state(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        # Both the button's disabled flag AND the click handlers must be free of
+        # a state gate, or Switch operator renders enabled and silently no-ops
+        # exactly when it is needed most: a NO EMP Step1 rejection.
+        self.assertIn("const canEditOperator=freshStation&&!busy;", script)
+        for action in ('submitOperator', 'switchOperator'):
+            body = script.split('async function %s(){' % action, 1)[1].split('\n}', 1)[0]
+            self.assertIn("if(!stationFresh()||stationBusy||station?.request_in_flight)return;", body)
+            self.assertNotIn("WAITING_SN", body)
+
     def test_guided_steps_dim_without_disabling_terminate(self):
         root = Path(__file__).resolve().parents[1]
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
@@ -188,6 +200,30 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn("finally{stationBusy=false;await pollOnce();renderStation(lastStatus.station);syncScanFocus(lastStatus.station,true)}\n}\n\nasync function toggleBrowserVideo", script)
         self.assertIn("Ready for the next serial number.", script)
         self.assertIn('id="retryStep4"', html)
+
+    def test_automatic_capture_shows_live_feedback_and_closes_the_cycle(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        # A server-side capture never runs captureInspection, so the poll path sends Step4.
+        self.assertIn('async function maybeAutoStep4()', script)
+        self.assertIn('if(autoStep4Cycle===station.cycle_id)return;', script)
+        self.assertIn('maybeAutoStep4()', script)
+        self.assertIn('function autoCaptureText(auto)', script)
+        self.assertIn('const STATION_HINTS_AUTO=', script)
+        self.assertIn('lastStatus.auto_capture', script)
+        self.assertIn('Auto-inspecting\u2026', script)
+        # The match labels follow the live probe instead of sitting on UNKNOWN.
+        self.assertIn("autoLive?auto2.reason||'searching'", script)
+        self.assertIn('id="autoCaptureStatus"', html)
+        self.assertIn('.autoCaptureHint:empty{display:none}', html)
+        # One toast per automatic attempt, guarded by the committed attempt_id.
+        self.assertIn('commit.attempt_id!==autoCommitSeen', script)
+        self.assertIn("commit.trigger==='timeout'", script)
+        # The toast still clears itself after 4.2 seconds; nobody touched it.
+        self.assertIn("setTimeout(()=>x.className='toast',4200)", html)
+        # The manual button stays an override and is never disabled by the probe.
+        self.assertIn("$('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;", script)
 
     def test_step4_failures_tell_the_operator_what_to_do(self):
         root = Path(__file__).resolve().parents[1]

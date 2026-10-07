@@ -288,6 +288,21 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(checks[-1][1]["emp_no"], "TW031561")
         self.assertIn("OPERATOR_CHANGED", self.events())
 
+    def test_a_retry_scan_before_the_new_employee_number_is_refused(self):
+        # Switch operator clears the empNo; a HID scan arriving before the new
+        # number is signed in must not spend another doomed Step1.
+        self.transport.fail_message = "SFIS business validation failed: FAIL1, NO EMP"
+        self.station.scan("K2V5-001")
+        self.station.clear_operator()
+        self.transport.fail_message = None
+        reply = self.station.scan("K2V5-001")
+        self.assertFalse(reply["success"])
+        self.assertIn("Enter an operator employee number", reply["error"])
+        self.assertEqual(len([c for c in self.transport.calls if c[0] == "/sn/check"]), 1)
+        # Signing the new number in reopens the retry.
+        self.station.set_operator("TW031561")
+        self.assertTrue(self.station.scan("K2V5-001")["success"])
+
     def test_terminate_is_refused_while_step1_is_in_flight_but_operator_is_not(self):
         inside = {}
 

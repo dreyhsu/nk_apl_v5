@@ -140,6 +140,21 @@ class StationAPITests(unittest.TestCase):
         self.assertEqual(response.json['product_id'], 1)
         self.assertEqual(response.headers['Cache-Control'].split(',')[0], 'no-store')
 
+    def test_status_passes_the_automatic_capture_telemetry_through(self):
+        """The dashboard reads lastStatus.auto_capture straight off this payload,
+        so the runtime block has to survive the station/sop/stream merge."""
+        self.edge.status.return_value = {
+            'running': True, 'last_frame_at': None,
+            'auto_capture': {'enabled': True, 'armed': True, 'reason': 'accepted',
+                             'score': 0.72, 'threshold': 0.8, 'hits': 1,
+                             'required_hits': 2, 'timeout_sec': 20.0, 'elapsed': 3.5},
+        }
+        response = self.client.get('/api/edge/status')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['auto_capture']['armed'], True)
+        self.assertEqual(response.json['auto_capture']['score'], 0.72)
+        self.assertEqual(response.json['auto_capture']['required_hits'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

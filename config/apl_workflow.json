@@ -7,6 +7,12 @@
   "threshold": 0.8,
   "min_gap": 0.05,
   "stable_frames": 2,
+  "auto_capture": {
+    "enabled": true,
+    "fps": 5.0,
+    "required_hits": 2,
+    "timeout_sec": 20.0
+  },
   "method": "TM_CCOEFF_NORMED",
   "template_root": "../templates",
   "target_state": "50_COVER_CLOSED_CARD_PRESENT",

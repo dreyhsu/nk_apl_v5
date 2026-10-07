@@ -12,7 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from apl_matching import APLMatcher, UNKNOWN
+from apl_matching import APLMatcher, StableStateFilter, UNKNOWN
 
 
 class MatchingTests(unittest.TestCase):
@@ -51,6 +51,18 @@ class MatchingTests(unittest.TestCase):
     def test_wrong_resolution_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "dimensions"):
             self.matcher.evaluate(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+
+class StableStateFilterTests(unittest.TestCase):
+    def test_stable_state_filter_latches_and_never_clears(self):
+        """Why the automatic capture probe counts consecutive accepts itself: this
+        filter only ever writes self.stable, so once it latches the target state a
+        later UNKNOWN frame still reads as a match."""
+        f = StableStateFilter(2)
+        self.assertEqual(f.update("50_COVER_CLOSED_CARD_PRESENT"), UNKNOWN)
+        self.assertEqual(f.update("50_COVER_CLOSED_CARD_PRESENT"), "50_COVER_CLOSED_CARD_PRESENT")
+        self.assertEqual(f.update(UNKNOWN), "50_COVER_CLOSED_CARD_PRESENT")
+        self.assertEqual(f.update(UNKNOWN), UNKNOWN)
 
 
 if __name__ == "__main__":

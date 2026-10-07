@@ -15,7 +15,12 @@ from edge_runtime import EdgeRuntime
 
 
 class SnapshotMatcher:
+    def __init__(self):
+        # Lets a test prove the automatic probe ran without writing anything.
+        self.calls = 0
+
     def evaluate_snapshot(self, frame):
+        self.calls += 1
         accepted = int(frame[0, 0, 0]) == 1
         return {
             "raw": "50_COVER_CLOSED_CARD_PRESENT" if accepted else "UNKNOWN",
@@ -280,6 +285,246 @@ class GoldenSampleDecisionTests(unittest.TestCase):
             with self.subTest(folder=folder):
                 result = self.matcher.evaluate_snapshot(self.sample_frame(folder))
                 self.assertFalse(result["accepted"], result)
+
+
+class AutoCaptureProbeTests(unittest.TestCase):
+    """Continuous template matching: the probe writes nothing until a frame is
+    accepted, and the frame it accepts is committed through inspect_frame."""
+
+    # Comfortably wider than the 1/fps probe period, so float drift in this fake
+    # clock can never skip a window and make a count assertion flaky.
+    STEP = 0.5
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = self.root / "workflow.json"
+        self.transport = Transport()
+        self.matcher = SnapshotMatcher()
+        self.station = None
+
+    def build(self, **auto):
+        """A station parked in WAITING_CAPTURE, plus a runtime carrying only the
+        fields _auto_capture_tick and inspect_frame actually touch."""
+        payload = {
+            "station_id": "TEST", "inspection_mode": "single_snapshot_cover_card",
+            "target_state": "50_COVER_CLOSED_CARD_PRESENT",
+            "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED",
+                      "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
+            "template_root": "templates", "station_mode": "remote",
+            "dmz": {"mode": "http"}, "sn_prefix": "K2V5", "mcio_sn_prefix": "APL",
+        }
+        if auto:
+            payload["auto_capture"] = auto
+        self.config.write_text(json.dumps(payload), encoding="utf-8")
+        self.station = APLStation(self.config, self.root / "data",
+                                  transport=self.transport, matcher=self.matcher)
+        self.addCleanup(self.station.close)
+        self.station.set_operator("OP-AUTO")
+        self.station.scan("K2V5-001")
+        scanned = self.station.scan("APL-001")
+        self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
+
+        runtime = EdgeRuntime.__new__(EdgeRuntime)
+        runtime.lock = threading.RLock()
+        runtime.station = self.station
+        runtime.cfg = SimpleNamespace(snapshot_quality=92, preview_quality=80)
+        runtime.latest_result = None
+        runtime.latest_result_jpeg = b""
+        runtime.frame_pass = False
+        runtime.verdict = "WAIT"
+        runtime.last_infer_at = None
+        runtime.infer_seq = 0
+        runtime.frame_seq = 7
+        runtime.stop_event = threading.Event()
+        runtime._stopping = False
+        runtime._release_failed = False
+        runtime._camera_generation = 0
+        runtime.video_trace = None
+        return runtime
+
+    @staticmethod
+    def frame(accepted):
+        return np.full((8, 8, 3), 1 if accepted else 0, dtype=np.uint8)
+
+    def tick(self, runtime, accepted, now, backend_status=None):
+        """One inference slot, then wait out any commit the probe started."""
+        runtime._auto_capture_tick(self.frame(accepted), self.station.status(),
+                                   backend_status or {}, now)
+        thread = runtime._auto_thread
+        if thread is not None:
+            thread.join(timeout=5.0)
+            self.assertFalse(thread.is_alive(), "automatic commit did not finish")
+
+    def attempts(self):
+        return int(self.station.status()["attempt_count"])
+
+    def evidence_files(self):
+        root = self.root / "data" / "evidence"
+        return sorted(p.name for p in root.rglob("*") if p.is_file()) if root.exists() else []
+
+    def assert_disarmed_with_an_accepted_frame(self, runtime, reason, backend_status=None):
+        self.tick(runtime, True, 0.0, backend_status=backend_status)
+        auto = runtime._auto_capture_status()
+        self.assertEqual(self.attempts(), 0)
+        self.assertFalse(auto["armed"])
+        self.assertEqual(auto["reason"], reason)
+        self.assertEqual(self.matcher.calls, 0)
+
+    def test_probe_never_writes_evidence_while_rejecting(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2)
+        for index in range(20):
+            self.tick(runtime, False, self.STEP * index)
+        auto = runtime._auto_capture_status()
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(self.evidence_files(), [])
+        self.assertEqual(self.station.status()["state"], "WAITING_CAPTURE")
+        self.assertEqual(auto["hits"], 0)
+        self.assertTrue(auto["armed"])
+        self.assertEqual(auto["score"], 0.40)
+        self.assertEqual(self.matcher.calls, 20)
+
+    def test_probe_commits_one_attempt_on_the_required_consecutive_accepts(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2)
+        self.tick(runtime, True, 0.0)
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(runtime._auto["hits"], 1)
+        self.tick(runtime, True, self.STEP)
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.station.status()["state"], "PASS_CONFIRM")
+        for index in range(2, 12):
+            self.tick(runtime, True, self.STEP * index)
+        self.assertEqual(self.attempts(), 1)
+        auto = runtime._auto_capture_status()
+        self.assertFalse(auto["armed"])
+        self.assertEqual(auto["reason"], "state:PASS_CONFIRM")
+        self.assertEqual(auto["last_commit"]["trigger"], "accepted")
+
+    def test_a_reject_between_accepts_resets_the_hit_counter(self):
+        """StableStateFilter latches its stable state forever, so the probe has to
+        count consecutive accepts itself."""
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2)
+        for index, accepted in enumerate((True, False, True)):
+            self.tick(runtime, accepted, self.STEP * index)
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(runtime._auto["hits"], 1)
+        self.assertEqual(self.station.status()["state"], "WAITING_CAPTURE")
+
+    def test_timeout_commits_one_not_matched_attempt_then_stops(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)
+        self.tick(runtime, False, 0.0)
+        self.assertEqual(self.attempts(), 0)
+        self.tick(runtime, False, 5.0)
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.station.status()["state"], "NOT_MATCHED")
+        self.assertEqual(self.station.status()["result"], "NOT_MATCHED")
+        for index in range(10):
+            self.tick(runtime, False, 6.0 + index)
+        self.assertEqual(self.attempts(), 1)
+        auto = runtime._auto_capture_status()
+        self.assertFalse(auto["armed"])
+        self.assertEqual(auto["reason"], "timeout_stopped")
+        self.assertTrue(auto["suspended"])
+        self.assertEqual(auto["last_commit"]["trigger"], "timeout")
+
+    def test_a_manual_capture_resumes_automatic_inspection_after_a_timeout(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)
+        self.tick(runtime, False, 0.0)
+        self.tick(runtime, False, 5.0)
+        self.assertEqual(self.attempts(), 1)
+        # The operator presses the button; the product is still not seated right.
+        manual = runtime.inspect_frame(self.frame(False), {"mode": "camera"})
+        self.assertTrue(manual["success"])
+        self.assertEqual(self.attempts(), 2)
+        self.assertFalse(runtime._auto_capture_status()["suspended"])
+        self.tick(runtime, True, 10.0)
+        self.tick(runtime, True, 11.0)
+        self.assertEqual(self.attempts(), 3)
+        self.assertEqual(self.station.status()["state"], "PASS_CONFIRM")
+
+    def test_auto_capture_stays_disarmed_in_browser_test_mode(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        self.station.set_test_mode(True)
+        self.assert_disarmed_with_an_accepted_frame(runtime, "test_mode")
+
+    def test_auto_capture_stays_disarmed_while_replaying_a_video_trace(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        runtime.video_trace = []
+        self.assert_disarmed_with_an_accepted_frame(runtime, "video_trace")
+
+    def test_auto_capture_stays_disarmed_while_the_camera_is_stopping(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        runtime.stop_event.set()
+        self.assert_disarmed_with_an_accepted_frame(runtime, "stopping")
+
+    def test_auto_capture_stays_disarmed_on_a_file_source(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        self.assert_disarmed_with_an_accepted_frame(runtime, "file_source",
+                                                   backend_status={"is_file": True})
+
+    def test_auto_capture_is_disabled_by_default(self):
+        runtime = self.build()
+        self.assertFalse(self.station.auto_capture["enabled"])
+        for index in range(5):
+            self.tick(runtime, True, self.STEP * index)
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(self.matcher.calls, 0)
+        self.assertEqual(runtime._auto_capture_status()["reason"], "disabled")
+
+    def test_evidence_records_the_automatic_capture(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        cycle_id = self.station.status()["cycle_id"]
+        self.tick(runtime, True, 0.0)
+        attempt = self.station.history_detail(cycle_id)["attempts"][0]
+        self.assertEqual(attempt["visual_result"], "OK")
+        self.assertTrue(attempt["source"]["auto_capture"])
+        self.assertEqual(attempt["source"]["auto_capture_trigger"], "accepted")
+        self.assertEqual(attempt["source"]["captured_from_frame_seq"], 7)
+        # History filtering keys off the mode, which has to stay 'camera'.
+        self.assertEqual(attempt["source"]["mode"], "camera")
+        payload = json.loads(
+            self.station.resolve_evidence(attempt["json_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(payload["source"]["auto_capture"])
+        self.assertEqual(payload["matching"]["reason"], "accepted")
+
+    def test_a_probe_exception_never_reaches_the_camera_loop(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+
+        def boom(frame):
+            raise RuntimeError("template root vanished")
+
+        self.station.matcher = SimpleNamespace(evaluate_snapshot=boom,
+                                               draw=SnapshotMatcher.draw)
+        self.tick(runtime, True, 0.0)
+        auto = runtime._auto_capture_status()
+        self.assertEqual(auto["reason"], "probe_error")
+        self.assertIn("template root vanished", auto["error"])
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(self.station.status()["state"], "WAITING_CAPTURE")
+
+    def test_the_overlay_shows_live_probe_scores_without_polluting_the_evidence(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2)
+        self.tick(runtime, False, 0.0)
+        self.assertEqual(self.station.preview_matching["score"], 0.40)
+        # What the station reports as its own match - and therefore journals and
+        # saves as evidence - stays untouched.
+        self.assertEqual(self.station.status()["matching"]["raw"], "UNKNOWN")
+        self.assertEqual(self.station.status()["matching"]["class_scores"], {})
+        # The overlay draw path, though, sees the live scores.
+        results = self.station.process_frame(self.frame(False))[2]
+        self.assertEqual([row["score"] for row in results], [0.40])
+
+    def test_a_committed_attempt_clears_the_overlay_preview(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)
+        self.tick(runtime, False, 0.0)
+        self.assertIsNotNone(self.station.preview_matching)
+        self.tick(runtime, False, 5.0)
+        self.assertEqual(self.attempts(), 1)
+        # The saved NOT_MATCHED result owns the overlay now, not the last probe.
+        self.assertIsNone(self.station.preview_matching)
+        self.assertIsNone(runtime._auto["last_match"])
+        self.assertEqual(self.station.status()["matching"]["reason"], "below_threshold")
 
 
 if __name__ == "__main__":

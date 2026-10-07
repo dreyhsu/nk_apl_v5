@@ -59,6 +59,7 @@ class APLStation:
         self.matcher_error = ""
         self.storage_error = ""
         self.filter = StableStateFilter(self.config.get("stable_frames", 2))
+        self.auto_capture = self._validated_auto_capture()
         self.local_mode = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else local_mode
         self.test_mode = bool(test_mode)
         self.transport = None if self.local_mode else transport or DMZClient(dmz_config)
@@ -91,6 +92,9 @@ class APLStation:
         self.cycle_fingerprints = None
         self.cycle_station_id = None
         self.matching = self._empty_matching()
+        # Live probe scores for the overlay only. Never journaled, never saved as
+        # evidence, and never part of _snapshot() - see set_preview_matching.
+        self.preview_matching = None
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(self.data_dir / "station.sqlite3"), check_same_thread=False, timeout=10)
@@ -129,6 +133,52 @@ class APLStation:
         if len(value) >= max(1, int(self.config.get(max_key, default_max))):
             raise ValueError(key + " must be shorter than " + max_key)
         return value
+
+    def _validated_auto_capture(self):
+        """Continuous template matching settings. Everything defaults to off so a
+        config without the block keeps the operator-triggered Capture & Inspect."""
+        raw = self.config.get("auto_capture") or {}
+        if not isinstance(raw, dict):
+            raise ValueError("auto_capture must be an object")
+        unknown = set(raw) - {"enabled", "fps", "required_hits", "timeout_sec"}
+        if unknown:
+            raise ValueError("auto_capture has unsupported keys: " + ", ".join(sorted(unknown)))
+        enabled = raw.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValueError("auto_capture.enabled must be a boolean (true/false)")
+        # A legacy-workflow station is not refused here: the same config file is
+        # reused with inspection_mode overridden, and the probe's own arming check
+        # reports 'not_snapshot_mode' before it does any matching work.
+        fps = self._validated_number("auto_capture.fps", raw.get("fps", 5.0), 0.1, 30.0)
+        hits = raw.get("required_hits", self.config.get("stable_frames", 2))
+        if isinstance(hits, bool) or not isinstance(hits, int):
+            raise ValueError("auto_capture.required_hits must be a whole number")
+        if not 1 <= hits <= 30:
+            raise ValueError("auto_capture.required_hits must be between 1 and 30")
+        timeout = raw.get("timeout_sec", 0.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError("auto_capture.timeout_sec must be a number")
+        timeout = float(timeout)
+        # Zero means the probe never gives up on its own.
+        if timeout != 0.0 and not 1.0 <= timeout <= 600.0:
+            raise ValueError("auto_capture.timeout_sec must be 0 or between 1 and 600 seconds")
+        return {"enabled": enabled, "fps": fps, "required_hits": hits, "timeout_sec": timeout}
+
+    @staticmethod
+    def _validated_number(key, value, low, high):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(key + " must be a number")
+        value = float(value)
+        if not low <= value <= high:
+            raise ValueError("%s must be between %g and %g" % (key, low, high))
+        return value
+
+    def set_preview_matching(self, match):
+        """Publish one live probe result for the overlay. It reaches draw() through
+        _frame_result only, so self.matching - which feeds the journal detail, the
+        evidence JSON and attempts.matching_json - is never touched."""
+        with self.lock:
+            self.preview_matching = dict(match) if match else None
 
     def _serial_prefix(self, which):
         # Prefix rules are a snapshot-mode operator aid; legacy serials stay free-form.
@@ -552,6 +602,10 @@ class APLStation:
             # must not dedupe it against the first attempt) and re-send Step1.
             # This must precede the duplicate guard below, which would otherwise
             # swallow the re-scan as a silent success.
+            if self._operator_required() and not self.operator:
+                # Switch operator clears the empNo; a HID scan that arrives
+                # before the new one is signed in would only earn another NO EMP.
+                return self._reply("Enter an operator employee number before scanning"), None
             self.sn_request_id = uuid.uuid4().hex
             self.last_error = ""
             self._save("SN_RESCANNED_FOR_STEP1_RETRY",
@@ -813,6 +867,12 @@ class APLStation:
                 self._save("STEP_COMPLETED", {"step": stable, "step_index": self.step_index})
 
     def _frame_result(self, frame, snapshot):
+        # While the automatic probe is running the station has no committed match
+        # yet, so the overlay would freeze on UNKNOWN. Draw the live probe scores
+        # instead, on this throwaway copy of the snapshot only.
+        if (self.snapshot_mode and self.preview_matching
+                and snapshot.get("state") in {"WAITING_CAPTURE", "NOT_MATCHED"}):
+            snapshot = {**snapshot, "matching": self.preview_matching}
         vis = self.matcher.draw(frame, snapshot) if hasattr(self.matcher, "draw") else frame
         accepted = snapshot["matching"]["raw"]
         results = [{"label": name, "score": score, "pass": name == accepted,

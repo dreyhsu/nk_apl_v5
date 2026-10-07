@@ -286,5 +286,64 @@ class StationTests(unittest.TestCase):
         self.assertTrue(self.station.scan("SHORT-1")["success"])
 
 
+class AutoCaptureConfigTests(unittest.TestCase):
+    """auto_capture is an additive, default-off switch: a config without it keeps
+    the operator-triggered Capture & Inspect exactly as it was."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = self.root / "workflow.json"
+
+    def station(self, auto=None, snapshot=True):
+        payload = {"steps": STEPS, "stable_frames": 2, "template_root": "templates",
+                   "dmz": {"mode": "disabled"},
+                   "target_state": "50_COVER_CLOSED_CARD_PRESENT"}
+        if snapshot:
+            payload["inspection_mode"] = "single_snapshot_cover_card"
+        if auto is not None:
+            payload["auto_capture"] = auto
+        self.config.write_text(json.dumps(payload))
+        station = APLStation(self.config, self.root / "data",
+                             transport=FakeTransport(), matcher=FakeMatcher())
+        self.addCleanup(station.close)
+        return station
+
+    def test_auto_capture_defaults_to_disabled_when_absent(self):
+        station = self.station()
+        self.assertEqual(station.auto_capture, {"enabled": False, "fps": 5.0,
+                                                "required_hits": 2, "timeout_sec": 0.0})
+
+    def test_required_hits_falls_back_to_stable_frames(self):
+        station = self.station({"enabled": True})
+        self.assertTrue(station.auto_capture["enabled"])
+        self.assertEqual(station.auto_capture["required_hits"], 2)
+        # Zero means the probe never gives up on its own.
+        self.assertEqual(station.auto_capture["timeout_sec"], 0.0)
+
+    def test_a_legacy_workflow_keeps_the_block_but_the_probe_refuses_to_arm(self):
+        """The shipped config file is reused with inspection_mode overridden, so
+        construction must not fail; EdgeRuntime reports 'not_snapshot_mode'."""
+        station = self.station({"enabled": True}, snapshot=False)
+        self.assertFalse(station.snapshot_mode)
+        self.assertTrue(station.auto_capture["enabled"])
+
+    def test_invalid_auto_capture_values_are_refused(self):
+        for auto in ({"enabled": "yes"},
+                     {"enabled": True, "fps": 0},
+                     {"enabled": True, "fps": 99},
+                     {"enabled": True, "required_hits": 0},
+                     {"enabled": True, "required_hits": 31},
+                     {"enabled": True, "required_hits": 2.5},
+                     {"enabled": True, "timeout_sec": -1},
+                     {"enabled": True, "timeout_sec": 0.5},
+                     {"enabled": True, "timeout_sec": 601},
+                     {"enabled": True, "poll_ms": 100}):
+            with self.subTest(auto=auto):
+                with self.assertRaises(ValueError):
+                    self.station(auto)
+
+
 if __name__ == "__main__":
     unittest.main()
