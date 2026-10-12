@@ -2499,14 +2499,20 @@ class EdgeRuntime:
             key = (cycle_id, station_state.get('attempt_count', 0))
             if key != self._auto['key']:
                 self._auto.update(key=key, hits=0, score=None, best_score=None,
-                                  window_started=now, elapsed=0.0, next_probe=0.0, error='')
+                                  window_started=None, elapsed=0.0, next_probe=0.0, error='')
             blocked = self._auto_capture_blocked(station, station_state, backend_status,
                                                  cfg, cycle_id)
             if blocked:
                 self._auto_disarm(blocked, station)
                 return
+            # The timeout window opens when the probe actually arms, not when the
+            # key changed: cycle_id is stamped at the product SN scan, so a window
+            # started there would already have burnt the SFIS Step1 round trip and
+            # the operator's MCIO scan before capture even opened.
             started = self._auto['window_started']
-            self._auto.update(armed=True, elapsed=now - (now if started is None else started))
+            if started is None:
+                started = self._auto['window_started'] = now
+            self._auto.update(armed=True, elapsed=now - started)
             # Throttled independently of infer_fps, which the operator can edit.
             if now < self._auto['next_probe']:
                 return
