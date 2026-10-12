@@ -1882,11 +1882,13 @@ class EdgeRuntime:
         with self.lock:
             if self._station_fault_thread and self._station_fault_thread.is_alive():
                 return {'success': False, 'error': 'Station interruption update is still pending'}
-            if self._stopping or self._release_failed or self._configuring or self._record_finalizing:
+            reopen = bool((self._cleanup_result or {}).get('reopen_eligible'))
+            if self._stopping or (self._release_failed and not reopen) or self._configuring or self._record_finalizing:
                 return {'success': False, 'error': self.last_error or 'Camera release is pending'}
             if self.thread and self.thread.is_alive():
                 return {'success': True, 'already_running': True, 'status': self.status()}
             self.stop_event.clear()
+            self._release_failed = False
             self._camera_generation += 1
             if self._pending_config is not None:
                 self.cfg = self._pending_config
@@ -1896,6 +1898,8 @@ class EdgeRuntime:
             self.status_text = 'STARTING'
             self.last_error = ''
             self.last_warning = ''
+            if reopen:
+                self.last_warning = 'Previous release failed; camera recovery may take about 40 seconds'
             # Do not present stale frames/FPS from the previous camera session as live.
             self.latest_raw = None
             self.latest_result = None
@@ -2214,8 +2218,18 @@ class EdgeRuntime:
                                       self._probe_process.pid, self.cfg.camera, release)
                 except OSError as exc:
                     errors.append(f'Recovery marker write failed: {exc}')
-            if software_release.get('recorder_null') is False:
-                release = {**release, 'safe': False, 'software_recorder_null': False}
+            recovery_was_eligible = release.get('reopen_eligible', False)
+            if not software_release.get('success', False) or software_release.get('recorder_null') is False:
+                release = {**release, 'safe': False, 'software_recorder_null': False, 'reopen_eligible': False}
+            if self._probe_process is not None or (auto_thread is not None and auto_thread.is_alive()):
+                release = {**release, 'reopen_eligible': False}
+            if recovery_was_eligible and not release.get('reopen_eligible'):
+                try:
+                    from camera_worker import _persist_recovery
+                    _persist_recovery('Runtime cleanup incomplete; reacquisition blocked',
+                                      release.get('session', 'runtime'), os.getpid(), self.cfg.camera, release)
+                except OSError as exc:
+                    errors.append(f'Recovery marker write failed: {exc}')
             if had_recording:
                 self._bump_media_version()
             self._release_inference()
@@ -2266,7 +2280,8 @@ class EdgeRuntime:
         storage = self._storage_status()
         with self.lock:
             running = bool(self.thread and self.thread.is_alive())
-            backend_status = self.backend.status() if self.backend is not None else {}
+            observed_backend = self._pending_backend or self.backend
+            backend_status = observed_backend.status() if observed_backend is not None else {}
             recording = self.soft_rec.active or bool(backend_status.get('recording'))
             return {
                 'running': running,
@@ -2277,6 +2292,8 @@ class EdgeRuntime:
                 'backend': self.actual_backend or backend_status.get('backend', ''),
                 'backend_status': backend_status,
                 'release': self._cleanup_result,
+                'reopen_available': bool(not running and not self._stopping
+                                         and (self._cleanup_result or {}).get('reopen_eligible')),
                 'frame_seq': self.frame_seq,
                 'infer_seq': self.infer_seq,
                 'source_fps': round(self.source_fps, 2),
