@@ -302,8 +302,11 @@ function renderStation(station){
       step4Recovery=step4BlockedGuidance(station);
       message('Inspection OK. This station cannot post Step4; terminate this inspection to finish.','warn');
     }
-    // A sendable PASS says nothing here: maybeAutoStep4 runs in this same tick and
-    // its own toast would overwrite one fired microseconds earlier.
+    // renderStation runs on the 800ms poll, maybeAutoStep4 on a separate 1s
+    // interval, so this one-shot token is normally spent on a tick that does not
+    // send Step4. Announce the pass here; the Step4 toasts follow and supersede it,
+    // exactly as they do on the manual path.
+    else message('Inspection OK.','ok');
   }
   const fresh=stationFresh()&&station?.status_stale!==true,available=!!station,freshStation=fresh&&available;
   const busy=stationBusy||!!station?.request_in_flight;
@@ -841,6 +844,14 @@ async function checkStreamFrames(){
   streamStatsBusy=true;const pc=streamPC,generation=streamGeneration;
   try{const stats=await pc.getStats();if(generation!==streamGeneration)return;stats.forEach(report=>{if(report.type==='inbound-rtp'&&(report.kind==='video'||report.mediaType==='video')){const frames=Number(report.framesDecoded||0);if(frames>streamDecodedFrames){streamDecodedFrames=frames;streamDecodedAt=Date.now();streamReady=$('liveVideo').readyState>=2&&!$('liveVideo').paused}}})}catch(_){}finally{streamStatsBusy=false;renderStreamStatus()}
 }
+// The passed unit stays announced on the viewer until the next SN is scanned: a
+// 4.2s toast is missable for an operator whose eyes are on the fixture.
+function passBanner(station){
+  const r=station?.last_result;
+  if(!r||station?.state!=='WAITING_SN'||r.result!=='PASS'||r.reason)return '';
+  return 'SN : '+(r.sn||'-')+' ; PASS'+(r.reported===false?'  (saved locally, SFIS not contacted)':'');
+}
+
 function renderStreamStatus(){
   const now=Date.now(),fresh=stationFresh();
   if(lastStatus.frame_seq!==undefined&&lastStatus.frame_seq!==streamFrameSeq){streamFrameSeq=lastStatus.frame_seq;streamFrameAt=now}
@@ -860,7 +871,11 @@ function renderStreamStatus(){
   else if(!browser&&streamReady&&!sourceFresh)label='Camera frames stopped updating.';
   else if(!browser&&streamReady&&!decodedFresh)label='Video playback stalled.';
   $('emptyText').textContent=label;$('liveBadge').textContent=visible?(browser?'VIDEO TEST':streamKind==='webrtc'?'LIVE':viewMode==='raw'?'RAW':'LIVE'):'NO VIDEO';$('liveBadge').className='badge '+(visible?'live':'warn');
-  $('streamWarning').textContent=visible?(browser?'Browser test mode: the video remains on this PC; only Capture & Inspect sends one image.':viewMode==='raw'?'Raw view does not include inspection overlays.':''):label;
+  const streamNote=visible?(browser?'Browser test mode: the video remains on this PC; only Capture & Inspect sends one image.':viewMode==='raw'?'Raw view does not include inspection overlays.':''):label;
+  // A real stream problem outranks the banner, so the result can never hide it.
+  const banner=streamNote?'':passBanner(lastStatus.station);
+  $('streamWarning').textContent=streamNote||banner;
+  $('streamWarning').className='streamWarning'+(banner?' pass':'');
 }
 
 $('flowStudioLink').href=APP_BASE+'/flow-studio';
