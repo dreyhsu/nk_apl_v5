@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import camera_worker
+import camera_recovery as recovery
 
 
 class CameraRecoveryTests(unittest.TestCase):
@@ -64,6 +65,58 @@ class CameraRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'cannot verify the current boot'):
             camera_worker._enforce_recovery_guard()
 
+class RecoveryTests(unittest.TestCase):
+    def evidence(self):
+        return dict(camera_null=False, camera_eos=True, callbacks_drained=True,
+                    recorder_null=None, recorder_finalized=None,
+                    camera_elements={'camsrc': {'current': 'ready', 'pending': 'null'},
+                                     'sink': {'current': 'null'}})
 
-if __name__ == '__main__':
-    unittest.main()
+    def test_only_confirmed_source_close_failure_is_eligible(self):
+        release = self.evidence()
+        self.assertTrue(recovery.release_eligible(release, True, False, True, 2, [[12, '1']]))
+        for key, value in [('camera_eos', False), ('callbacks_drained', False),
+                           ('recorder_null', False), ('recorder_finalized', False)]:
+            self.assertFalse(recovery.release_eligible({**release, key: value}, True, False, True, 2, [[12, '1']]))
+        self.assertFalse(recovery.release_eligible(release, True, True, True, 2, [[12, '1']]))
+        self.assertFalse(recovery.release_eligible(release, True, False, False, 2, [[12, '1']]))
+        self.assertFalse(recovery.release_eligible(release, True, False, True, 1, [[12, '1']]))
+
+    def test_marker_pair_requires_same_boot_session_and_unchanged_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / 'local.json', Path(directory) / 'shared.json']
+            record = dict(boot_id='boot', session='previous', pid=999999999,
+                          release=dict(self.evidence(), reopen_schema=1, camera_id=0, reopen_eligible=True,
+                                       worker_reaped=True, forced_exit=False, server_before=[[12, '1']],
+                                       worker_acknowledged=True, received_frames=2))
+            for path in paths:
+                path.write_text(json.dumps(record))
+            ticket = recovery.marker_ticket(paths, 'boot', 0)
+            with patch.object(recovery, 'server_identity', return_value=[[13, '2']]):
+                recovery.verify_ticket(ticket, paths, 'boot')
+                paths[1].write_text(json.dumps({**record, 'session': 'other'}))
+                with self.assertRaises(RuntimeError):
+                    recovery.verify_ticket(ticket, paths, 'boot')
+            with self.assertRaises(RuntimeError):
+                recovery.marker_ticket(paths, 'wrong-boot', 0)
+            with self.assertRaises(RuntimeError):
+                recovery.marker_ticket(paths, 'boot', 0)
+
+    def test_wait_is_condition_based_and_cancellable(self):
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        result = recovery.wait_replacement([[12, '1']], lambda: False, timeout=5,
+                   identity=lambda: [[13, '2']], clock=lambda: now[0], sleep=sleep)
+        self.assertEqual(result, [[13, '2']])
+        self.assertLess(now[0], 4)
+        with self.assertRaisesRegex(RuntimeError, 'cancelled'):
+            recovery.wait_replacement([], lambda: True)
+
+    def test_same_server_does_not_unlock_recovery(self):
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        with self.assertRaisesRegex(RuntimeError, 'timed out'):
+            recovery.wait_replacement([[12, '1']], lambda: False, timeout=1,
+                identity=lambda: [[12, '1']], clock=lambda: now[0], sleep=sleep)
