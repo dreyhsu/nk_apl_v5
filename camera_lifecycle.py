@@ -103,7 +103,8 @@ class CameraLifecycle:
                 return {'success': False, 'error': 'Application is shutting down'}
             if self.notification_pending or (self.operation and not self.operation['done'].is_set()):
                 return {'success': False, 'error': 'Camera or station cleanup is still pending'}
-            if self.operation and not self.operation['result'].get('safe', False):
+            if (self.operation and not self.operation['result'].get('safe', False)
+                    and not self.operation['result'].get('reopen_eligible', False)):
                 return {'success': False, 'error': 'Camera release is unconfirmed'}
             result = self.edge.start()
             if result.get('success'):

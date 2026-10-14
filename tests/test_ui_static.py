@@ -25,6 +25,11 @@ assert.equal($('cameraToggle').disabled,true);
 assert.equal($('snapshotBtn').disabled,true);
 assert.equal($('recordToggle').disabled,true);
 assert.match($('cameraHint').textContent,/unconfirmed/);
+renderStatus({status:'RELEASE_FAILED',running:false,reopen_available:true});
+assert.equal($('cameraToggle').disabled,false);
+assert.match($('cameraToggle').textContent,/Recover Camera/);
+assert.equal($('snapshotBtn').disabled,true);
+assert.equal($('recordToggle').disabled,true);
 renderStatus({status:'STOPPING',running:true,has_raw:true});
 assert.equal($('snapshotBtn').disabled,true);
 renderStatus({status:'LIVE',running:true,has_raw:true});
@@ -41,7 +46,7 @@ assert.equal($('recordToggle').disabled,true);
 assert.equal($('recordState').textContent,'FINALIZING');
 '''
         result = subprocess.run([shutil.which('node')], input=script, text=True,
-                                capture_output=True, timeout=10)
+                                capture_output=True, timeout=10, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_failed_camera_release_disables_camera_controls(self):
@@ -49,7 +54,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
         self.assertIn("status==='RELEASE_FAILED'||status==='ALARM')return'bad'", html)
         self.assertIn("cameraUnavailable=releaseFailed||status==='STOPPING'", html)
-        self.assertIn("camBtn.disabled=cameraBusy||cameraUnavailable", html)
+        self.assertIn("camBtn.disabled=cameraBusy||(cameraUnavailable&&!d.reopen_available)", html)
         self.assertIn("$('snapshotBtn').disabled=!hasFrame||cameraBusy||cameraUnavailable", html)
         self.assertIn('recBtn.disabled=!running||!hasFrame||recordBusy||cameraUnavailable', html)
 
