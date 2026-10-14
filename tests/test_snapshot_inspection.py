@@ -305,11 +305,9 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.matcher = SnapshotMatcher()
         self.station = None
 
-    def build(self, open_capture=True, **auto):
+    def build(self, **auto):
         """A station parked in WAITING_CAPTURE, plus a runtime carrying only the
-        fields _auto_capture_tick and inspect_frame actually touch. Pass
-        open_capture=False to stop before the MCIO scan, so a test can tick the
-        probe while capture is still closed."""
+        fields _auto_capture_tick and inspect_frame actually touch."""
         payload = {
             "station_id": "TEST", "inspection_mode": "single_snapshot_cover_card",
             "target_state": "50_COVER_CLOSED_CARD_PRESENT",
@@ -326,9 +324,8 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.addCleanup(self.station.close)
         self.station.set_operator("OP-AUTO")
         self.station.scan("K2V5-001")
-        if open_capture:
-            scanned = self.station.scan("APL-001")
-            self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
+        scanned = self.station.scan("APL-001")
+        self.assertEqual(scanned["station"]["state"], "WAITING_CAPTURE")
 
         runtime = EdgeRuntime.__new__(EdgeRuntime)
         runtime.lock = threading.RLock()
@@ -431,33 +428,6 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.assertEqual(auto["reason"], "timeout_stopped")
         self.assertTrue(auto["suspended"])
         self.assertEqual(auto["last_commit"]["trigger"], "timeout")
-
-    def test_the_timeout_window_starts_when_capture_opens_not_at_the_sn_scan(self):
-        """cycle_id is stamped at the product SN scan, so the window must not
-        already have burnt the SFIS Step1 round trip and the operator's MCIO scan
-        by the time capture opens - otherwise a slow scan commits NOT_MATCHED on
-        the probe's very first armed frame."""
-        runtime = self.build(open_capture=False, enabled=True, fps=5.0,
-                             required_hits=2, timeout_sec=5.0)
-        self.assertNotEqual(self.station.status()["state"], "WAITING_CAPTURE")
-        for index in range(20):      # 10s with capture closed, twice the timeout
-            self.tick(runtime, False, self.STEP * index)
-        self.assertEqual(self.attempts(), 0)
-        self.assertEqual(self.matcher.calls, 0)
-
-        self.station.scan("APL-001")
-        self.assertEqual(self.station.status()["state"], "WAITING_CAPTURE")
-        self.tick(runtime, False, 10.0)
-        auto = runtime._auto_capture_status()
-        self.assertTrue(auto["armed"])
-        self.assertEqual(auto["elapsed"], 0.0)
-        self.assertEqual(self.attempts(), 0)
-        self.tick(runtime, False, 14.5)
-        self.assertEqual(self.attempts(), 0, "the window was cut short")
-        self.tick(runtime, False, 15.0)
-        self.assertEqual(self.attempts(), 1)
-        self.assertEqual(runtime._auto_capture_status()["last_commit"]["trigger"],
-                         "timeout")
 
     def test_timeout_action_pass_closes_the_unit_and_opens_step4(self):
         runtime = self.build(enabled=True, fps=5.0, required_hits=2,

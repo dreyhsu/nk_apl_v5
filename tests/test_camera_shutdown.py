@@ -40,22 +40,6 @@ class WorkerShutdownTests(unittest.TestCase):
         backend.process.wait.assert_called_once()
         connection.close.assert_called_once()
 
-    def test_source_close_failure_persists_recovery_without_claiming_safe(self):
-        backend = self.backend()
-        backend._safe_stop = False
-        backend._received_frames = 5
-        backend._server_before = [[10, '100']]
-        backend._release.update(camera_null=False, camera_eos=True,
-                                camera_elements={'camsrc': {'current': 'ready', 'pending': 'null'},
-                                                 'frame_sink': {'current': 'null'}})
-        with patch.object(worker, '_owner', backend), patch.object(worker, '_persist_recovery') as persist:
-            result = backend.stop()
-            self.assertFalse(result['safe'])
-            self.assertFalse(result['success'])
-            self.assertTrue(result['reopen_eligible'])
-            self.assertIsNone(worker._owner)
-            self.assertTrue(persist.call_args.args[-1]['worker_acknowledged'])
-
     def test_hung_worker_escalates_term_kill_and_closes_ipc(self):
         backend = self.backend()
         backend.process.poll.return_value = None
@@ -213,9 +197,6 @@ if sys.argv[2] == 'pre_auth':
 _send_packet(sock, {'token': bootstrap['token']}, lock)
 if sys.argv[2] == 'ready':
     _send_packet(sock, {'event': 'ready', 'success': True, 'session': session}, lock)
-    for _ in range(2):
-        _send_packet(sock, (time.monotonic(), b'fixture'), lock, frame=True)
-        time.sleep(0.02)
 while True:
     kind, command = _recv_packet(sock)
     if command.get('action') == 'stop':

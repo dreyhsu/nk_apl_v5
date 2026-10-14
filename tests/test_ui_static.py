@@ -16,7 +16,7 @@ class OperatorInputUITests(unittest.TestCase):
 const assert=require('node:assert/strict');
 const nodes=new Map();
 const $=id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id)};
-let lastStatus={},cameraBusy=false,recordBusy=false,viewMode='raw',recSince=null,lastWarning='',lastError='';
+let lastStatus={},cameraBusy=false,recordBusy=false,viewMode='raw',recSince=null,lastWarning='';
 const fmtDuration=()=>'',fmtGb=()=>'',renderFlow=()=>{},renderStation=()=>{},renderStreamStatus=()=>{},updateSettingsActionState=()=>{},message=()=>{},updateSnapshotLabel=()=>{},reloadStream=()=>{};
 ''' + 'function stateClass(status)' + functions + '''
 renderStatus({status:'RELEASE_FAILED',running:true,has_raw:true});
@@ -25,11 +25,6 @@ assert.equal($('cameraToggle').disabled,true);
 assert.equal($('snapshotBtn').disabled,true);
 assert.equal($('recordToggle').disabled,true);
 assert.match($('cameraHint').textContent,/unconfirmed/);
-renderStatus({status:'RELEASE_FAILED',running:false,reopen_available:true});
-assert.equal($('cameraToggle').disabled,false);
-assert.match($('cameraToggle').textContent,/Recover Camera/);
-assert.equal($('snapshotBtn').disabled,true);
-assert.equal($('recordToggle').disabled,true);
 renderStatus({status:'STOPPING',running:true,has_raw:true});
 assert.equal($('snapshotBtn').disabled,true);
 renderStatus({status:'LIVE',running:true,has_raw:true});
@@ -46,7 +41,7 @@ assert.equal($('recordToggle').disabled,true);
 assert.equal($('recordState').textContent,'FINALIZING');
 '''
         result = subprocess.run([shutil.which('node')], input=script, text=True,
-                                capture_output=True, timeout=10, encoding='utf-8')
+                                capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_failed_camera_release_disables_camera_controls(self):
@@ -54,7 +49,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
         self.assertIn("status==='RELEASE_FAILED'||status==='ALARM')return'bad'", html)
         self.assertIn("cameraUnavailable=releaseFailed||status==='STOPPING'", html)
-        self.assertIn("camBtn.disabled=cameraBusy||(cameraUnavailable&&!d.reopen_available)", html)
+        self.assertIn("camBtn.disabled=cameraBusy||cameraUnavailable", html)
         self.assertIn("$('snapshotBtn').disabled=!hasFrame||cameraBusy||cameraUnavailable", html)
         self.assertIn('recBtn.disabled=!running||!hasFrame||recordBusy||cameraUnavailable', html)
 
@@ -103,7 +98,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261012-1-pass-banner', html)
+        self.assertIn('apl_ui.js?v=20261007-4-timeout-action', html)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]
@@ -233,21 +228,6 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertIn('auto-pass on timeout', script)
         self.assertIn('last_commit?.timeout_pass===true', script)
         self.assertIn('not visually matched', script)
-        # A sendable PASS is announced here. renderStation runs on the 800ms poll
-        # and maybeAutoStep4 on a separate 1s interval, so delegating the only
-        # announcement to that other timer left a passing unit silent.
-        self.assertIn("else message('Inspection OK.','ok');", script)
-        # A repeated error must not wipe the 4.2s result toast on every poll.
-        self.assertIn("if(d.error&&d.error!==lastError){lastError=d.error;message(d.error,'err')}", html)
-        # The passed SN stays on the viewer until the next scan, in green.
-        self.assertIn('function passBanner(station)', script)
-        self.assertIn("r.result!=='PASS'||r.reason", script)
-        self.assertIn("station?.state!=='WAITING_SN'", script)
-        self.assertIn("'SN : '+(r.sn||'-')+' ; PASS'", script)
-        self.assertIn(".streamWarning.pass{", html)
-        # A real stream problem outranks the banner and is never hidden by it.
-        self.assertIn("const banner=streamNote?'':passBanner(lastStatus.station);", script)
-        self.assertIn("$('streamWarning').textContent=streamNote||banner;", script)
         # The manual button stays an override and is never disabled by the probe.
         self.assertIn("$('captureInspect').disabled=!freshStation||busy||station.can_capture!==true||!captureReady;", script)
 

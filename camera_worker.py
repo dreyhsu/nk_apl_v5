@@ -18,8 +18,6 @@ import subprocess
 import sys
 import threading
 import time
-from camera_recovery import (server_identity, release_eligible, marker_ticket,
-                             verify_ticket, wait_replacement)
 
 MAX_PACKET = 16 * 1024 * 1024
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,7 +30,6 @@ _recovery_required = ''
 GRACE_SECONDS = 22.0
 TERM_SECONDS = 3.0
 KILL_SECONDS = 2.0
-STARTUP_SECONDS = 70.0
 log = logging.getLogger('camera.lifecycle')
 if not log.handlers:
     handler = logging.StreamHandler()
@@ -240,29 +237,6 @@ class WorkerCameraBackend:
         self._authenticated = False
         self._stop_result = None
         self._release = {}
-        self._received_frames = 0
-        self._last_received_timestamp = 0.0
-        self._server_before = []
-        self._recovery_ticket = None
-
-    def _prepare_reopen(self):
-        shared = _shared_recovery_file(self.cfg.camera)
-        try:
-            _enforce_recovery_guard()
-            if shared is not None:
-                _enforce_recovery_guard(shared)
-            return
-        except RuntimeError:
-            if shared is None:
-                raise
-        paths = [RECOVERY_FILE, shared]
-        ticket = marker_ticket(paths, _read_boot_id(), self.cfg.camera)
-        log.warning('RECOVERY_WAIT session=%s previous=%s', self.session, ticket['previous_session'])
-        self._status = {'recovery_phase': 'WAITING_SERVER'}
-        wait_replacement(ticket['server_before'], self._cancel.is_set)
-        verify_ticket(ticket, paths, _read_boot_id())
-        self._recovery_ticket = ticket
-        self._status = {'recovery_phase': 'INITIALIZING'}
 
     def _mark_recovery(self, reason):
         _persist_recovery(reason, self.session, self.process.pid if self.process else None,
@@ -284,19 +258,13 @@ class WorkerCameraBackend:
         with _owner_lock:
             if self._cancel.is_set() or self._stop_result is not None:
                 raise RuntimeError('Camera startup cancelled')
+            _enforce_recovery_guard()
+            shared = _shared_recovery_file(self.cfg.camera)
+            if shared is not None:
+                _enforce_recovery_guard(shared)
             if _owner is not None and _owner is not self:
                 raise RuntimeError('Previous camera worker has not completed release; reacquisition blocked')
             _owner = self
-        try:
-            self._prepare_reopen()
-            if self._cancel.is_set():
-                raise RuntimeError('Camera startup cancelled')
-            self._server_before = server_identity()
-        except Exception:
-            with _owner_lock:
-                if _owner is self:
-                    _owner = None
-            raise
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind(('127.0.0.1', 0))
         listener.listen(1)
@@ -314,7 +282,6 @@ class WorkerCameraBackend:
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if os.name == 'nt' else 0,
                 )
             self.process.stdin.write(json.dumps({'token': token, 'session': self.session,
-                                                'recovery_ticket': self._recovery_ticket,
                                                 'config': dataclasses.asdict(self.cfg)}) + '\n')
             self.process.stdin.close()
             deadline = time.monotonic() + 10.0
@@ -335,7 +302,7 @@ class WorkerCameraBackend:
                 self.request_stop()
             self._receiver = threading.Thread(target=self._receive, daemon=True, name='apl-camera-ipc')
             self._receiver.start()
-            deadline = time.monotonic() + STARTUP_SECONDS
+            deadline = time.monotonic() + 20.0
             while not self._ready.wait(0.1):
                 if self._cancel.is_set():
                     raise RuntimeError('Camera startup cancelled')
@@ -345,27 +312,6 @@ class WorkerCameraBackend:
                 raise RuntimeError('Camera startup cancelled')
             if self._fatal:
                 raise RuntimeError(self._fatal)
-            while self._received_frames < 2:
-                if self._cancel.is_set() or self.process.poll() is not None or self._fatal:
-                    raise RuntimeError(self._fatal or 'Camera startup cancelled or worker exited')
-                if time.monotonic() >= deadline:
-                    raise RuntimeError('Camera worker fresh-frame validation timed out')
-                time.sleep(.05)
-            if self._recovery_ticket:
-                global _recovery_required
-                paths = [RECOVERY_FILE, _shared_recovery_file(self.cfg.camera)]
-                verify_ticket(self._recovery_ticket, paths, _read_boot_id())
-                if self.process.poll() is not None or self._fatal or server_identity() != self._server_before:
-                    raise RuntimeError('Camera service or worker changed during fresh-frame validation')
-                for path in paths:
-                    archive = RECOVERY_ARCHIVE_DIR if path == RECOVERY_FILE else path.parent / 'visionedge-recovery-archive'
-                    archive.mkdir(parents=True, exist_ok=True)
-                    path.replace(archive / (path.stem + '_reacquired_' + self.session + '.json'))
-                _recovery_required = ''
-                self._status['recovery_phase'] = 'REACQUIRED'
-                self._status['recovery_warning'] = 'Fresh frames recovered after cam-server restart; previous release failed'
-                log.warning('RECOVERY_FRESH_FRAMES session=%s previous=%s server=%s',
-                            self.session, self._recovery_ticket['previous_session'], self._server_before)
         except Exception:
             try:
                 self.stop()
@@ -382,10 +328,6 @@ class WorkerCameraBackend:
                 kind, data = _recv_packet(connection)
                 if kind == 'frame':
                     if not self._cancel.is_set():
-                        timestamp = data[0]
-                        if timestamp > self._last_received_timestamp and 0 <= time.monotonic() - timestamp < 5:
-                            self._received_frames += 1
-                            self._last_received_timestamp = timestamp
                         _latest_put(self._frames, data)
                     continue
                 if data.get('session') != self.session:
@@ -397,10 +339,7 @@ class WorkerCameraBackend:
                         self._fatal = data.get('error') or 'Camera worker failed to start'
                     self._ready.set()
                 elif event == 'status':
-                    warning = self._status.get('recovery_warning')
                     self._status = data.get('status') or {}
-                    if warning:
-                        self._status['recovery_warning'] = warning
                 elif event == 'error':
                     self._fatal = data.get('error') or 'Camera worker error'
                     self._ready.set()
@@ -551,21 +490,8 @@ class WorkerCameraBackend:
             self._stop_result = {**self._release, 'success': safe and not errors, 'safe': safe,
                                  'worker_reaped': reaped, 'forced_exit': forced,
                                  'error': '; '.join(errors), 'errors': errors, 'session': self.session}
-            eligible = release_eligible(self._release, reaped, forced,
-                                        self._stopped.is_set(), self._received_frames, self._server_before)
-            self._stop_result.update(reopen_eligible=eligible, reopen_schema=1,
-                                     camera_id=self.cfg.camera, server_before=self._server_before,
-                                     worker_acknowledged=self._stopped.is_set(),
-                                     received_frames=self._received_frames)
-            if eligible:
-                try:
-                    _persist_recovery(self._stop_result['error'], self.session, self.process.pid,
-                                      self.cfg.camera, self._stop_result)
-                except OSError as exc:
-                    self._stop_result['reopen_eligible'] = False
-                    self._stop_result['error'] += '; recovery evidence write failed: ' + str(exc)
             with _owner_lock:
-                if _owner is self and (safe or self._stop_result['reopen_eligible']):
+                if _owner is self and safe:
                     _owner = None
             log.info('%s session=%s duration=%.3f result=%s',
                      'STOP_COMPLETE' if safe else 'RELEASE_FAILED', self.session,
@@ -601,8 +527,6 @@ def worker_main(port):
     loop = None
     session = bootstrap['session']
     last_frame = [time.monotonic()]
-    fresh_frames = [0]
-    last_published = [0.0]
     log.info('WORKER_BOOT session=%s pid=%s camera=%s', session, os.getpid(), bootstrap['config']['camera'])
 
     def request_stop(*args):
@@ -654,9 +578,6 @@ def worker_main(port):
             stop_event.set()
 
     def publish_frame(jpeg, timestamp):
-        if timestamp > last_published[0]:
-            fresh_frames[0] += 1
-            last_published[0] = timestamp
         last_frame[0] = timestamp
         _latest_put(frames, (timestamp, jpeg))
 
@@ -671,12 +592,7 @@ def worker_main(port):
             import fcntl
             camera_lock = Path(f'/run/visionedge-camera-{int(bootstrap["config"]["camera"])}.lock').open('a+b')
             fcntl.flock(camera_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if bootstrap.get('recovery_ticket'):
-                verify_ticket(bootstrap['recovery_ticket'],
-                              [RECOVERY_FILE, _shared_recovery_file(bootstrap['config']['camera'])],
-                              _read_boot_id())
-            else:
-                _enforce_recovery_guard(_shared_recovery_file(bootstrap['config']['camera']))
+            _enforce_recovery_guard(_shared_recovery_file(bootstrap['config']['camera']))
         from edge_runtime import EdgeConfig, QtiGstCameraBackend
         from gi.repository import GLib
         if stop_event.is_set():
@@ -691,9 +607,7 @@ def worker_main(port):
         backend.start()
         if stop_event.is_set():
             return
-        ready_sent = [False]
-        first_frame_deadline = time.monotonic() + 10.0
-        last_frame[0] = time.monotonic()
+        send_message({'event': 'ready', 'success': True, 'status': backend.status()})
         last_status = [0.0]
 
         def pump():
@@ -706,14 +620,6 @@ def worker_main(port):
                 messages.put({'event': 'error', 'error': fatal})
                 loop.quit()
                 return GLib.SOURCE_REMOVE
-            if not ready_sent[0]:
-                if fresh_frames[0] >= 2:
-                    send_message({'event': 'ready', 'success': True, 'status': status})
-                    ready_sent[0] = True
-                elif time.monotonic() >= first_frame_deadline:
-                    messages.put({'event': 'error', 'error': 'Camera startup produced no fresh frames'})
-                    loop.quit()
-                    return GLib.SOURCE_REMOVE
             if time.monotonic() - last_frame[0] > 10.0:
                 messages.put({'event': 'error', 'error': 'Camera produced no frames for 10 seconds'})
                 loop.quit()

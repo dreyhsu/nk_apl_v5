@@ -14,14 +14,6 @@ from edge_runtime import EdgeRuntime
 
 
 class LifecycleTests(unittest.TestCase):
-    def test_acknowledged_source_release_failure_allows_explicit_recovery(self):
-        self.edge.stop.return_value = {'success': False, 'safe': False,
-                                       'reopen_eligible': True, 'error': 'StopCamera failed'}
-        result = self.control.stop()
-        self.assertFalse(result['safe'])
-        self.assertTrue(self.control.start()['success'])
-        self.edge.start.assert_called_once()
-
     def setUp(self):
         self.edge = Mock(thread=None, _camera_generation=0)
         self.edge.stop_event = threading.Event()

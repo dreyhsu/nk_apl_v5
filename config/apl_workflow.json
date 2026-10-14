@@ -11,8 +11,8 @@
     "enabled": true,
     "fps": 5.0,
     "required_hits": 2,
-    "timeout_sec": 20.0,
-    "timeout_action": "not_matched"
+    "timeout_sec": 10.0,
+    "timeout_action": "pass"
   },
   "method": "TM_CCOEFF_NORMED",
   "template_root": "../templates",
@@ -36,7 +36,7 @@
     "bypass_sfis": false,
     "line": "TEST",
     "station": "V5_AI-CAM",
-    "employee_no": "M031446",
+    "employee_no": "M031978",
     "operator_error_markers": ["NO EMP"],
     "step4_extra_fields": {},
     "step4_mcio_field": "mciosn",

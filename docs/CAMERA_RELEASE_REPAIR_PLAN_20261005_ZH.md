@@ -1,11 +1,7 @@
 # APL 相機停止、硬體釋放與重新啟動修正計畫
 
-建立日期：2026-10-05；更新日期：2026-10-06。
-
-討論摘要與下一階段執行順序見：[相機第二次釋放失敗：問題統整與修正計畫](CAMERA_SECOND_RELEASE_ISSUE_AND_PLAN_20261006_ZH.md)。本文件保留歷史修正與詳細證據。
-狀態：停止流程及診斷已提交至 `dfde633`；唯讀 SSH 核對開發機兩個核心檔案相同，第二次停止仍在相機 HAL close 失敗。硬體問題尚未解決，不以 PC 測試取代實機驗收。
-
-閱讀順序：第 14 節為最新實機對照與修正分工；第 15 節整理之前的問題與防回歸要求。第 11 至 13 節保留各階段當時的實作／部署狀態，不代表後續現況。
+日期：2026-10-05  
+狀態：第一、第二階段已有本機實作及 PC 回歸紀錄；第二階段交付與限制見第 12.10 節。尚未部署或通過 Qualcomm 實機驗收，不以 PC 測試取代硬體釋放驗收。
 
 ## 1. 目的與適用版本
 
@@ -17,11 +13,11 @@
 |---|---|
 | 修改目標 | `D:\work_project\smartcam\NK_APL\APL_cowork_2\nk_apl_v5` |
 | 檢查分支 | `feature/sfis-bypass-switch` |
-| 實作基準 | 原基準 `34d0833`，commit 時間 `2026-10-05 17:19:51 +08:00`；第一／第二階段後為 `3edc07f`，主 EOS／NULL 診斷修正為 `dfde633` |
+| 實作基準 | `34d0833`，commit 時間 `2026-10-05 17:19:51 +08:00`；本次修正仍為 working tree，尚未 commit |
 | 目前模式 | `single_snapshot_cover_card`，不是 Go Live 自動收集流程 |
 | 主要比較來源 | `firmware_update/smartcam_ai_inference_SDK_HPH_3`，只讀參考 |
 | 操作方式 | 支援直接執行 `visionedge_server.py`，不要求改用 systemd service |
-| 設備狀態 | 2026-10-06 唯讀 SSH 查詢開發機 `056325`；只核對當時部署內容及已有故障，沒有部署、啟停服務或 reboot；不是產線 `746708` 驗收 |
+| 設備狀態 | 本次只修改及驗證本機來源，未 SSH、部署或操作產線設備 |
 
 部署資料夾即使叫 `VisionEdge_APL_Go_live`，也不能據此判定裡面是 Go Live 版本。驗收必須記錄實際程式雜湊、設定、啟動命令及 PID。
 
@@ -89,8 +85,6 @@ Ctrl+C / SIGTERM / Stop Camera
 等待已進入的 overlay / sample / H.264 callback 排空
     ↓
 停止錄影新增資料 → recorder EOS → mux finalize → recorder NULL
-    ↓
-停止常駐 bus reader → 主 pipeline EOS，有界等待 EOS / ERROR
     ↓
 相機 pipeline NULL，驗證實際狀態
     ↓
@@ -175,7 +169,7 @@ recovery marker 使用原子替換，包含 boot ID、session、PID、失敗階�
 
 每個階段記錄開始、完成／失敗、耗時、camera ID、session、worker PID、停止來源與程序 exit code。階段至少包含：
 
-`STOP_REQUESTED` → `CALLBACK_DRAIN` → `RECORDER_FINALIZE` → `PIPELINE_EOS` → `PIPELINE_NULL` → `PIPELINE_NULL_RESULT` → `WORKER_ACK` → `WORKER_REAP` → `STOP_COMPLETE`／`RELEASE_FAILED`。不存在的資源／不需要的 EOS 階段明示不適用，不假造成功。
+`STOP_REQUESTED` → `CALLBACK_DRAIN` → `RECORDER_FINALIZE` → `PIPELINE_NULL` → `WORKER_ACK` → `WORKER_REAP` → `STOP_COMPLETE`／`RELEASE_FAILED`。
 
 保留原始錯誤，不再用單一「Camera may already be in use」覆蓋 callback timeout、NULL timeout、IPC lost 等不同原因。正常未錄影不寫成錯誤。記錄來源版本但不輸出密碼、憑證私鑰或 SFIS 敏感資料。
 
@@ -538,167 +532,6 @@ Windows 既有 amr_pol_ocr：unittest **280 項，276 通過、4 缺影片跳過
 
 當前開發機已因 cam-server abort 進入 same-boot guard。需先取得設備更新及一次
 reboot 的核准，不能刪除 marker 跳過 guard。更新後按照第 12.8 節測 UI Stop/Start、
-Ctrl+C、錄影封檔與再次取得新幀；各輪保留新 log 與 cam-server journal。如果 cam-server
+Ctrl+C、錄影封檔与再次取得新幀；各輪保留新 log 與 cam-server journal。如果 cam-server
 再度 ABRT，記錄第一次失敗即停止重試，交 BSP／camera 團隊查 HAL close 資源管理。
 未完成以上步驟前，不標示「硬體釋放已解決」。
-
-## 14. 第二次停止失敗的實機對照與修正分工
-
-### 14.1 本次觀察範圍
-
-2026-10-06 約 02:17 至 02:21 UTC，經 SSH 唯讀查詢已有日誌；未操作相機、修改檔案、重啟服務或 reboot。
-
-| 項目 | 採集結果 |
-|---|---|
-| 開發機 | `usi-smartcam-056325`，SSH `192.168.50.212` |
-| MAC | `00:10:c6:05:63:25` |
-| boot ID | `479acecc-a90c-4d3f-ae41-4ab71fc25eb1` |
-| BSP | `v2.4-20-dev`，BUILD_TIMESTAMP `202606261504` |
-| 部署目錄 | `/var/rootdirs/opt/nk_apl_v5` |
-| 父程序 | `1890 /usr/bin/python3 -B -u visionedge_server.py` |
-| 本機來源 | `feature/sfis-bypass-switch`，HEAD `dfde633` |
-
-板端兩個核心檔案與該版本本機內容 SHA-256 相同：
-
-- `edge_runtime.py`：`21e127d5943ced376750f1b9c123d159f5f8c3416daa1b9ad805c1296ea06a2e`
-- `camera_worker.py`：`44bd122805cfaebe5614bd878cbe8cd0017852e3c70a5fde19f85cac51a0cefd`
-
-這證明這次不是上述兩個舊檔沒有更新；沒有對整個部署包逐檔驗證，不能擴大成「全部檔案及設定完全一致」。
-
-### 14.2 同 boot 第一輪與第二輪的差異
-
-以下是既有 `camera_worker.log`、`camera_parent.log` 與 cam-server journal 的對照，不是本次重新操作的測試。
-
-| 項目 | 第一輪 | 第二輪 |
-|---|---|---|
-| worker 啟動（UTC） | 02:02:53，PID `1911` | 02:06:17，PID `4627` |
-| 停止開始（UTC） | 02:06:07 | 02:09:08 |
-| callback drain | 成功 | 成功 |
-| 主 pipeline EOS | 成功 | 成功 |
-| pipeline NULL | SUCCESS，約 0.242 秒 | FAILURE，約 0.194 秒，current=READY、pending=NULL |
-| 分支狀態 | 整體 NULL 確認成功；沒有逐分支快照 | encoder、frame_sink、h264_sink、stream_udp、display 都已 NULL；只有 camsrc 失敗 |
-| worker 回收 | exit=0、reaped=true、forced_exit=false | exit=70、reaped=true、forced_exit=false |
-| cam-server | PID `569`，StopCamera successfully closed | 同一 PID `569` 在 HAL close SIGABRT，systemd 之後啟動 `6682` |
-
-兩輪都沒有 active recorder，`recorder_null/finalized=null` 是不適用，不是封檔失敗。第二輪已換成全新 worker；第一輪回收後約 9 秒才開始第二輪，不能把這次故障直接歸因為立即重開或沿用舊 Python worker。
-
-第一輪 journal：
-
-```text
-02:06:07.909  SensorCache::MustRelease ... subDevice=1 bReleaseDevice=1
-02:06:07.909  CSLReleaseDeviceHW ... release success ... CSLHwCSIPHY
-02:06:07.910  SensorCache::MustRelease ... subDevice=0 bReleaseDevice=1
-02:06:07.916  CSLReleaseDeviceHW ... release success ... CSLHwImageSensor
-02:06:08.003  HalOp: End CLOSE
-02:06:08.005  StopCamera: Camera(0) successfully closed!
-```
-
-第二輪 journal：
-
-```text
-02:09:08.711  HalOp: Begin CLOSE
-02:09:08.722  MustRelease ... subDevice=1 bReleaseDevice=0 isFullRecoveryTriggered=0
-02:09:08.780  CSLHwImageSensor / CSLHwCSIPHY ... refCount=0
-02:09:08.780  RealTimeFeatureZSLPreviewRawYUV 2 devices orphaned
-02:09:08.780  CSLCloseHW() Stale device handles on Close ... count=2
-02:09:08.829  cam-server.service: Main process exited ... status=6/ABRT
-```
-
-以上為保留關鍵欄位的摘錄，不是完整原始行。失敗位置已確認：CamX 的 SensorCache／CSL 關閉路徑留下 Sensor／CSIPHY handle，HAL close 隨後崩潰。第二輪為何改走不釋放的分支、是否為 cache／reference count 或其他配置／呼叫時序所觸發，仍需 vendor source、對應 backtrace 或最小重現對照；不能宣稱已找出該分支的全部內部原因。
-
-沒有找到此次有效的 core：`coredumpctl` 無紀錄，kernel core_pattern 為 `/var/coredump/%e.core`，該位置未見 `cam-server.core`。`/var/cache/camera/coredump` 裡的 9 月 1／2 日資料是舊事件，不能拿來代替本次 backtrace。
-
-### 14.3 MediaMTX 的責任邊界
-
-板端實際 service 為獨立程序，ExecStart 使用 `/var/rootdirs/opt/mediamtx/mediamtx.yml`。該 YAML 的 `smartcam` source 是 `udp+rtp://127.0.0.1:5004`，沒有啟動相機的 runOn hook；service 沒有與 camera worker 共用停止的 PartOf／BindsTo 關係。
-
-```text
-qtiqmmfsrc → 影像處理／H.264 → RTP udpsink → MediaMTX → WebRTC
-     ↑
-cam-server／CamX HAL，這次失敗在此來源的關閉路徑
-```
-
-採集時 MediaMTX 為 PID `4298`、NRestarts=0；兩次停止期間一直是同一程序。第二次停止結果中 `stream_udp=NULL`。02:09:09 WebRTC session 關閉，02:09:18 MediaMTX 才記錄 RTP i/o timeout，符合上游停止後沒有 RTP 的後果，不能反過來當成 MediaMTX 造成 HAL abort 的證據。
-
-板端 AdditionalHosts 仍含舊位址 `169.254.130.130`，但已有 peer 使用 `192.168.50.212:8189` 成功建立；這是部署設定偏移，與本次 Sensor／CSIPHY 釋放故障分開處理，不能用修改 ICE hosts 當成 camera release 修復。
-
-### 14.4 下一步修正順序
-
-1. **保留目前停止契約，不再以補 EOS／拉長 timeout 宣告修復。** 這次 EOS 已成功，FAILURE 也不是逾時。保留 callback drain、必要 recorder 封檔、NULL／ACK／reap、錯誤和 same-boot guard；不修改 SFIS Step1／Step4。
-2. **建立 standalone 最小相機重現工具。** 僅使用板端 GI／GStreamer，先測 `qtiqmmfsrc` 的 PREVIEW request pad、相同 caps → fakesink，多輪 open/EOS/NULL；不 import HPH／APL 私有程式、不送 SFIS。記錄 pad type readback、每輪 cam-server PID、各 element state 和新 frame。先對照至少第二輪，再按第 12.8 節做完整驗收。這是待實作及待核准板端操作，不是本次已完成。
-3. **逐項加入分支，做有界對照。** 最小來源若也失敗，優先交 vendor；若成功，再加入 encoder、appsink、overlay／display，最後 RTP／MediaMTX。一次只改一項，沿用相同 caps／pad type／BSP；任一次 ABRT 即保存首次失敗並停止，不在損壞狀態反覆重新取得。
-4. **BSP／camera 團隊修正重新開啟後的 HAL 關閉。** 對照 `SensorCache::MustRelease`、`ReleaseOneSubDevice`、`HALDevice::CloseCachedSensorHandles` 與 `CSLCloseHW` 的 ownership／reference／cache；確保 session 銷毀時 handle 不會留下或重複釋放。函式名稱來自 journal／已安裝 HAL symbol，不代表有可從 Python 安全呼叫的 API。需要匹配 BSP 的 vendor patch 或已驗證設定，不能自行猜一個 cache override 寫入板子。
-5. **應用層只針對被對照證明的觸發條件修改。** 若分支／pad／時序差異確認會觸發問題，再修改 `edge_runtime.py` 的 builder／stop，補成功與失敗的逐 element 診斷及回歸；`camera_worker.py`、coordinator 保持 session 監督。不能在沒有證據時反覆 set NULL、提前 release request pad、Gst.deinit、kill cam-server 或忽略失敗。
-6. **若需要暫時避開頻繁重開，另議長駐 camera owner。** cycle 切換／Stop Recording 不關來源；但 UI「暫停預覽」和「釋放相機」必須區分。長駐不是硬體釋放修復，Ctrl+C／真正 Stop Camera 仍會進 HAL close；不得偷換現有 Stop Camera 語義或承諾可繞過所有故障。
-
-最小來源失敗不等於所有應用程式碼都正確，但可將 reproducer 範圍縮到 plugin／QMMF／HAL。最小來源成功也不等於已通過 APL 完整 pipeline，仍需分支對照。現在沒有經實機驗證、可以保證第二次 close 成功的 Python 小修；這是尚未結案的原因。
-
-### 14.5 現場只讀查詢入口
-
-先確認實際目錄；HTTPS／HTTP 依當次啟動設定選擇，不需再開一個相機程序。
-
-```bash
-cd /var/rootdirs/opt/nk_apl_v5
-hostname
-cat /proc/sys/kernel/random/boot_id
-sha256sum edge_runtime.py camera_worker.py
-pgrep -af 'visionedge_server|camera_worker|smartcam_webserver|mediamtx|cam-server'
-tail -n 100 runtime_data/edge/logs/camera_worker.log
-tail -n 100 runtime_data/edge/logs/camera_parent.log
-cat runtime_data/edge/camera_recovery_required.json
-systemctl show cam-server.service -p MainPID -p NRestarts -p Result
-curl -skS --max-time 5 https://127.0.0.1:8765/api/edge/lifecycle
-```
-
-查本次兩次關閉的既有 journal（UTC）：
-
-```bash
-journalctl -b -u cam-server.service --since '2026-10-06 02:06:07' --until '2026-10-06 02:06:10' --no-pager | grep -E 'MustRelease|ReleaseDevice|StopCamera|CLOSE|orphan|Stale|ABRT'
-journalctl -b -u cam-server.service --since '2026-10-06 02:09:08' --until '2026-10-06 02:09:09' --no-pager | grep -E 'MustRelease|ReleaseDevice|StopCamera|CLOSE|orphan|Stale|ABRT'
-```
-
-若 boot／時間已改，不能直接套用舊時間窗。`curl -k` 只供內網診斷，不是正式 TLS 驗證。不要在報告寫入密碼、完整產品 SN、工號或私鑰。
-
-## 15. 既有問題總表與防回歸要求
-
-### 15.1 不再混為同一個問題
-
-| 問題 | 已處理／需要保持的契約 | 截至本次的限制 |
-|---|---|---|
-| Ctrl+C 同時打斷父子程序、留下 worker | 獨立 session；啟動可取消；受監督 grace／TERM／KILL／reap | PC 流程驗證不是 HAL 可重開證據 |
-| worker 啟動或 native 清理卡死 | 有界 deadline、ACK 和 worker identity；缺 ACK 不假報成功 | kill 不保證釋放驅動；同 boot guard 必須保留 |
-| callback 未退出就銷毀 native buffer | 停新 callback、排空，再清理；失敗保留不安全狀態 | 不可把 NULL 無條件塞進 finally |
-| 錄影未封檔／NULL 失敗仍顯示保存 | recorder EOS、mux finalize、NULL 分項；未釋放參照保留 | Stop Recording 正常只釋放 recorder，不等於來源釋放 |
-| UI 無法取消 STARTING 或錄影中不能 Stop Camera | coordinator／UI 支援取消及完整停止 | 仍需真正板端／瀏覽器驗收 |
-| 工號／SN／DB／scanner 阻塞硬體停止 | hardware stop 不先等站台鎖、DB 或 scanner | 不改 SFIS 在途交易及原 schema |
-| 停止後遲到 frame／判定使流程復活 | camera generation、operation/session 核對、拒絕遲到結果 | 保存工作及 SFIS 結案生命週期仍分開 |
-| 設定先寫入再停止，requested／effective 不一致 | pending config，安全停止後才套用；失敗保留舊檔 | 不能用資料夾名稱推定模式或 rotation |
-| NULL failure 一律說成 timeout | 保存 set／wait／current／pending、各 element 和 journal | READY + FAILURE 是失敗，不是已釋放或等不夠久 |
-| 主來源沒送 EOS／sink 留最後一幀 | `dfde633` 已補主 EOS、sink 設定及輪替診斷 | 本次 EOS 成功仍 HAL abort，不能宣告根因已修復 |
-| 第二次 HAL close stale Sensor／CSIPHY handles | 第 14 節已有第一／二輪實機對照；保留 guard | 未解決；需最小重現與 BSP／camera 修正 |
-| WHEP 502、TLS 檔缺失、port 不符 | 檢查實際 listener／scheme／憑證與 upstream | Web／串流故障不等於 HAL 釋放失敗；分案處理 |
-
-### 15.2 修改後必須保留的驗收門檻
-
-- 一個實體 camera 只有一個 owner；同一 generation／session 只有一筆 stop，不讓 Start／Restart 越過 STOPPING 或 RELEASE_FAILED。
-- callback、recorder EOS／NULL、主 EOS／NULL、ACK／reap 各自有結果。EOS 成功不能取代 NULL；程序消失不能取代 vendor release。
-- 不靠登入、SN、SQLite 寫入成功才停止；不因停止自動補送或清除在途 SFIS 交易。
-- 改 builder、encoder、callback、pad、stop／worker 或 BSP 後，重跑 PC 回歸及第 12.8 節的同 boot 板端矩陣；至少涵蓋第二次及連續多次開關，不能只測第一次。
-- 每輪保留版本、boot ID、worker／cam-server PID、source state、回傳值、新 frame 及必要 MP4 完整性。正常重開期間 cam-server ABRT／非預期重啟即不通過，不能把自動 service restart 當成成功。
-- 板端測試發生第一次不安全釋放就保存證據並停止該輪；恢復後開新的明確測試紀錄，不刪 guard 繼續累計成功次數。
-- 部署保留 config／certs／資料庫／掃碼記憶／證據；同批 IPC 核心／UI 不混版。文件須分別標註 source、installed、running 與 acceptance。
-
-### 15.3 結案紀錄
-
-下面欄位未填入實際證據前，本問題保持未結案；不能以「已寫文件」「已 push」「PC 測試通過」取代。
-
-| 項目 | 待填證據 |
-|---|---|
-| BSP／HAL 根因與修復 | vendor ticket、matched patch／設定、實際包版本與雜湊 |
-| 應用版本及設定 | commit、部署核心檔 hash、有效 caps／pad／display／RTP 設定 |
-| 實機身分與時間 | hostname、MAC、boot ID、BSP、採集 UTC |
-| 最小 pipeline 與完整 APL | 第 14.4／12.8 節逐輪結果、第一次／第二次對照 |
-| Ctrl+C／UI／錄影／各業務階段 | 次數、NULL／ACK／reap、新 frame、MP4 與 cam-server journal |
-| 驗收責任 | 驗收人、日期、未通過項目與產線維護窗口 |
-
-本文件的目的，是讓後續修改保留已知契約及重現證據，防止相同缺陷再次引入；不能保證未驗收的 BSP 或之後的新版本永遠不再出錯。
