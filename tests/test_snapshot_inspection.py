@@ -350,13 +350,18 @@ class AutoCaptureProbeTests(unittest.TestCase):
         return np.full((8, 8, 3), 1 if accepted else 0, dtype=np.uint8)
 
     def tick(self, runtime, accepted, now, backend_status=None):
-        """One inference slot, then wait out any commit the probe started."""
+        """One inference slot, then wait out the probe and any commit it started."""
         runtime._auto_capture_tick(self.frame(accepted), self.station.status(),
                                    backend_status or {}, now)
-        thread = runtime._auto_thread
-        if thread is not None:
-            thread.join(timeout=5.0)
-            self.assertFalse(thread.is_alive(), "automatic commit did not finish")
+        self.settle(runtime)
+
+    def settle(self, runtime):
+        # The probe worker starts the commit, so it has to finish first.
+        for name in ("_auto_probe_thread", "_auto_thread"):
+            thread = getattr(runtime, name)
+            if thread is not None:
+                thread.join(timeout=5.0)
+                self.assertFalse(thread.is_alive(), name + " did not finish")
 
     def attempts(self):
         return int(self.station.status()["attempt_count"])
@@ -608,6 +613,72 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.assertIsNone(self.station.preview_matching)
         self.assertIsNone(runtime._auto["last_match"])
         self.assertEqual(self.station.status()["matching"]["reason"], "below_threshold")
+
+
+    def blocking_matcher(self):
+        """A matcher that holds the probe worker until the test releases it."""
+        started, release = threading.Event(), threading.Event()
+        inner = self.matcher
+
+        def evaluate_snapshot(frame):
+            started.set()
+            release.wait(timeout=5.0)
+            return inner.evaluate_snapshot(frame)
+
+        self.station.matcher = SimpleNamespace(evaluate_snapshot=evaluate_snapshot,
+                                               draw=SnapshotMatcher.draw)
+        return started, release
+
+    def test_matching_never_blocks_the_camera_thread(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        started, release = self.blocking_matcher()
+        self.addCleanup(release.set)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        self.assertTrue(started.wait(timeout=5.0))
+        # The tick returned while the worker is still matching, and the frames
+        # that arrive meanwhile are skipped rather than queued behind it.
+        for index in range(1, 5):
+            runtime._auto_capture_tick(self.frame(True), self.station.status(), {},
+                                       self.STEP * index)
+        self.assertTrue(runtime._auto_probe_thread.is_alive())
+        self.assertEqual(self.matcher.calls, 0)
+        release.set()
+        self.settle(runtime)
+        self.assertEqual(self.matcher.calls, 1)
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.station.status()["state"], "PASS_CONFIRM")
+
+    def test_a_probe_result_is_dropped_when_the_operator_captured_meanwhile(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        started, release = self.blocking_matcher()
+        self.addCleanup(release.set)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        self.assertTrue(started.wait(timeout=5.0))
+        # The button press lands first and bumps attempt_count.
+        self.station.matcher = self.matcher
+        self.assertTrue(runtime.inspect_frame(self.frame(False), {"mode": "camera"})["success"])
+        # No camera tick in between: the worker has to notice on its own.
+        release.set()
+        self.settle(runtime)
+        # The stale accepted verdict must neither commit nor reach the overlay.
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.station.status()["state"], "NOT_MATCHED")
+        self.assertIsNone(runtime._auto["last_commit"])
+
+    def test_the_commit_reuses_the_probe_verdict_instead_of_matching_again(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=1)
+        cycle_id = self.station.status()["cycle_id"]
+        self.tick(runtime, True, 0.0)
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.matcher.calls, 1)
+        attempt = self.station.history_detail(cycle_id)["attempts"][0]
+        self.assertEqual(attempt["matching"]["reason"], "accepted")
+        self.assertEqual(attempt["matching"]["score"], 0.95)
+
+    def test_a_manual_capture_still_runs_the_matcher(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2)
+        self.assertTrue(runtime.inspect_frame(self.frame(True), {"mode": "camera"})["success"])
+        self.assertEqual(self.matcher.calls, 1)
 
 
 if __name__ == "__main__":

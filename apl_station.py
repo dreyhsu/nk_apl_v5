@@ -936,7 +936,10 @@ class APLStation:
             return self._frame_result(frame, snapshot)
 
     def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None,
-                         timeout_pass=False):
+                         timeout_pass=False, precomputed_match=None):
+        """precomputed_match is the automatic probe's verdict on this same frame;
+        reusing it spares a second full template pass under frame_lock, which the
+        camera thread's process_frame is waiting on."""
         with self.lock:
             if cancelled is not None and cancelled():
                 return self._reply('Camera stopped before inspection')
@@ -953,7 +956,8 @@ class APLStation:
             try:
                 if self.matcher is None:
                     self.matcher = APLMatcher(self.config, self.config_path)
-                match = self.matcher.evaluate_snapshot(frame)
+                match = (dict(precomputed_match) if precomputed_match is not None
+                         else self.matcher.evaluate_snapshot(frame))
             except Exception as exc:
                 with self.lock:
                     if self.cycle_id == cycle_id:
