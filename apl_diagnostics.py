@@ -27,6 +27,7 @@ def sanitize_browser(payload):
     """Bound diagnostic values; never retain SDP or arbitrary request bodies."""
     allowed = {'event', 'at', 'reason', 'generation', 'connection', 'ice', 'message',
                'status', 'frame_seq', 'fps', 'api_age_ms', 'api_error', 'decoded_age_ms',
+               'station_status_stale', 'station_status_stale_reason', 'station_snapshot_age_ms',
                'packetsReceived', 'bytesReceived', 'framesReceived', 'framesDecoded',
                'keyFramesDecoded', 'packetsLost', 'jitter', 'freezeCount', 'nackCount',
                'pliCount', 'readyState', 'paused', 'currentTime', 'visibility', 'run_id',

@@ -162,6 +162,52 @@ DEMO = False
 _camera_lifecycle = None
 _camera_lifecycle_lock = threading.Lock()
 _station_snapshot = None
+_station_snapshot_at = 0.0
+_station_status_observation_lock = threading.Lock()
+_station_stale_since = None
+_station_stale_count = 0
+_station_stale_reason = ''
+_station_stale_last_warning = 0.0
+
+
+def _observe_station_snapshot(stale, reason='', snapshot_age_ms=None):
+    """Log stale snapshot episodes without flooding the production journal."""
+    global _station_stale_since, _station_stale_count
+    global _station_stale_reason, _station_stale_last_warning
+    now = time.monotonic()
+    warning = None
+    recovered = None
+    stale_started = False
+    with _station_status_observation_lock:
+        if stale:
+            if _station_stale_since is None:
+                _station_stale_since = now
+                _station_stale_count = 0
+                _station_stale_reason = reason
+                stale_started = True
+            _station_stale_count += 1
+            if now - _station_stale_last_warning >= 10.0:
+                _station_stale_last_warning = now
+                warning = (_station_stale_reason, _station_stale_count,
+                           now - _station_stale_since, snapshot_age_ms)
+        elif _station_stale_since is not None:
+            recovered = (_station_stale_reason, _station_stale_count,
+                         now - _station_stale_since)
+            _station_stale_since = None
+            _station_stale_count = 0
+            _station_stale_reason = ''
+    if stale_started:
+        diag.emit('STATION_STATUS_STALE', reason=reason,
+                  snapshot_age_ms=snapshot_age_ms)
+    if warning:
+        app.logger.warning(
+            'Station status snapshot stale; serving cache reason=%s count=%d duration=%.3fs age_ms=%s',
+            warning[0], warning[1], warning[2], warning[3])
+    if recovered:
+        app.logger.info('Station status snapshot recovered reason=%s count=%d duration=%.3fs',
+                        recovered[0], recovered[1], recovered[2])
+        diag.emit('STATION_STATUS_RECOVERED', reason=recovered[0], count=recovered[1],
+                  duration_seconds=recovered[2])
 
 
 def _camera_station_interrupted():
@@ -182,10 +228,11 @@ def camera_lifecycle():
 
 
 def responsive_station_status():
-    global _station_snapshot
+    global _station_snapshot, _station_snapshot_at
     acquired = _station_lock.acquire(blocking=False)
     target = STATION
     station_acquired = False
+    observation = None
     try:
         if acquired and target is not None:
             station_acquired = target.lock.acquire(blocking=False)
@@ -198,17 +245,29 @@ def responsive_station_status():
                         _station_snapshot['scanner'] = SCANNER.status()
                     finally:
                         SCANNER.control.release()
+                _station_snapshot_at = time.monotonic()
                 state = copy.deepcopy(_station_snapshot)
                 state['status_stale'] = False
+                state['status_stale_reason'] = ''
+                state['status_snapshot_age_ms'] = 0
+                observation = (False, '', 0)
                 return state
+        reason = 'global_lock' if not acquired else 'station_unavailable' if target is None else 'station_lock'
+        age_ms = (max(0.0, time.monotonic() - _station_snapshot_at) * 1000
+                  if _station_snapshot_at else None)
         state = copy.deepcopy(_station_snapshot) if _station_snapshot else {'state': 'UNAVAILABLE', 'sop': {}}
         state['status_stale'] = True
+        state['status_stale_reason'] = reason
+        state['status_snapshot_age_ms'] = round(age_ms, 3) if age_ms is not None else None
+        observation = (True, reason, state['status_snapshot_age_ms'])
         return state
     finally:
         if station_acquired:
             target.lock.release()
         if acquired:
             _station_lock.release()
+        if observation is not None:
+            _observe_station_snapshot(*observation)
 
 
 def station_command(func):

@@ -1,6 +1,7 @@
 'use strict';
 
 let lastStatusAt=0,statusPollBusy=false,statusPollError='',stationBusy=false,stationLocalError='';
+let stationConnectedOnce=false;
 let streamGeneration=0,streamKey='',streamPC=null,streamLocation='',streamRequest=null;
 let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,streamFrameSeq=null,streamFrameAt=0;
 let streamMessage='Waiting for video.',streamReady=false,streamKind='',streamStatsBusy=false;
@@ -242,6 +243,16 @@ window.aplSfis={
 };
 
 function stationFresh(){return !!lastStatusAt&&Date.now()-lastStatusAt<5000&&!statusPollError}
+function stationConnectionState(station){
+  const available=!!station;
+  const freshStation=stationFresh()&&available&&station?.status_stale!==true;
+  if(freshStation)stationConnectedOnce=true;
+  if(statusPollError)return {freshStation,hidden:false,good:false,text:'Connection lost. Reconnecting...'};
+  if(!stationConnectedOnce||!available)return {freshStation,hidden:false,good:false,text:'Connecting to station...'};
+  // A cached snapshot keeps controls guarded by freshStation, but it is not a
+  // new connection attempt and must not flash the operator warning strip.
+  return {freshStation,hidden:true,good:true,text:'Station connected'};
+}
 function textValue(value){if(value==null)return '';return typeof value==='string'?value:JSON.stringify(value)}
 function browserVideoActive(){return lastStatus.input?.mode==='browser_video'}
 function renderScannerSelection(scanner){
@@ -305,7 +316,8 @@ function renderStation(station){
     // A sendable PASS says nothing here: maybeAutoStep4 runs in this same tick and
     // its own toast would overwrite one fired microseconds earlier.
   }
-  const fresh=stationFresh()&&station?.status_stale!==true,available=!!station,freshStation=fresh&&available;
+  const stationConnection=stationConnectionState(station),freshStation=stationConnection.freshStation;
+  const fresh=freshStation,available=!!station;
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;
   const operatorRequired=station?.operator_required!==false;
@@ -314,9 +326,9 @@ function renderStation(station){
   const retry=station?.step1_retry_required===true;
   const snEditable=freshStation&&!busy&&(station.state==='WAITING_SN'||retry)&&(!operatorRequired||signedIn);
   const mcioEditable=freshStation&&!busy&&station.state==='WAITING_MCIO_SN';
-  const connection=$('connectionStrip');connection.className='connectionStrip'+(freshStation?' good':'');
-  connection.textContent=freshStation?'Station connected':statusPollError?'Connection lost. Reconnecting...':'Connecting to station...';
-  connection.classList.toggle('hidden',freshStation);
+  const connection=$('connectionStrip');connection.className='connectionStrip'+(stationConnection.good?' good':'');
+  connection.textContent=stationConnection.text;
+  connection.classList.toggle('hidden',stationConnection.hidden);
   // The employee number is never locked: Switch operator stays available in
   // every state so a wrong number can always be corrected.
   const canEditOperator=freshStation&&!busy;
@@ -907,6 +919,9 @@ function diagnosticVideoEvent(event,reason=''){
     generation:streamGeneration,connection:streamPC?.connectionState||'',ice:streamPC?.iceConnectionState||'',
     message:streamMessage,status:lastStatus.status,frame_seq:lastStatus.frame_seq,fps:lastStatus.source_fps,
     api_age_ms:lastStatusAt?Date.now()-lastStatusAt:null,api_error:statusPollError,
+    station_status_stale:lastStatus.station?.status_stale===true,
+    station_status_stale_reason:lastStatus.station?.status_stale_reason||'',
+    station_snapshot_age_ms:lastStatus.station?.status_snapshot_age_ms??null,
     decoded_age_ms:streamDecodedAt?Date.now()-streamDecodedAt:null,
     readyState:v.readyState,paused:v.paused,currentTime:v.currentTime,visibility:document.visibilityState};
   diagnosticHistory.push(row);if(diagnosticHistory.length>200)diagnosticHistory.shift();

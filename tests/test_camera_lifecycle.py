@@ -184,6 +184,8 @@ class WebStopTests(unittest.TestCase):
                 response = web.app.test_client().get('/api/edge/status')
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.json['station']['status_stale'])
+            self.assertEqual(response.json['station']['status_stale_reason'], 'global_lock')
+            self.assertIn('status_snapshot_age_ms', response.json['station'])
         finally:
             release.set()
             worker.join(1)

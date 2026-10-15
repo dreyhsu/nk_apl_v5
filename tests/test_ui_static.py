@@ -103,7 +103,38 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261015-2-live-decoding', html)
+        self.assertIn('apl_ui.js?v=20261015-3-station-status', html)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_cached_station_status_does_not_flash_connecting_after_first_connection(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        station_fresh = source.split('function stationFresh(){', 1)[1].split('\n', 1)[0]
+        connection_state = source.split('function stationConnectionState(station){', 1)[1].split('\n}', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+let lastStatusAt=Date.now(),statusPollError='',stationConnectedOnce=false;
+''' + 'function stationFresh(){' + station_fresh + '\nfunction stationConnectionState(station){' + connection_state + '\n}' + '''
+let state=stationConnectionState({status_stale:true});
+assert.equal(state.hidden,false);assert.equal(state.text,'Connecting to station...');
+state=stationConnectionState({status_stale:false});
+assert.equal(state.hidden,true);assert.equal(stationConnectedOnce,true);
+state=stationConnectionState({status_stale:true});
+assert.equal(state.hidden,true);assert.equal(state.freshStation,false);
+statusPollError='Station status request timed out';
+state=stationConnectionState({status_stale:true});
+assert.equal(state.hidden,false);assert.equal(state.text,'Connection lost. Reconnecting...');
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_station_stale_details_are_kept_in_diagnostics(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        self.assertIn('station_status_stale:lastStatus.station?.status_stale===true', script)
+        self.assertIn("station_status_stale_reason:lastStatus.station?.status_stale_reason||''", script)
+        self.assertIn('station_snapshot_age_ms:lastStatus.station?.status_snapshot_age_ms??null', script)
 
     @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
     def test_transient_status_failure_keeps_existing_webrtc_session(self):

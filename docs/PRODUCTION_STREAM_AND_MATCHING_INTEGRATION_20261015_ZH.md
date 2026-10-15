@@ -25,6 +25,6 @@
 
 ## 驗證邊界與上線核對
 
-本機以既有 `amr_pol_ocr` 環境執行 `python -B -m unittest discover -s tests`：356 項通過、4 項因缺影片跳過；`node --check static/apl_ui.js` 通過。Git Bash `bash -n run_apl.sh` 通過，分別注入 `APL_DMZ_MODE=disabled` 及 `APL_DMZ_BYPASS=on`，兩次皆於啟動 Python 前拒絕。修正兩個舊測試假設：每類 Golden Samples 至少兩張而非恰好兩張（目標類現有八張），以及工程影片 API 測試須顯式啟用，不能依賴正式設定。沒有更改 Golden Samples。獨立只讀收集器的 `--help` 與單元測試通過；其板端 journal 收集尚未驗收。
+本機以既有 `amr_pol_ocr` 環境執行 `python -B -m unittest discover -s tests`：359 項通過、4 項因缺影片跳過；`node --check static/apl_ui.js` 通過。Git Bash `bash -n run_apl.sh` 通過，分別注入 `APL_DMZ_MODE=disabled` 及 `APL_DMZ_BYPASS=on`，兩次皆於啟動 Python 前拒絕。修正兩個舊測試假設：每類 Golden Samples 至少兩張而非恰好兩張（目標類現有八張），以及工程影片 API 測試須顯式啟用，不能依賴正式設定。沒有更改 Golden Samples。獨立只讀收集器的 `--help` 與單元測試通過；其板端 journal 收集尚未驗收。另加入已連線後暫時 stale snapshot 不顯示 Connecting 的 UI 測試，以及 stale 原因／快取年齡的診斷欄位測試；實機 UI 與 journal 仍待驗證。
 
 Qualcomm camera、編碼器、RTP 丟包、MediaMTX／WebRTC、SFIS 真實過帳需在目標板驗證。上線前核對：正式目錄及 service 的 `ExecStart` 指向同一份 YAML、MediaMTX 啟動日誌載入該路徑、`:8889`／`:5000` 監聽、來源 UDP `5004` 有封包、`APL_DMZ_BYPASS` 未開、站點欄位經 SFIS 核准。若仍卡畫面，對照同一時間的 `MATCH_SAMPLE`、RTP／UDP 丟包、WHEP 狀態及瀏覽器 `framesDecoded`，不要只以 `LIVE` 或 MediaMTX 程序存活判定有畫面。

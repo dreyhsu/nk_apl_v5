@@ -47,6 +47,15 @@ class ProductionDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('sdp', clean['events'][0])
         self.assertEqual(len(clean['events'][0]['reason']), 256)
 
+    def test_browser_payload_keeps_bounded_station_stale_fields(self):
+        clean = diag.sanitize_browser({
+            'events': [{'event': 'VIDEO_SAMPLE', 'station_status_stale': True,
+                        'station_status_stale_reason': 'global_lock',
+                        'station_snapshot_age_ms': 125.5}]})
+        self.assertTrue(clean['events'][0]['station_status_stale'])
+        self.assertEqual(clean['events'][0]['station_status_stale_reason'], 'global_lock')
+        self.assertEqual(clean['events'][0]['station_snapshot_age_ms'], 125.5)
+
 
 if __name__ == '__main__':
     unittest.main()

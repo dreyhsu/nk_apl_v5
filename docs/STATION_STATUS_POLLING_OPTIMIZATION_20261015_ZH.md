@@ -51,7 +51,7 @@
 
 ## 建議優化
 
-以下項目目前是待實作方案，不代表已部署或已通過 SmartCam 驗證。
+第一階段 UI 修正與基本狀態可觀測性已於本機來源實作；縮小後端鎖範圍及把證據寫入移出臨界區仍是待實作方案。上述變更尚未部署或通過 SmartCam 驗證。
 
 ### 第一階段：修正 UI 語意與去除單次閃爍
 
@@ -60,6 +60,8 @@
 - 若連續取得快取狀態，可顯示較準確的 `Station status updating...`，並記錄快取持續時間；不把它稱為斷線。
 - 只有 HTTP 狀態 API 連續失敗或逾時，才顯示 `Connection lost. Reconnecting...`。
 - 狀態過舊時仍可暫停掃碼／提交按鈕，避免用舊狀態接受操作；顯示文字與操作安全需分開處理。
+
+本機來源已實作上述行為：首次取得有效狀態前仍顯示 Connecting；成功連線後的快取 snapshot 會隱藏提示，但 `freshStation=false` 仍會暫停依賴即時狀態的操作；真正 API 錯誤仍顯示 `Connection lost. Reconnecting...`。前端檔案查詢版本已更新，避免瀏覽器沿用舊 JavaScript。
 
 不建議只把 5 秒門檻改成更大的數字。延長門檻只能掩蓋問題，無法區分初次連線、快取狀態和真正 API 失聯。
 
@@ -89,6 +91,8 @@
 
 這些欄位不得包含 SN、工號、SFIS payload、憑證或其他生產敏感資料。
 
+本機來源目前已加入 `status_stale_reason`、`status_snapshot_age_ms`、stale episode 次數與恢復時間。一般服務 log 在 stale episode 開始時發出節流 warning，恢復時記錄 info；啟用 `APL_DIAGNOSTICS=1` 時另寫入 `STATION_STATUS_STALE`／`STATION_STATUS_RECOVERED` 及瀏覽器採樣欄位。標準 warning 最多每 10 秒一次，避免約 800 ms 的狀態輪詢洗滿 journal。
+
 ## 建議驗收條件
 
 1. 相機持續有畫面、自動判定正確時，單次或極短的 stale snapshot 不再顯示 `Connecting to station...`。
@@ -97,6 +101,14 @@
 4. 真正停止 8765 API 或造成連續請求逾時時，前端仍會明確顯示 `Connection lost. Reconnecting...`。
 5. 掃碼、Step1、Step4、終止、重試與 late response 測試均通過，沒有因縮小鎖範圍造成重複請求或跨 cycle 寫入。
 6. PC 測試只能驗證狀態機、鎖行為與 UI；Qualcomm 相機、MediaMTX、WebRTC、實際 SFIS 延遲仍需在目標 SmartCam 驗證。
+
+## 本機驗證
+
+- `node --check static/apl_ui.js`：通過。
+- UI、診斷與相機生命週期針對性測試：通過。
+- `amr_pol_ocr` 完整測試：359 項通過、4 項因缺測試影片跳過。
+- 測試覆蓋首次連線、已連線後短暫 stale、真正 API 錯誤、stale reason 與 snapshot age 診斷欄位。
+- 尚未部署到 SmartCam，因此板端瀏覽器顯示、systemd journal 與真實 SFIS 延遲仍待驗證。
 
 ## 結論
 
