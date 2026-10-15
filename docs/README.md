@@ -9,7 +9,7 @@
 5. [相機停止、釋放與重新啟動修正計畫](CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md)（第 13 節：開發機 cam-server ABRT 定位、主 EOS／NULL 修正、280 項 PC 回歸；修正尚未部署驗收）
 6. [APL_fix 相機釋放與重開恢復移植紀錄](CAMERA_RELEASE_RECOVERY_PORT_20261013_ZH.md)（本機移植與待實機驗證）
 7. [正式版自動比對與串流整合](PRODUCTION_STREAM_AND_MATCHING_INTEGRATION_20261015_ZH.md)（本機來源、正式 SFIS 設定與板端待驗證項目）
-8. [站點狀態輪詢與黃色提示優化紀錄](STATION_STATUS_POLLING_OPTIMIZATION_20261015_ZH.md)（已實作 UI 去除短暫誤報與節流 log；後端鎖範圍優化待辦）
+8. [站點狀態輪詢與黃色提示優化紀錄](STATION_STATUS_POLLING_OPTIMIZATION_20261015_ZH.md)（已實作快取狀態顯示、連續失敗警告與節流 log；後端鎖範圍優化待辦）
 
 ## 文件狀態
 

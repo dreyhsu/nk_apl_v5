@@ -408,12 +408,34 @@ async function applySettings(){
   try{const res=String($('resolution').value).split('x'),width=Number(res[0]),height=Number(res[1]);if(!width||!height)throw Error('Invalid resolution selection');const data={restart:!!lastStatus.running,backend:$('backend').value,source:$('source').value,camera:Number($('camera').value),rotation:Number($('rotation').value),width,height,infer_fps:Number($('infer_fps').value),recording_bitrate:Number($('recording_bitrate').value),min_free_mb:Number($('min_free_mb').value),ldc:$('ldc').checked,product_id:Number($('product').value)};const wasRunning=!!lastStatus.running;const d=await req(`${A}/config`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),timeoutMs:45000});if(!d.success)throw Error(d.error||'Apply failed');message(wasRunning?'Settings applied · camera restarting…':'Settings saved.','ok');if(wasRunning)setTimeout(reloadStream,700);await pollOnce();await loadConfig(false)}catch(e){message(e.message,'err')}finally{settingsBusy=false;updateSettingsActionState()}
 }
 
-async function pollOnce(){if(statusPollBusy)return;statusPollBusy=true;try{const d=await req(`${A}/status?t=${Date.now()}`,{timeoutMs:4500});lastStatusAt=Date.now();statusPollError='';renderStatus(d);syncStream();if(Number(d.media_version??-1)!==mediaVersion||(d.recording&&Date.now()-lastMediaRefresh>2500))loadMedia(false)}catch(e){statusPollError=e.name==='AbortError'?'Station status request timed out':e.message;renderStation(lastStatus.station);renderStreamStatus();$('topCameraDot').className='dot';$('topCamera').textContent='API ERROR'}finally{statusPollBusy=false}}
+async function pollOnce(){
+  if(statusPollBusy)return;
+  statusPollBusy=true;
+  try{
+    const d=await req(`${A}/status?t=${Date.now()}`,{timeoutMs:4500});
+    const previousFailures=statusPollFailureCount;
+    lastStatusAt=Date.now();statusPollError='';statusPollFailureCount=0;
+    renderStatus(d);syncStream();
+    if(previousFailures){
+      console.info('[APL] Station status poll recovered after '+previousFailures+' failed request(s)');
+      diagnosticVideoEvent('STATUS_POLL_RECOVERED','failures='+previousFailures);
+    }
+    if(Number(d.media_version??-1)!==mediaVersion||(d.recording&&Date.now()-lastMediaRefresh>2500))loadMedia(false);
+  }catch(e){
+    statusPollError=e.name==='AbortError'?'Station status request timed out':e.message;
+    statusPollFailureCount++;
+    if(statusPollFailureCount===1)console.warn('[APL] Station status poll failed; retrying:',statusPollError);
+    if(statusPollFailureCount===2)console.error('[APL] Station status poll failed twice:',statusPollError);
+    diagnosticVideoEvent('STATUS_POLL_FAILURE','failures='+statusPollFailureCount);
+    renderStation(lastStatus.station);renderStreamStatus();
+    if(statusPollFailureCount>=2){$('topCameraDot').className='dot';$('topCamera').textContent='API ERROR'}
+  }finally{statusPollBusy=false}
+}
 async function pollLoop(){await pollOnce();setTimeout(pollLoop,800)}
 setInterval(()=>{if(lastStatus.recording&&recSince)$('recTimer').textContent=fmtDuration((Date.now()-recSince)/1000)},500);
 window.addEventListener('beforeunload',e=>{if(settingsDirty){e.preventDefault();e.returnValue=''}});
 for(const evt of ['change','input'])document.addEventListener(evt,e=>{if(e.target&&e.target.closest&&e.target.closest('#pageSettings'))markSettingsDirty()});
 </script>
-<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261015-3-station-status';document.body.appendChild(aplScript);</script>
+<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261015-4-station-display';document.body.appendChild(aplScript);</script>
 </body>
 </html>

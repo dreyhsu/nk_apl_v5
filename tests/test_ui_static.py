@@ -103,7 +103,7 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261015-3-station-status', html)
+        self.assertIn('apl_ui.js?v=20261015-4-station-display', html)
 
     @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
     def test_cached_station_status_does_not_flash_connecting_after_first_connection(self):
@@ -113,17 +113,114 @@ assert.equal($('recordState').textContent,'FINALIZING');
         connection_state = source.split('function stationConnectionState(station){', 1)[1].split('\n}', 1)[0]
         script = '''
 const assert=require('node:assert/strict');
-let lastStatusAt=Date.now(),statusPollError='',stationConnectedOnce=false;
+let lastStatusAt=Date.now(),statusPollError='',statusPollFailureCount=0,stationConnectedOnce=false;
 ''' + 'function stationFresh(){' + station_fresh + '\nfunction stationConnectionState(station){' + connection_state + '\n}' + '''
 let state=stationConnectionState({status_stale:true});
-assert.equal(state.hidden,false);assert.equal(state.text,'Connecting to station...');
+assert.equal(state.hidden,false);assert.equal(state.displayStation,false);assert.equal(state.text,'Connecting to station...');
 state=stationConnectionState({status_stale:false});
-assert.equal(state.hidden,true);assert.equal(stationConnectedOnce,true);
+assert.equal(state.hidden,true);assert.equal(state.displayStation,true);assert.equal(stationConnectedOnce,true);
 state=stationConnectionState({status_stale:true});
-assert.equal(state.hidden,true);assert.equal(state.freshStation,false);
+assert.equal(state.hidden,true);assert.equal(state.displayStation,true);assert.equal(state.freshStation,false);
 statusPollError='Station status request timed out';
+statusPollFailureCount=1;
+state=stationConnectionState({status_stale:true});
+assert.equal(state.hidden,true);assert.equal(state.displayStation,true);assert.equal(state.freshStation,false);
+statusPollFailureCount=2;
 state=stationConnectionState({status_stale:true});
 assert.equal(state.hidden,false);assert.equal(state.text,'Connection lost. Reconnecting...');
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_status_poll_requires_repeated_failures_before_ui_warning(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root/'static'/'edge_dashboard.html').read_text(encoding='utf-8')
+        poll = html.split('async function pollOnce(){', 1)[1].split('\nasync function pollLoop()', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id)};
+let statusPollBusy=false,statusPollFailureCount=0,statusPollError='',lastStatusAt=0;
+let lastStatus={station:{state:'WAITING_SN'}},mediaVersion=0,lastMediaRefresh=0;
+const A='/api/edge',events=[];
+const responses=[new Error('Failed to fetch'),new Error('Failed to fetch'),{status:'LIVE',station:{state:'WAITING_SN'},media_version:0}];
+async function req(){const next=responses.shift();if(next instanceof Error)throw next;return next}
+function renderStatus(d){lastStatus=d;$('topCamera').textContent=d.status}
+function syncStream(){}
+function renderStation(){}
+function renderStreamStatus(){}
+function loadMedia(){}
+function diagnosticVideoEvent(event,reason){events.push({event,reason})}
+''' + 'async function pollOnce(){' + poll + '''
+(async()=>{
+  await pollOnce();
+  assert.equal(statusPollFailureCount,1);
+  assert.notEqual($('topCamera').textContent,'API ERROR');
+  await pollOnce();
+  assert.equal(statusPollFailureCount,2);
+  assert.equal($('topCamera').textContent,'API ERROR');
+  await pollOnce();
+  assert.equal(statusPollFailureCount,0);
+  assert.equal(statusPollError,'');
+  assert.equal($('topCamera').textContent,'LIVE');
+  assert.deepEqual(events.map(x=>x.event),['STATUS_POLL_FAILURE','STATUS_POLL_FAILURE','STATUS_POLL_RECOVERED']);
+})().catch(error=>{console.error(error);process.exitCode=1});
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_cached_station_presentation_keeps_labels_but_guards_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        station_fresh = source.split('function stationFresh(){', 1)[1].split('\n', 1)[0]
+        connection_state = source.split('function stationConnectionState(station){', 1)[1].split('\n}', 1)[0]
+        render_station = source.split('function renderStation(station){', 1)[1].split('\n}', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{classList:{toggle(name,on){this[name]=on}},style:{}});return nodes.get(id)};
+let lastStatusAt=Date.now(),statusPollError='',statusPollFailureCount=0,stationConnectedOnce=false;
+let stationBusy=false,stationLocalError='',autoCommitSeen='',step4Recovery='';
+let fixedBuffers={snInput:'',mcioInput:''},scanFieldError={snInput:'',mcioInput:''};
+let lastStatus={running:true,status:'LIVE',has_raw:true,auto_capture:{enabled:true,armed:true,score:.9,reason:'searching'}};
+const STATION_LABELS={WAITING_CAPTURE:'Ready to inspect'},STATION_HINTS_AUTO={},STATION_HINTS={};
+const STEP1_RETRY_LABEL='',STEP1_RETRY_HINT='';
+let stepVisible=false;
+function logStationState(){}function pollSfisLog(){}function message(){}
+function clearScanBuffers(){}function scanPlaceholder(s){return s}function scanHint(){return ''}
+function browserVideoActive(){return false}function renderStepFlow(s,visible){stepVisible=visible}
+function autoCaptureText(){return 'Automatic inspection running'}
+function textValue(v){return String(v||'')}function fmtScore(v){return String(v)}
+function renderScannerSelection(){}function renderInput(){}function renderTemperature(){}
+''' + 'function stationFresh(){' + station_fresh + '\nfunction stationConnectionState(station){' + connection_state + '\n}\nfunction renderStation(station){' + render_station + '\n}' + '''
+const station={state:'WAITING_CAPTURE',operator:'OP',operator_required:true,can_capture:true,can_terminate:true,
+  sn:'SN',mcio_sn:'MCIO',scanner:{enabled:false},dmz:{configured:true,step4_enabled:true},matching:{stable:'MATCH',raw:'MATCH'}};
+$('verdict').textContent='READY';$('flowPct').textContent='50%';
+renderStation(station);
+assert.equal($('stationState').textContent,'Ready to inspect');
+assert.equal($('captureInspect').disabled,false);
+assert.equal($('autoCaptureStatus').textContent,'Automatic inspection running');
+const stable=$('stableLabel').textContent;
+station.status_stale=true;lastStatus.auto_capture.armed=false;
+renderStation(station);
+assert.equal($('connectionStrip').classList.hidden,true);
+assert.equal($('stationState').textContent,'Ready to inspect');
+assert.equal($('verdict').textContent,'READY');
+assert.equal($('flowPct').textContent,'50%');
+assert.equal($('stableLabel').textContent,stable);
+assert.equal($('autoCaptureStatus').textContent,'Automatic inspection running');
+assert.equal(stepVisible,true);
+assert.equal($('captureInspect').disabled,true);
+assert.equal($('terminateInspection').disabled,true);
+statusPollError='Failed to fetch';statusPollFailureCount=1;
+renderStation(station);
+assert.equal($('connectionStrip').classList.hidden,true);
+statusPollFailureCount=2;
+renderStation(station);
+assert.equal($('connectionStrip').classList.hidden,false);
+assert.equal($('stationState').textContent,'Ready to inspect');
 '''
         result = subprocess.run([shutil.which('node')], input=script, text=True,
                                 capture_output=True, timeout=10, encoding='utf-8')
@@ -289,7 +386,7 @@ assert.equal($('liveVideo').style.display,'none');
         # Dimming must stay visual: a pending step still has to accept clicks.
         self.assertNotIn('.stepRow.pending{opacity:.45;pointer-events:none}', html)
         self.assertIn('.stepRow.pending{opacity:.45}', html)
-        self.assertIn('function stepStatuses(station,freshStation)', script)
+        self.assertIn('function stepStatuses(station,displayStation)', script)
         # A visible step 5 always means unfinished: a successful cycle resets them all.
         self.assertIn('5:false};', script)
 

@@ -1,6 +1,6 @@
 # 站點狀態輪詢與黃色提示優化紀錄（2026-10-15）
 
-範圍：本機來源 `D:\work_project\smartcam\APL_fail\nk_apl_v5`。本文記錄目前觀察、程式碼原因及後續優化方案；除本文件與文件索引外，本次沒有修改程式碼、部署 SmartCam、重啟服務或變更 SFIS／MediaMTX 設定。
+範圍：本機來源 `D:\work_project\smartcam\APL_fail\nk_apl_v5`。本文記錄症狀、程式碼原因、已實作的 UI／診斷修正與後續優化方案。此處的來源修改尚未部署 SmartCam。
 
 ## 目前狀態
 
@@ -15,16 +15,16 @@
 
 因此，這次黃色提示應先視為「站點狀態的新鮮度短暫不足」，不能直接解讀成相機或 MediaMTX 斷線。
 
-## 現行判定方式
+## 原先的誤判方式
 
-前端約每 800 ms 呼叫一次 `/api/edge/status`，單次請求逾時為 4.5 秒。`stationFresh()` 另要求：
+前端約每 800 ms 呼叫一次 `/api/edge/status`，單次請求逾時為 4.5 秒。原先的顯示邏輯要求：
 
 1. 至少成功取得過一次狀態；
 2. 最後成功時間距今少於 5 秒；
 3. 沒有狀態 API 錯誤；
 4. `station.status_stale` 不為 `true`。
 
-只要本次 station snapshot 被標成 stale，即使 HTTP API 成功、畫面仍在解碼、自動判定仍能運作，`renderStation()` 也會把提示文字設為 `Connecting to station...`。這使「初次尚未連線」與「已連線但短暫使用快取狀態」共用同一個文案，造成誤判。
+原先只要本次 station snapshot 被標成 stale，即使 HTTP API 成功、畫面仍在解碼、自動判定仍能運作，`renderStation()` 也會把提示文字設為 `Connecting to station...`。第一輪 UI 修正隱藏了這個連線提示，但站點狀態、判定和步驟仍短暫退回 `Offline`／`Unavailable`；後續修正將這些顯示與操作權限分開。
 
 後端 `responsive_station_status()` 以非阻塞方式嘗試取得兩層鎖：
 
@@ -55,13 +55,13 @@
 
 ### 第一階段：修正 UI 語意與去除單次閃爍
 
-- 前端增加 `hasConnectedOnce`，只有從未成功取得 station 狀態時才顯示 `Connecting to station...`。
+- 前端增加 `stationConnectedOnce`，只有從未成功取得 station 狀態時才顯示 `Connecting to station...`。
 - 已成功連線後，單次 `status_stale=true` 應保留最後一次有效畫面與站點狀態，不退回 Connecting。
-- 若連續取得快取狀態，可顯示較準確的 `Station status updating...`，並記錄快取持續時間；不把它稱為斷線。
-- 只有 HTTP 狀態 API 連續失敗或逾時，才顯示 `Connection lost. Reconnecting...`。
+- 後續若要提示長時間的快取狀態，應使用 `Station status updating...`，並記錄快取持續時間；不把它稱為斷線。
+- HTTP 狀態 API 連續失敗兩次後才顯示 `Connection lost. Reconnecting...`。
 - 狀態過舊時仍可暫停掃碼／提交按鈕，避免用舊狀態接受操作；顯示文字與操作安全需分開處理。
 
-本機來源已實作上述行為：首次取得有效狀態前仍顯示 Connecting；成功連線後的快取 snapshot 會隱藏提示，但 `freshStation=false` 仍會暫停依賴即時狀態的操作；真正 API 錯誤仍顯示 `Connection lost. Reconnecting...`。前端檔案查詢版本已更新，避免瀏覽器沿用舊 JavaScript。
+本機來源已實作：首次取得有效狀態前顯示 Connecting；成功連線後的快取 snapshot 保留最後有效的站點狀態、判定、步驟和自動判定文字，`freshStation=false` 仍會立即暫停依賴即時狀態的操作。單次 API 失敗同樣保留顯示與暫停操作，瀏覽器 console 及啟用診斷時的事件記錄失敗；連續兩次失敗才顯示連線警告和頂部 `API ERROR`，成功取得狀態後復原。前端檔案查詢版本已更新，避免瀏覽器沿用舊 JavaScript。
 
 不建議只把 5 秒門檻改成更大的數字。延長門檻只能掩蓋問題，無法區分初次連線、快取狀態和真正 API 失聯。
 
@@ -106,8 +106,8 @@
 
 - `node --check static/apl_ui.js`：通過。
 - UI、診斷與相機生命週期針對性測試：通過。
-- `amr_pol_ocr` 完整測試：359 項通過、4 項因缺測試影片跳過。
-- 測試覆蓋首次連線、已連線後短暫 stale、真正 API 錯誤、stale reason 與 snapshot age 診斷欄位。
+- `amr_pol_ocr` 完整測試：361 項執行，357 項通過、4 項因缺測試影片跳過。
+- 測試覆蓋首次連線、已連線後短暫 stale、連續 API 錯誤及恢復、操作按鈕暫停、stale reason 與 snapshot age 診斷欄位。
 - 尚未部署到 SmartCam，因此板端瀏覽器顯示、systemd journal 與真實 SFIS 延遲仍待驗證。
 
 ## 結論

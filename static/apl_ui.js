@@ -1,6 +1,6 @@
 'use strict';
 
-let lastStatusAt=0,statusPollBusy=false,statusPollError='',stationBusy=false,stationLocalError='';
+let lastStatusAt=0,statusPollBusy=false,statusPollError='',statusPollFailureCount=0,stationBusy=false,stationLocalError='';
 let stationConnectedOnce=false;
 let streamGeneration=0,streamKey='',streamPC=null,streamLocation='',streamRequest=null;
 let streamRetryAt=0,streamStartedAt=0,streamDecodedAt=0,streamDecodedFrames=0,streamFrameSeq=null,streamFrameAt=0;
@@ -247,11 +247,12 @@ function stationConnectionState(station){
   const available=!!station;
   const freshStation=stationFresh()&&available&&station?.status_stale!==true;
   if(freshStation)stationConnectedOnce=true;
-  if(statusPollError)return {freshStation,hidden:false,good:false,text:'Connection lost. Reconnecting...'};
-  if(!stationConnectedOnce||!available)return {freshStation,hidden:false,good:false,text:'Connecting to station...'};
+  const displayStation=stationConnectedOnce&&available;
+  if(statusPollError&&statusPollFailureCount>=2)return {freshStation,displayStation,hidden:false,good:false,text:'Connection lost. Reconnecting...'};
+  if(!displayStation)return {freshStation,displayStation,hidden:false,good:false,text:'Connecting to station...'};
   // A cached snapshot keeps controls guarded by freshStation, but it is not a
   // new connection attempt and must not flash the operator warning strip.
-  return {freshStation,hidden:true,good:true,text:'Station connected'};
+  return {freshStation,displayStation,hidden:true,good:true,text:'Station connected'};
 }
 function textValue(value){if(value==null)return '';return typeof value==='string'?value:JSON.stringify(value)}
 function browserVideoActive(){return lastStatus.input?.mode==='browser_video'}
@@ -317,6 +318,7 @@ function renderStation(station){
     // its own toast would overwrite one fired microseconds earlier.
   }
   const stationConnection=stationConnectionState(station),freshStation=stationConnection.freshStation;
+  const displayStation=stationConnection.displayStation;
   const fresh=freshStation,available=!!station;
   const busy=stationBusy||!!station?.request_in_flight;
   const signedIn=!!station?.operator;
@@ -355,17 +357,19 @@ function renderStation(station){
   $('retryStep4').disabled=!awaitingStep4||busy;
   if(freshStation&&station.state!=='PASS_CONFIRM'&&step4Recovery)step4Recovery='';
   $('stationRecovery').textContent=step4Recovery;
-  $('stationState').textContent=freshStation?(retry?STEP1_RETRY_LABEL:STATION_LABELS[station.state]||station.state):'Offline';
-  $('stationState').className='state '+(!freshStation?'warn':retry||station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
+  $('stationState').textContent=displayStation?(retry?STEP1_RETRY_LABEL:STATION_LABELS[station.state]||station.state):'Offline';
+  $('stationState').className='state '+(!displayStation?'warn':retry||station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
   const instruction=retry?STEP1_RETRY_HINT:operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?(lastStatus.auto_capture?.enabled===true&&STATION_HINTS_AUTO[station.state])||STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
-  renderStepFlow(station,freshStation);
+  renderStepFlow(station,displayStation);
   const auto=lastStatus.auto_capture||{};
   const autoArmed=freshStation&&auto.armed===true;
-  $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':autoArmed?'Capture & Inspect now':'Capture & Inspect';
-  $('autoCaptureStatus').textContent=autoArmed?autoCaptureText(auto):'';
-  $('autoCaptureStatus').className='controlHint autoCaptureHint'+(autoArmed?' autoCaptureLive':'');
+  if(freshStation||!displayStation){
+    $('captureInspect').textContent=station?.state==='JUDGING'?'Inspecting...':autoArmed?'Capture & Inspect now':'Capture & Inspect';
+    $('autoCaptureStatus').textContent=autoArmed?autoCaptureText(auto):'';
+    $('autoCaptureStatus').className='controlHint autoCaptureHint'+(autoArmed?' autoCaptureLive':'');
+  }
   const step4Enabled=station?.dmz?.step4_enabled!==false;
   $('terminateInspection').textContent='Terminate Inspection';
   const sifiConfigured=station?.dmz?.configured===true;
@@ -393,14 +397,16 @@ function renderStation(station){
   // While the probe is armed the station has no committed match, so these follow
   // the live scores instead of sitting on UNKNOWN for the whole search.
   const matching=station?.matching||{},auto2=lastStatus.auto_capture||{},autoLive=freshStation&&auto2.armed===true;
-  $('stableLabel').textContent=freshStation?(autoLive?'Auto · '+fmtScore(auto2.score):matching.stable||'UNKNOWN'):'Unavailable';
-  $('rawLabel').textContent=freshStation?(autoLive?auto2.reason||'searching':matching.raw||'UNKNOWN'):'—';
+  if(freshStation||!displayStation){
+    $('stableLabel').textContent=displayStation?(autoLive?'Auto · '+fmtScore(auto2.score):matching.stable||'UNKNOWN'):'Unavailable';
+    $('rawLabel').textContent=displayStation?(autoLive?auto2.reason||'searching':matching.raw||'UNKNOWN'):'—';
+  }
   const result=station?.last_result;
   $('lastResult').textContent=result?'Last '+(result.test_mode?'test':'inspection')+': '+result.sn+' · '+(result.visual_result||result.result||result.cycle_status||'CLOSED')+' · '+(result.upload_status||result.reason||'Saved locally'):'';
   const activeCycle=available&&station.state!=='WAITING_SN';
   if((!fresh||activeCycle)&&!lastStatus.running&&lastStatus.status!=='STARTING')$('cameraToggle').disabled=true;
   if(!fresh){$('snapshotBtn').disabled=true;$('recordToggle').disabled=true}
-  if(!freshStation&&station){$('verdict').textContent='Offline';$('verdict').className='state warn';$('flowPct').textContent='Unavailable'}
+  if(!displayStation&&station){$('verdict').textContent='Offline';$('verdict').className='state warn';$('flowPct').textContent='Unavailable'}
   renderInput();
   renderTemperature();
 }
@@ -413,8 +419,8 @@ function scanHint(label,prefix){
 // One pure function decides every step's state, so the markup, the dimming and
 // the auto-focus can never disagree about which step the operator is on. Exactly
 // one of steps 2-5 is active: the first one that is not finished yet.
-function stepStatuses(station,freshStation){
-  if(!freshStation)return {1:'pending',2:'pending',3:'pending',4:'pending',5:'pending'};
+function stepStatuses(station,displayStation){
+  if(!displayStation)return {1:'pending',2:'pending',3:'pending',4:'pending',5:'pending'};
   const mcioRequired=station.inspection_mode==='single_snapshot_cover_card';
   // A disconnected scanner warns but never blocks: the fields still accept typing.
   const scannerReady=station.scanner?.connected===true||station.scanner?.enabled!==true;
@@ -436,9 +442,9 @@ function stepStatuses(station,freshStation){
   return statuses;
 }
 
-function renderStepFlow(station,freshStation){
-  const statuses=stepStatuses(station,freshStation);
-  const retry=freshStation&&station?.step1_retry_required===true;
+function renderStepFlow(station,displayStation){
+  const statuses=stepStatuses(station,displayStation);
+  const retry=displayStation&&station?.step1_retry_required===true;
   // A refused Step1 validates the employee number + product SN, so its reason
   // belongs on the Employee-number row where the operator can act on it.
   if(retry)statuses[2]='warn';
@@ -451,7 +457,7 @@ function renderStepFlow(station,freshStation){
   }
   $('step2Error').textContent=retry?textValue(station?.last_error):'';
   // A legacy station never collects an MCIO card serial number.
-  $('step4').classList.toggle('hidden',freshStation&&station.inspection_mode!=='single_snapshot_cover_card');
+  $('step4').classList.toggle('hidden',displayStation&&station.inspection_mode!=='single_snapshot_cover_card');
 }
 
 // renderStation runs on every poll and on a 1s timer, so focus must follow step
