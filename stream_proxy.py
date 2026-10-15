@@ -5,6 +5,8 @@ import configparser
 import http.client
 import os
 import re
+import time
+import apl_diagnostics as diag
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -45,10 +47,14 @@ def register_stream_routes(app, config_path):
             return jsonify({"success": False, "error": "SDP offer is required"}), 400
         content_type = request.headers.get("Content-Type", "application/sdp")
         connection = http.client.HTTPConnection(host, port, timeout=10)
+        diagnostic_start = time.perf_counter()
+        diagnostic_status = None
+        diagnostic_error = None
         try:
             target = marker + (("/" + suffix) if suffix else "")
             connection.request(method, target, body=body, headers={"Content-Type": content_type})
             upstream = connection.getresponse()
+            diagnostic_status = upstream.status
             response_body = upstream.read(_MAX_SIGNAL_BODY + 1)
             if len(response_body) > _MAX_SIGNAL_BODY:
                 return jsonify({"success": False, "error": "MediaMTX response too large"}), 502
@@ -67,8 +73,11 @@ def register_stream_routes(app, config_path):
                 headers["Location"] = "/api/stream/whep/" + session
             return Response(response_body, status=upstream.status, headers=headers)
         except (OSError, http.client.HTTPException) as exc:
+            diagnostic_error = str(exc)
             return jsonify({"success": False, "error": "MediaMTX WHEP is unavailable", "detail": str(exc)}), 502
         finally:
+            diag.emit('WHEP_REQUEST', method=method, session=suffix, upstream_status=diagnostic_status,
+                      error=diagnostic_error, elapsed_ms=(time.perf_counter()-diagnostic_start)*1000)
             connection.close()
 
     app.add_url_rule("/api/stream/whep", "apl_whep_create", lambda: proxy("POST"), methods=["POST"])

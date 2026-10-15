@@ -414,6 +414,6 @@ setInterval(()=>{if(lastStatus.recording&&recSince)$('recTimer').textContent=fmt
 window.addEventListener('beforeunload',e=>{if(settingsDirty){e.preventDefault();e.returnValue=''}});
 for(const evt of ['change','input'])document.addEventListener(evt,e=>{if(e.target&&e.target.closest&&e.target.closest('#pageSettings'))markSettingsDirty()});
 </script>
-<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261007-4-timeout-action';document.body.appendChild(aplScript);</script>
+<script>const aplScript=document.createElement('script');aplScript.src=APP_BASE+'/static/apl_ui.js?v=20261015-2-live-decoding';document.body.appendChild(aplScript);</script>
 </body>
 </html>

@@ -8,6 +8,8 @@
 4. [工號與掃碼槍操作](SCANNER_OPERATOR_FLOW_ZH.md)
 5. [相機停止、釋放與重新啟動修正計畫](CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md)（第 13 節：開發機 cam-server ABRT 定位、主 EOS／NULL 修正、280 項 PC 回歸；修正尚未部署驗收）
 6. [APL_fix 相機釋放與重開恢復移植紀錄](CAMERA_RELEASE_RECOVERY_PORT_20261013_ZH.md)（本機移植與待實機驗證）
+7. [正式版自動比對與串流整合](PRODUCTION_STREAM_AND_MATCHING_INTEGRATION_20261015_ZH.md)（本機來源、正式 SFIS 設定與板端待驗證項目）
+8. [站點狀態輪詢與黃色提示優化紀錄](STATION_STATUS_POLLING_OPTIMIZATION_20261015_ZH.md)（目前觀察、鎖競爭原因、待實作方案與驗收條件）
 
 ## 文件狀態
 
@@ -19,6 +21,8 @@
 | `SCANNER_OPERATOR_FLOW_ZH.md` | 工號前置、掃碼槍搜尋與切換 | 是 |
 | `CAMERA_RELEASE_REPAIR_PLAN_20261005_ZH.md` | Ctrl+C、worker 回收、全業務階段／Web／錄影停止計畫與驗證紀錄 | 有實機失敗證據，主 EOS 修正僅 PC 驗證，尚未實機通過 |
 | `CAMERA_RELEASE_RECOVERY_PORT_20261013_ZH.md` | APL_fix 分支的相機重開恢復移植、PC 測試與板端待驗證項目 | 本機程式狀態；尚未實機驗收 |
+| `PRODUCTION_STREAM_AND_MATCHING_INTEGRATION_20261015_ZH.md` | 3 FPS 非同步探測、WebRTC、RTP 緩衝、正式 DMZ／SFIS 配置與部署核對 | 本機來源；尚未正式機驗收 |
+| `STATION_STATUS_POLLING_OPTIMIZATION_20261015_ZH.md` | 偶發黃色 Connecting 提示的現況、鎖競爭原因、分階段優化與驗收條件 | 現況與設計紀錄；優化尚未實作 |
 | `archive/` | 上游 VisionEdge、舊四／五步流程與歷史修正 | 否 |
 
 遇到內容不一致時，以目前程式、`config/edge.ini`、

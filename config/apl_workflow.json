@@ -9,7 +9,7 @@
   "stable_frames": 2,
   "auto_capture": {
     "enabled": true,
-    "fps": 5.0,
+    "fps": 3.0,
     "required_hits": 2,
     "timeout_sec": 20.0,
     "timeout_action": "not_matched"

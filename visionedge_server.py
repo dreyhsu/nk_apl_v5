@@ -27,7 +27,8 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from flask import Response, jsonify, request, send_from_directory, stream_with_context, redirect
+from flask import Response, jsonify, request, send_from_directory, stream_with_context, redirect, g
+import apl_diagnostics as diag
 
 import server as base
 from edge_runtime import EdgeRuntime
@@ -93,6 +94,44 @@ VIDEO_TEST_ENABLED = _load_video_test_enabled()
 
 EDGE = EdgeRuntime(base)
 app = base.app
+
+
+@app.before_request
+def diagnostic_request_start():
+    if diag.enabled() and request.path.startswith('/api/'):
+        g.diagnostic_started = time.perf_counter()
+
+
+@app.after_request
+def diagnostic_request_end(response):
+    started = getattr(g, 'diagnostic_started', None)
+    if started is not None and not request.path.startswith('/api/diagnostics/'):
+        diag.emit('HTTP_REQUEST', method=request.method, path=request.path,
+                  status=response.status_code, elapsed_ms=(time.perf_counter()-started)*1000)
+    return response
+
+
+_browser_diag_lock = threading.Lock()
+_browser_diag_requests = []
+
+
+@app.route('/api/diagnostics/browser', methods=['POST'])
+def diagnostic_browser():
+    if not diag.enabled():
+        return jsonify({'error': 'Diagnostics disabled'}), 404
+    if request.content_length is None or request.content_length > 16384:
+        return jsonify({'error': 'Diagnostic payload too large'}), 413
+    with _browser_diag_lock:
+        now = time.monotonic()
+        _browser_diag_requests[:] = [t for t in _browser_diag_requests if now-t < 60]
+        if len(_browser_diag_requests) >= 120:
+            return jsonify({'error': 'Diagnostic rate limit'}), 429
+        _browser_diag_requests.append(now)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'Expected object'}), 400
+    diag.emit('BROWSER', sample=diag.sanitize_browser(payload))
+    return jsonify({'ok': True})
 
 
 class APLRequest(app.request_class):
@@ -572,6 +611,8 @@ def edge_status():
         },
         features={'video_test_enabled': VIDEO_TEST_ENABLED},
     )
+    if diag.enabled():
+        status['diagnostics'] = diag.identity()
     return jsonify(status)
 
 
@@ -894,6 +935,7 @@ def _serve(host, port, tls_context, threads):
 
         def process_request(self, conn, address):
             if not self.slots.acquire(blocking=False):
+                diag.count('https_slot_rejected')
                 self.shutdown_request(conn)
                 return
             try:

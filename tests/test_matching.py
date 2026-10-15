@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import cv2
@@ -22,9 +23,9 @@ class MatchingTests(unittest.TestCase):
         cls.config = json.loads(cls.config_path.read_text(encoding="utf-8"))
         cls.matcher = APLMatcher(cls.config, cls.config_path)
 
-    def test_all_seven_classes_have_two_samples(self):
+    def test_all_seven_classes_have_at_least_two_samples(self):
         self.assertEqual(len(self.matcher.samples), 7)
-        self.assertTrue(all(len(samples) == 2 for samples in self.matcher.samples.values()))
+        self.assertTrue(all(len(samples) >= 2 for samples in self.matcher.samples.values()))
 
     def test_each_golden_sample_recognizes_its_class(self):
         width, height = self.matcher.size
@@ -51,6 +52,17 @@ class MatchingTests(unittest.TestCase):
     def test_wrong_resolution_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "dimensions"):
             self.matcher.evaluate(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    def test_roi_first_grayscale_preserves_matching_input_and_scores(self):
+        width, height = self.matcher.size
+        x, y, w, h = self.matcher.roi
+        frame = np.random.default_rng(42).integers(0, 256, (height, width, 3), dtype=np.uint8)
+        original_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y+h, x:x+w]
+        expected = self.matcher._best_by_class(original_gray)
+        with patch.object(self.matcher, '_best_by_class', wraps=self.matcher._best_by_class) as match:
+            result = self.matcher.evaluate_snapshot(frame)
+        np.testing.assert_array_equal(match.call_args.args[0], original_gray)
+        self.assertEqual(result['class_scores'], {name: item['score'] for name, item in expected.items()})
 
 
 class StableStateFilterTests(unittest.TestCase):

@@ -2,9 +2,9 @@
 
 ## 專案定位
 
-本資料夾是 NK APL 產線的單張判定開發版。操作員上班先輸入工號簽入，之後掃描
+本資料夾是 NK APL 產線單張判定的正式來源。操作員上班先輸入工號簽入，之後掃描
 SN，系統以「工號 + SN」呼叫 SFIS Step1 驗證組合、鎖定該輪，
-等待操作員按下 `Capture & Inspect`，再以同一張影像確認：
+系統在待檢階段自動取樣判定，也可由操作員按 `Capture & Inspect` 手動判定，以影像確認：
 
 1. 治具有蓋板且處於關閉狀態。
 2. MCIO 小卡已出現在指定位置。
@@ -21,7 +21,7 @@ Python 程式。
 - 影片測試可由設定完全關閉。
 - PC 回歸測試已涵蓋工號前置、掃碼槍選擇、SFIS bypass 與原有 Step1／Step4 契約；實體 SmartCam 尚需現場驗收。
 - SFIS Step1／Step4 呼叫已接入掃碼與檢測完成流程。
-- SFIS Step4 預設由 `step4_enabled=false` 禁止送出，須明確開啟才可使用。
+- 目前設定 `step4_enabled=true` 且 `bypass_sfis=false`，Step1／Step4 會走真實 DMZ 端點；目前該端點仍為明文 HTTP，改用 HTTPS 需要已確認的 SFIS HTTPS URL。
 - 40 系樣本與 MCIO 插入深度／電性確認尚未納入。
 
 ## 正式操作流程
@@ -38,7 +38,7 @@ SN_CONFIRM（送出 Step1）
 WAITING_MCIO_SN
   ↓ 掃描 MCIO 卡 SN（必須 APL 開頭；不再呼叫 SFIS）
 WAITING_CAPTURE
-  ↓ Capture & Inspect
+  ↓ 自動檢驗（最多 3 FPS、20 秒）或手動 Capture & Inspect
 JUDGING
   ├─ 不符合 → NOT_MATCHED → 調整後重新拍照
   └─ 符合   → PASS_CONFIRM
@@ -53,10 +53,10 @@ JUDGING
 - `--demo` 與 Browser Video Test 也須先簽入工號才能掃 SN；測試不會呼叫 SFIS。切換隔離的影片測試站台後，若顯示未簽入，需在該站台再輸入工號。
 - 掃碼槍狀態下方有預設收合的 `Find or change scanner`；新裝置首次選擇後，成功連接過的掃碼槍會保存在 `runtime_data/barcode/scanner_selection.json`，拔插、重啟及已知裝置間更換會自動接回。只有新裝置或辨識不明才需要重新尋找。詳見 [工號與掃碼槍操作](docs/SCANNER_OPERATOR_FLOW_ZH.md)。
 - 工號正確與否由 SFIS Step1 判定：回應 `data` 含 `NO EMP` 代表工號錯誤。系統**不清除任何東西**，只提示操作員按 Switch operator 改用正確工號，再重掃同一張產品 SN 重試。
-- Step4 目前 `step4_enabled=false`（無法過帳）；畫面會提示聯絡網頁開發人員 SMD（Dre Hsu / TW031561），只能 `Terminate Inspection` 結束。
+- Step4 目前 `step4_enabled=true`；只有 SFIS 確認成功才算過帳。連線失敗或拒絕時依畫面提示處理，不可當作成功。
 - 掃描有效 SN 後立即開始並鎖定，不需要額外確認 SN。
 - 同一輪未結束時，新掃碼不能覆蓋目前 SN。
-- 只有按下 `Capture & Inspect` 才執行正式判定。
+- 待檢階段會自動判定；`Capture & Inspect` 仍保留為手動操作。自動探測不取代正式提交時的再判定與證據保存。
 - `NOT_MATCHED` 可以用同一個 SN 重拍，每次證據都保留。
 - 視覺結果 OK 不代表已上傳，也不會自動解除 SN 鎖定。
 - 掃完產品 SN 立即呼叫 SFIS Step1；只有 Step1 接受才進入掃 MCIO 卡與拍照判定。Step1 失敗會保留產品 SN，重掃同一張即重試。
@@ -65,7 +65,7 @@ JUDGING
 
 ### SFIS 測試／正式切換
 
-目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=true`，僅供工程測試：站台會在本地接受 Step1／Step4，**不會呼叫 SFIS**；畫面也會標示 BYPASS。正式串接前須明確改為 `false`，並依 SFIS 規格與現場驗收結果決定是否開啟 `step4_enabled`。`APL_DMZ_BYPASS=on/off` 可覆寫設定，值不明確時程式拒絕啟動。
+目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=false`、`step4_enabled=true`。`visionedge-apl.service` 指定 HTTPS 網頁、DMZ client 模式 `http` 及 bypass off；正式 `run_apl.sh` 會拒絕關閉網頁 TLS、停用 DMZ 或開啟 bypass 的環境覆寫。`APL_DMZ_MODE=http` 是 client 模式名稱，可處理 HTTP 或 HTTPS URL，**不代表網頁以 HTTP 提供**。目前 SFIS `base_url` 仍是 `http://10.0.28.125:8097/api/SFISAPI`，`allow_insecure_http=true`；若要求 SFIS 連線也加密，必須先取得有效 HTTPS 端點，再改 URL 並關閉明文允許。`dmz.line=TEST` 是否為產線核准值也須由 SFIS 負責人確認。詳見 [正式版整合紀錄](docs/PRODUCTION_STREAM_AND_MATCHING_INTEGRATION_20261015_ZH.md)。
 
 舊設定鍵 `dmz.sfis_enabled` 已停用；若仍存在，程式會拒絕啟動，避免原本的離線設定在新版被忽略後誤送正式 SFIS。請先備份設定並明確換成 `bypass_sfis`，不可只更新 Python 檔而保留舊 JSON。
 
@@ -95,14 +95,14 @@ JUDGING
 
 ```ini
 [features]
-video_test_enabled = true
+video_test_enabled = false
 ```
 
-正式產線應改為：
+僅在隔離的工程測試環境需要影片測試時，才暫時改為：
 
 ```ini
 [features]
-video_test_enabled = false
+video_test_enabled = true
 ```
 
 修改後必須重新啟動程式。關閉時，網頁隱藏整個影片工具列，影片測試 API 回覆
@@ -112,11 +112,11 @@ HTTP 403。影片測試結果禁止上傳 SFIS。
 
 ## 啟動與測試
 
-SmartCam 直接啟動：
+SmartCam 正式手動啟動（經過 DMZ／SFIS 環境檢查）：
 
 ```bash
 cd /var/rootdirs/opt/VisionEdge_APL
-/usr/bin/python3 -B -u visionedge_server.py
+/bin/sh ./run_apl.sh
 ```
 
 預設頁面：

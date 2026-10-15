@@ -103,7 +103,77 @@ assert.equal($('recordState').textContent,'FINALIZING');
         self.assertNotIn("data.append('video',file)", script)
         self.assertNotIn('/video-test/control', script)
         self.assertIn('id="videoTestToolbar" class="inputToolbar hidden"', html)
-        self.assertIn('apl_ui.js?v=20261007-4-timeout-action', html)
+        self.assertIn('apl_ui.js?v=20261015-2-live-decoding', html)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_transient_status_failure_keeps_existing_webrtc_session(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        station_fresh = source.split('function stationFresh(){', 1)[1].split('\n', 1)[0]
+        hold_stream = source.split('function holdWebRTCOnStaleStatus(){', 1)[1].split('\n}', 1)[0]
+        wanted_key = source.split('function wantedStreamKey(){', 1)[1].split('\n}', 1)[0]
+        sync_stream = source.split('function syncStream(force=false){', 1)[1].split('\n}', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+let lastStatusAt=Date.now(),statusPollError='',lastStatus={running:true,backend:'qti',stream:{enabled:true}};
+let streamKey='webrtc:http://station/api/stream/whep',streamPC={connectionState:'connected'},viewMode='result',streamDecodedAt=0;
+let streamRetryAt=0,streamMessage='',closeCount=0;
+function browserVideoActive(){return false}
+function localStreamURL(){return 'http://station/api/stream/whep'}
+function closeStream(){closeCount++}
+function renderStreamStatus(){}
+''' + 'function stationFresh(){' + station_fresh + '\nfunction holdWebRTCOnStaleStatus(){' + hold_stream + '\n}' + 'function wantedStreamKey(){' + wanted_key + '\n}' + 'function syncStream(force=false){' + sync_stream + '\n}' + '''
+assert.equal(wantedStreamKey(),streamKey);
+statusPollError='Failed to fetch';lastStatusAt=Date.now()-6000;
+assert.equal(wantedStreamKey(),streamKey);
+syncStream();assert.equal(closeCount,0);
+statusPollError='';
+assert.equal(wantedStreamKey(),streamKey);
+lastStatusAt=Date.now()-16000;
+streamDecodedAt=Date.now()-1000;
+assert.equal(wantedStreamKey(),streamKey);
+syncStream();assert.equal(closeCount,0);
+streamDecodedAt=Date.now()-6000;
+assert.equal(wantedStreamKey(),'');
+syncStream();assert.equal(closeCount,1);
+lastStatusAt=Date.now()-6000;streamPC.connectionState='failed';
+assert.equal(wantedStreamKey(),'');
+streamPC.connectionState='connected';lastStatus.running=false;
+assert.equal(wantedStreamKey(),'');
+lastStatus.running=true;streamPC=null;
+assert.equal(wantedStreamKey(),'');
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
+    def test_live_webrtc_video_is_not_hidden_by_stale_status(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root/'static'/'apl_ui.js').read_text(encoding='utf-8')
+        station_fresh = source.split('function stationFresh(){', 1)[1].split('\n', 1)[0]
+        render_status = source.split('function renderStreamStatus(){', 1)[1].split('\n}', 1)[0]
+        script = '''
+const assert=require('node:assert/strict');
+const nodes=new Map();
+const $=id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{toggle(){}},getAttribute(){return ''}});return nodes.get(id)};
+let lastStatusAt=Date.now()-7000,statusPollError='Failed to fetch';
+let lastStatus={running:true,status:'LIVE',frame_seq:100},streamFrameSeq=100,streamFrameAt=Date.now()-10000;
+let streamKind='webrtc',streamDecodedAt=Date.now()-1000,streamReady=true,streamMessage='Connected';
+let browserVideoReady=false,videoChoice=null,viewMode='result';
+''' + 'function stationFresh(){' + station_fresh + '\nfunction renderStreamStatus(){' + render_status + '\n}' + '''
+renderStreamStatus();
+assert.equal($('liveVideo').style.display,'block');
+streamDecodedAt=Date.now()-6000;
+renderStreamStatus();
+assert.equal($('liveVideo').style.display,'none');
+lastStatus.running=false;streamDecodedAt=Date.now()-1000;
+renderStreamStatus();
+assert.equal($('liveVideo').style.display,'none');
+'''
+        result = subprocess.run([shutil.which('node')], input=script, text=True,
+                                capture_output=True, timeout=10, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_scanner_search_is_collapsed_and_operator_gate_clears_sn(self):
         root = Path(__file__).resolve().parents[1]

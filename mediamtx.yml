@@ -1,5 +1,6 @@
 logLevel: info
 logDestinations: [stdout]
+udpReadBufferSize: 1048576
 
 rtsp: false
 rtmp: false
@@ -11,7 +12,7 @@ webrtc: true
 webrtcAddress: :8889
 webrtcLocalUDPAddress: ""
 webrtcLocalTCPAddress: :5000
-webrtcAdditionalHosts: [192.168.50.212]
+webrtcAdditionalHosts: [10.6.34.183, 169.254.130.130]
 
 paths:
   smartcam:

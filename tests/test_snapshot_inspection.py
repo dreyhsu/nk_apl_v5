@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -350,13 +351,136 @@ class AutoCaptureProbeTests(unittest.TestCase):
         return np.full((8, 8, 3), 1 if accepted else 0, dtype=np.uint8)
 
     def tick(self, runtime, accepted, now, backend_status=None):
-        """One inference slot, then wait out any commit the probe started."""
+        """Submit and collect one probe, then wait for a possible commit."""
         runtime._auto_capture_tick(self.frame(accepted), self.station.status(),
                                    backend_status or {}, now)
+        probe = runtime._auto_probe
+        if probe is not None:
+            probe['thread'].join(timeout=5.0)
+            self.assertFalse(probe['thread'].is_alive(), 'probe did not finish')
+            runtime._auto_capture_tick(self.frame(accepted), self.station.status(),
+                                       backend_status or {}, max(now, probe['finished']))
         thread = runtime._auto_thread
         if thread is not None:
             thread.join(timeout=5.0)
             self.assertFalse(thread.is_alive(), "automatic commit did not finish")
+
+    def test_slow_probe_returns_without_queueing_more_frames(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=2)
+        entered, release = threading.Event(), threading.Event()
+        original = self.matcher.evaluate_snapshot
+        def slow(frame):
+            entered.set()
+            release.wait(3)
+            return original(frame)
+        self.matcher.evaluate_snapshot = slow
+        try:
+            runtime._auto_capture_tick(self.frame(False), self.station.status(), {}, 0.0)
+            self.assertTrue(entered.wait(1))
+            probe = runtime._auto_probe
+            for index in range(1, 10):
+                runtime.frame_seq += 1
+                runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, index / 10)
+                self.assertIs(runtime._auto_probe, probe)
+            self.assertFalse(probe['done'].is_set())
+            self.assertEqual(probe['frame_seq'], 7)
+        finally:
+            release.set()
+            runtime._auto_probe['thread'].join(timeout=3)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 1.0)
+        self.assertEqual(self.matcher.calls, 1)
+        self.assertEqual(runtime._auto['hits'], 0)
+
+    def test_completed_probe_keeps_its_frame_sequence_for_evidence(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=1)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        probe = runtime._auto_probe
+        probe['thread'].join(timeout=3)
+        runtime.frame_seq = 99
+        runtime._auto_capture_tick(self.frame(False), self.station.status(), {}, 0.1)
+        thread = runtime._auto_thread
+        if thread is not None:
+            thread.join(timeout=3)
+        attempt = self.station.history_detail(self.station.cycle_id)['attempts'][0]
+        self.assertEqual(attempt['source']['captured_from_frame_seq'], 7)
+        self.assertEqual(attempt['visual_result'], 'OK')
+
+    def test_completed_probe_is_discarded_after_stop(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=1)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        runtime._auto_probe['thread'].join(timeout=3)
+        runtime.stop_event.set()
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.1)
+        self.assertIsNone(runtime._auto_probe)
+        self.assertEqual(self.attempts(), 0)
+
+    def test_completed_probe_is_discarded_after_camera_generation_changes(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=1)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        runtime._auto_probe['thread'].join(timeout=3)
+        runtime._camera_generation += 1
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.1)
+        self.assertIsNone(runtime._auto_probe)
+        self.assertEqual(self.attempts(), 0)
+
+    def test_thread_start_failure_does_not_leave_a_stuck_probe(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=1)
+        with patch('edge_runtime.threading.Thread.start', side_effect=RuntimeError('no thread')):
+            runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        self.assertIsNone(runtime._auto_probe)
+        self.assertEqual(runtime._auto['reason'], 'probe_error')
+        self.tick(runtime, True, 1.0)
+        self.assertEqual(self.attempts(), 1)
+
+    def test_completed_probe_is_discarded_after_manual_attempt(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=1)
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.0)
+        runtime._auto_probe['thread'].join(timeout=3)
+        self.station.inspect_snapshot(self.frame(False))
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0.1)
+        self.assertIsNone(runtime._auto_probe)
+        self.assertEqual(self.attempts(), 1)
+        self.assertEqual(self.station.status()['result'], 'NOT_MATCHED')
+
+    def test_overrun_does_not_trigger_immediate_catchup(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=2)
+        runtime._auto_capture_tick(self.frame(False), self.station.status(), {}, 0.0)
+        probe = runtime._auto_probe
+        probe['thread'].join(timeout=3)
+        probe.update(duration=0.6, finished=0.6)
+        runtime._auto_capture_tick(self.frame(False), self.station.status(), {}, 0.6)
+        runtime._auto_capture_tick(self.frame(False), self.station.status(), {}, 0.61)
+        self.assertIsNone(runtime._auto_probe)
+        self.assertEqual(self.matcher.calls, 1)
+        self.assertGreater(runtime._auto['next_probe'], 0.6)
+
+    def test_timeout_does_not_launch_an_extra_probe(self):
+        runtime = self.build(enabled=True, fps=3.0, required_hits=2, timeout_sec=20.0)
+        self.tick(runtime, False, 0.0)
+        self.assertEqual(self.matcher.calls, 1)
+        self.tick(runtime, False, 20.0)
+        # Only the initial probe and the formal evidence inspection run.
+        self.assertEqual(self.matcher.calls, 2)
+        self.assertEqual(self.attempts(), 1)
+
+    def test_snapshot_preview_does_not_wait_for_matching_frame_lock(self):
+        self.build(enabled=True, fps=3.0, required_hits=2)
+        finished = threading.Event()
+        def render():
+            self.station.process_frame(self.frame(False))
+            finished.set()
+        with self.station.frame_lock:
+            thread = threading.Thread(target=render)
+            thread.start()
+            completed = finished.wait(1)
+        thread.join(timeout=3)
+        self.assertTrue(completed, 'preview waited for the inspection frame lock')
+
+    def test_auto_commit_refuses_stale_cycle_and_attempt(self):
+        self.build(enabled=True, fps=3.0, required_hits=2)
+        self.assertFalse(self.station.inspect_snapshot(self.frame(True), expected_cycle_id='old')['success'])
+        self.assertFalse(self.station.inspect_snapshot(self.frame(True), expected_attempt_count=100)['success'])
+        self.assertEqual(self.matcher.calls, 0)
 
     def attempts(self):
         return int(self.station.status()["attempt_count"])

@@ -894,6 +894,10 @@ class APLStation:
     def process_frame(self, frame):
         with self.lock:
             token = self.generation
+            snapshot = self._snapshot() if self.snapshot_mode and self.matcher is not None else None
+        # Snapshot preview only draws state; it need not wait for inspection computation.
+        if snapshot is not None:
+            return self._frame_result(frame, snapshot)
         with self.frame_lock:
             with self.lock:
                 if self.closed:
@@ -936,10 +940,14 @@ class APLStation:
             return self._frame_result(frame, snapshot)
 
     def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None,
-                         timeout_pass=False):
+                         timeout_pass=False, expected_cycle_id=None, expected_attempt_count=None):
         with self.lock:
             if cancelled is not None and cancelled():
                 return self._reply('Camera stopped before inspection')
+            if expected_cycle_id is not None and self.cycle_id != expected_cycle_id:
+                return self._reply('Automatic inspection belongs to an old cycle')
+            if expected_attempt_count is not None and self._snapshot()['attempt_count'] != expected_attempt_count:
+                return self._reply('Automatic inspection was superseded by another attempt')
             self._check_cycle(self.cycle_id)
             if not self.snapshot_mode:
                 return self._reply("Capture & Inspect is only available in snapshot mode")

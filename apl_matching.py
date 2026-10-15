@@ -2,6 +2,7 @@
 
 import math
 from pathlib import Path
+import apl_diagnostics as diag
 
 
 UNKNOWN = "UNKNOWN"
@@ -32,6 +33,7 @@ class APLMatcher:
         import cv2
         import numpy as np
         self.cv2, self.np = cv2, np
+        self.snapshot_budget_ms = 1000.0 / max(0.1, float((config.get('auto_capture') or {}).get('fps', 5.0)))
         self.inspection_mode = str(config.get("inspection_mode", "legacy_workflow"))
         self.target_state = str(config.get("target_state", "50_COVER_CLOSED_CARD_PRESENT"))
         self.snapshot_reject_states = list(config.get(
@@ -106,7 +108,7 @@ class APLMatcher:
         if (frame.shape[1], frame.shape[0]) != self.size:
             raise ValueError("Camera frame dimensions do not match golden sample reference")
         x, y, w, h = self.roi
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y+h, x:x+w]
+        gray = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
         best_by_class = self._best_by_class(gray)
         ranking = sorted(best_by_class.items(), key=lambda item: item[1]["score"], reverse=True)
         state, best = ranking[0]
@@ -121,13 +123,19 @@ class APLMatcher:
         }
 
     def evaluate_snapshot(self, frame):
+        with diag.measure('MATCH_SAMPLE', budget_ms=self.snapshot_budget_ms,
+                          templates=sum(len(v) for v in self.samples.values()),
+                          classes=len(self.samples)):
+            return self._evaluate_snapshot_impl(frame)
+
+    def _evaluate_snapshot_impl(self, frame):
         cv2 = self.cv2
         if frame is None or len(frame.shape) != 3 or frame.shape[2] != 3:
             raise ValueError("APL requires a BGR camera frame")
         if (frame.shape[1], frame.shape[0]) != self.size:
             raise ValueError("Camera frame dimensions do not match golden sample reference")
         x, y, w, h = self.roi
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y+h, x:x+w]
+        gray = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
         scores = self._best_by_class(gray)
         target = scores[self.target_state]
         closed_without_card = scores.get("50_COVER_CLOSED")

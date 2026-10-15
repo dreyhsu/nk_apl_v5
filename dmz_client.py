@@ -5,6 +5,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import apl_diagnostics as diag
 
 
 class DMZError(RuntimeError):
@@ -165,6 +166,8 @@ class DMZClient:
         step = "step4" if path == "/result" else "step1"
         if self.bypass:
             reply = self._bypass_response(path, payload)
+            diag.emit('SFIS_LOCAL_PASS', step=step, cycle_id=payload.get('cycle_id'),
+                      request_id=payload.get('request_id'), network_sent=False)
             self._emit({"step": step, "phase": "bypass", "url": "", "request_body": None,
                         "response": reply, "detail": "SFIS bypass is on; nothing was sent"})
             return reply

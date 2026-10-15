@@ -1,0 +1,15 @@
+[Unit]
+Description=MediaMTX for VisionEdge APL production
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/rootdirs/opt/VisionEdge_APL
+ExecStartPre=/usr/sbin/sysctl -w net.core.rmem_max=2097152
+ExecStart=/var/rootdirs/opt/mediamtx/mediamtx /var/rootdirs/opt/VisionEdge_APL/mediamtx.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

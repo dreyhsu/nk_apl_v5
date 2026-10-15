@@ -197,10 +197,10 @@ class InputTests(unittest.TestCase):
         self.assertEqual(after['cycle_id'], before['cycle_id'])
         self.assertEqual(after['source'], 'browser_video')
         self.assertTrue(after['test_mode'])
-        # Under bypass a test cycle can close itself locally, but it must still be
-        # unmistakably a test: the label and the bypass flag say so.
-        self.assertTrue(after['dmz']['bypass'])
-        self.assertEqual(after['dmz']['label'], 'BROWSER TEST - SFIS BYPASS')
+        # Production config does not enable bypass. The isolated browser test
+        # station must still be marked as local and unable to post to SFIS.
+        self.assertFalse(after['dmz']['configured'])
+        self.assertEqual(after['dmz']['label'], 'BROWSER TEST - SFIS DISABLED')
         self.assertEqual(result['input']['mode'], 'browser_video')
         self.runtime.stop.assert_not_called()
 
@@ -445,7 +445,7 @@ class UploadAPITests(unittest.TestCase):
         import visionedge_server as web
         fake = Mock()
         fake.upload.return_value = {'id': 'upload-test', 'name': 'sample.mp4'}
-        with patch.object(web, 'inputs', return_value=fake):
+        with patch.object(web, 'VIDEO_TEST_ENABLED', True), patch.object(web, 'inputs', return_value=fake):
             response = web.app.test_client().post('/api/edge/video-test/upload',
                 data={'video': (io.BytesIO(b'video'), 'sample.mp4')})
         self.assertEqual(response.status_code, 200)
@@ -477,7 +477,8 @@ class UploadAPITests(unittest.TestCase):
             'station': {'state': 'NOT_MATCHED'},
             'attempt': {'result_image': 'result.jpg'},
         }
-        with patch.object(web, 'inputs', return_value=fake_inputs), \
+        with patch.object(web, 'VIDEO_TEST_ENABLED', True), \
+             patch.object(web, 'inputs', return_value=fake_inputs), \
              patch.object(web, 'station', return_value=fake_station), \
              patch.object(web.EDGE, 'inspect_frame', return_value=inspection) as inspect:
             response = web.app.test_client().post(
@@ -504,7 +505,7 @@ class UploadAPITests(unittest.TestCase):
             'mode': 'browser_video', 'id': 'current',
             'name': 'test.mp4', 'duration_seconds': 15.0,
         }
-        with patch.object(web, 'inputs', return_value=fake_inputs):
+        with patch.object(web, 'VIDEO_TEST_ENABLED', True), patch.object(web, 'inputs', return_value=fake_inputs):
             response = web.app.test_client().post(
                 '/api/apl/capture-inspect-frame',
                 data={'test_id': 'old'},

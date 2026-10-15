@@ -778,7 +778,14 @@ function localStreamURL(path){
   const prefixed=APP_BASE&&raw.startsWith('/api/')?APP_BASE+raw:raw;
   const url=new URL(prefixed,location.href);if(url.origin!==location.origin)throw Error('Video must use the station connection');return url.href;
 }
+function holdWebRTCOnStaleStatus(){
+  const decodedRecently=!!streamDecodedAt&&Date.now()-streamDecodedAt<5000;
+  return !!lastStatusAt&&lastStatus.running===true&&streamKey.startsWith('webrtc:')&&
+    !!streamPC&&!['failed','closed'].includes(streamPC.connectionState)&&
+    (Date.now()-lastStatusAt<15000||decodedRecently);
+}
 function closeStream(){
+  diagnosticVideoEvent('CLOSE_STREAM');
   streamGeneration++;if(streamRequest)streamRequest.abort();streamRequest=null;
   if(streamPC)streamPC.close();streamPC=null;
   if(streamLocation){fetch(streamLocation,{method:'DELETE',keepalive:true,credentials:'same-origin'}).catch(()=>{});streamLocation=''}
@@ -786,7 +793,7 @@ function closeStream(){
   streamReady=false;streamDecodedAt=0;streamDecodedFrames=0;streamStartedAt=0;
 }
 function wantedStreamKey(){
-  if(!stationFresh())return '';
+  if(!stationFresh())return holdWebRTCOnStaleStatus()?streamKey:'';
   if(browserVideoActive())return 'browser:'+String(lastStatus.input?.id||'missing');
   if(!lastStatus.running)return '';
   if(viewMode==='raw')return 'mjpeg:raw';
@@ -822,10 +829,12 @@ async function connectWHEP(url,generation){
   const timeout=setTimeout(()=>controller.abort(),15000);
   try{
     pc.addTransceiver('video',{direction:'recvonly'});
-    pc.ontrack=event=>{if(generation!==streamGeneration)return;$('liveVideo').srcObject=event.streams[0]||new MediaStream([event.track]);$('liveVideo').play().catch(()=>{streamMessage='Video playback failed. Reconnect to the station.';renderStreamStatus()});event.track.onended=()=>failStream('Video ended',generation)};
-    pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState))failStream('Video disconnected',generation)};
+    pc.ontrack=event=>{if(generation!==streamGeneration)return;diagnosticVideoEvent('VIDEO_TRACK');$('liveVideo').srcObject=event.streams[0]||new MediaStream([event.track]);$('liveVideo').play().catch(()=>{streamMessage='Video playback failed. Reconnect to the station.';renderStreamStatus()});event.track.onended=()=>failStream('Video ended',generation)};
+    pc.onconnectionstatechange=()=>{diagnosticVideoEvent('CONNECTION_STATE');if(['failed','closed'].includes(pc.connectionState))failStream('Video disconnected',generation)};
+    pc.oniceconnectionstatechange=()=>diagnosticVideoEvent('ICE_STATE');
     await pc.setLocalDescription(await pc.createOffer());await waitForICE(pc,controller.signal);
     const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/sdp'},body:pc.localDescription.sdp,signal:controller.signal,credentials:'same-origin'});
+    diagnosticVideoEvent('WHEP_RESPONSE','HTTP '+response.status);
     if(!response.ok)throw Error('Video connection failed ('+response.status+')');
     const locationHeader=response.headers.get('Location');let session='';
     if(locationHeader){session=new URL(locationHeader,url).href;if(new URL(session).origin!==location.origin)throw Error('Video session must use this station')}
@@ -835,11 +844,11 @@ async function connectWHEP(url,generation){
   }catch(error){if(generation===streamGeneration)failStream(error.name==='AbortError'?'Video connection timed out':error.message,generation)}
   finally{clearTimeout(timeout);if(generation===streamGeneration){streamRequest=null;renderStreamStatus()}}
 }
-function failStream(reason,generation){if(generation!==streamGeneration)return;closeStream();streamMessage=reason+'. Reconnecting shortly.';streamRetryAt=Date.now()+3000;renderStreamStatus()}
+function failStream(reason,generation){if(generation!==streamGeneration)return;diagnosticVideoEvent('STREAM_FAILURE',reason);closeStream();streamMessage=reason+'. Reconnecting shortly.';streamRetryAt=Date.now()+3000;renderStreamStatus()}
 async function checkStreamFrames(){
   if(streamStatsBusy||!streamPC||streamPC.connectionState!=='connected')return;
   streamStatsBusy=true;const pc=streamPC,generation=streamGeneration;
-  try{const stats=await pc.getStats();if(generation!==streamGeneration)return;stats.forEach(report=>{if(report.type==='inbound-rtp'&&(report.kind==='video'||report.mediaType==='video')){const frames=Number(report.framesDecoded||0);if(frames>streamDecodedFrames){streamDecodedFrames=frames;streamDecodedAt=Date.now();streamReady=$('liveVideo').readyState>=2&&!$('liveVideo').paused}}})}catch(_){}finally{streamStatsBusy=false;renderStreamStatus()}
+  try{const stats=await pc.getStats();if(generation!==streamGeneration)return;stats.forEach(report=>{if(report.type==='inbound-rtp'&&(report.kind==='video'||report.mediaType==='video')){diagnosticVideoStats(report);const frames=Number(report.framesDecoded||0);if(frames>streamDecodedFrames){streamDecodedFrames=frames;streamDecodedAt=Date.now();streamReady=$('liveVideo').readyState>=2&&!$('liveVideo').paused}}});if(lastStatus.diagnostics?.enabled){stats.forEach(report=>{if(report.type==='transport'&&report.selectedCandidatePairId){const pair=stats.get(report.selectedCandidatePairId),candidate=pair&&stats.get(pair.localCandidateId);if(pair&&candidate)Object.assign(diagnosticStats,{protocol:candidate.protocol,candidateType:candidate.candidateType,currentRoundTripTime:pair.currentRoundTripTime,availableIncomingBitrate:pair.availableIncomingBitrate})}})}}catch(_){}finally{streamStatsBusy=false;renderStreamStatus()}
 }
 function renderStreamStatus(){
   const now=Date.now(),fresh=stationFresh();
@@ -847,7 +856,9 @@ function renderStreamStatus(){
   const sourceFresh=!!streamFrameAt&&now-streamFrameAt<5000;
   const browser=streamKind==='browser';
   const decodedFresh=streamKind==='webrtc'?!!streamDecodedAt&&now-streamDecodedAt<5000:sourceFresh;
-  const visible=browser?fresh&&browserVideoReady&&!!videoChoice:fresh&&!!lastStatus.running&&streamReady&&decodedFresh&&sourceFresh;
+  const visible=browser?fresh&&browserVideoReady&&!!videoChoice:
+    streamKind==='webrtc'?!!lastStatus.running&&streamReady&&decodedFresh:
+    fresh&&!!lastStatus.running&&streamReady&&sourceFresh;
   $('viewer').classList.toggle('empty',!visible);
   const showBrowserResult=visible&&browser&&viewMode==='result'&&$('testResult').getAttribute('src');
   $('testVideo').style.display=visible&&browser&&!showBrowserResult?'block':'none';
@@ -877,3 +888,48 @@ window.addEventListener('pagehide',()=>{closeStream();browserVideo.pause();if(br
 setInterval(()=>{renderStation(lastStatus.station);maybeAutoStep4();syncScanFocus(lastStatus.station);renderStreamStatus();updateSettingsActionState();checkStreamFrames();if(streamKind==='webrtc'&&streamStartedAt&&!streamRetryAt&&Date.now()-(streamDecodedAt||streamStartedAt)>15000)failStream('No video received for 15 seconds',streamGeneration);syncStream()},1000);
 $('opInput').addEventListener('paste',event=>{const text=String(event.clipboardData?.getData('text/plain')||'').replace(/\s+/g,'');event.preventDefault();$('opInput').value=text.slice(0,Number($('opInput').maxLength||32))},true);
 (async()=>{await pollOnce();pollLoop();await Promise.all([loadConfig(false),loadMedia(false)]);updateSnapshotLabel();syncScanFocus(lastStatus.station)})().catch(error=>message(error.message,'err'));
+
+// Opt-in telemetry does not drive reconnect or inspection decisions.
+const diagnosticHistory=[],diagnosticPending=[];
+const diagnosticTab=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
+let diagnosticStats={},diagnosticUploadBusy=false;
+function diagnosticVideoStats(report){
+  if(!lastStatus.diagnostics?.enabled)return;
+  diagnosticStats={};
+  for(const k of ['packetsReceived','bytesReceived','framesReceived','framesDecoded','keyFramesDecoded','packetsLost','jitter','freezeCount','nackCount','pliCount']){
+    if(Number.isFinite(report[k]))diagnosticStats[k]=report[k];
+  }
+}
+function diagnosticVideoEvent(event,reason=''){
+  if(!lastStatus.diagnostics?.enabled)return;
+  const v=$('liveVideo');
+  const row={...diagnosticStats,event,reason,at:Date.now(),tab:diagnosticTab,
+    generation:streamGeneration,connection:streamPC?.connectionState||'',ice:streamPC?.iceConnectionState||'',
+    message:streamMessage,status:lastStatus.status,frame_seq:lastStatus.frame_seq,fps:lastStatus.source_fps,
+    api_age_ms:lastStatusAt?Date.now()-lastStatusAt:null,api_error:statusPollError,
+    decoded_age_ms:streamDecodedAt?Date.now()-streamDecodedAt:null,
+    readyState:v.readyState,paused:v.paused,currentTime:v.currentTime,visibility:document.visibilityState};
+  diagnosticHistory.push(row);if(diagnosticHistory.length>200)diagnosticHistory.shift();
+  diagnosticPending.push(row);if(diagnosticPending.length>12)diagnosticPending.shift();
+  if(event==='CLOSE_STREAM')diagnosticStats={};
+}
+window.exportAPLDiagnostics=()=>{
+  const blob=new Blob([JSON.stringify({run_id:lastStatus.diagnostics?.run_id,tab:diagnosticTab,events:diagnosticHistory},null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='apl-browser-diagnostics.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+async function diagnosticTick(){
+  if(!lastStatus.diagnostics?.enabled)return;
+  if(!document.getElementById('diagnosticDownload')){
+    const b=document.createElement('button');b.id='diagnosticDownload';b.textContent='TEST: Download diagnostics';
+    b.style.cssText='position:fixed;bottom:8px;right:8px;z-index:10000';b.onclick=window.exportAPLDiagnostics;document.body.appendChild(b);
+  }
+  diagnosticVideoEvent('VIDEO_SAMPLE');
+  if(diagnosticUploadBusy)return;
+  diagnosticUploadBusy=true;
+  const events=diagnosticPending.splice(0),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),1500);
+  try{const response=await fetch(APP_BASE+'/api/diagnostics/browser',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',signal:controller.signal,
+    body:JSON.stringify({run_id:lastStatus.diagnostics.run_id,tab:diagnosticTab,events})});if(!response.ok)throw Error('Diagnostic upload failed')}
+  catch(_){diagnosticPending.unshift(...events);if(diagnosticPending.length>12)diagnosticPending.splice(0,diagnosticPending.length-12)}
+  finally{clearTimeout(timer);diagnosticUploadBusy=false}
+}
+setInterval(diagnosticTick,5000);
