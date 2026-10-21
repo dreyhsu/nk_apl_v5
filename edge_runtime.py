@@ -37,6 +37,8 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from light_tower import PatliteTower, select_event
+
 try:  # Only present on the Qualcomm image / GStreamer-enabled Linux hosts.
     import gi  # type: ignore
     gi.require_version('Gst', '1.0')
@@ -2171,6 +2173,7 @@ class EdgeRuntime:
                 if station_state is not None:
                     self._auto_capture_tick(frame, station_state, backend_status,
                                             time.monotonic())
+                    self._light_tower_tick(station_state)
         except Exception as exc:
             with self.lock:
                 self.status_text = 'ERROR'
@@ -2255,6 +2258,8 @@ class EdgeRuntime:
                 self._station_fault_thread = threading.Thread(target=notify_fault, daemon=True,
                                                              name='camera-fault-notify')
                 self._station_fault_thread.start()
+            # Last, so it never delays the camera release: a stopped camera is a dark tower.
+            self._close_light_tower()
 
     def _storage_status(self) -> Dict[str, Any]:
         try:
@@ -2316,6 +2321,7 @@ class EdgeRuntime:
                 'has_raw': bool(self.latest_raw_jpeg),
                 'has_result': bool(self.latest_result_jpeg),
                 'auto_capture': self._auto_capture_status(),
+                'light_tower': self._tower.status() if self._tower is not None else {'enabled': False},
                 **storage,
             }
 
@@ -2405,8 +2411,44 @@ class EdgeRuntime:
         except (TypeError, ValueError, RuntimeError) as exc:
             return {'success': False, 'error': str(exc)}
 
-    # Immutable default, so an instance built without __init__ reads None safely.
+    # Immutable defaults, so an instance built without __init__ reads None safely.
     _auto_thread = None
+    _tower = None
+
+    def _light_tower_tick(self, station_state) -> None:
+        """Point the PATLITE tower at the current station phase. request() only
+        stores the pattern for the tower's own worker, and this never raises into
+        the camera run loop."""
+        try:
+            settings = getattr(self.station, 'light_tower', None)
+            if not isinstance(settings, dict) or not settings.get('enabled'):
+                self._close_light_tower()
+                return
+            wanted = (settings['host'], settings['port'], settings['timeout_sec'])
+            tower = self._tower
+            if tower is not None and tower.settings != wanted:
+                self._close_light_tower()
+                tower = None
+            if tower is None:
+                tower = self._tower = PatliteTower(*wanted)
+            cycle_id = str(station_state.get('cycle_id') or '')
+            event = select_event(
+                camera_live=True,
+                state=station_state.get('state'),
+                auto_armed=bool(self._auto['armed']),
+                # Set only when the probe's window ran out; a manual retry clears it.
+                timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id)
+            tower.request(event, settings['events'][event])
+        except Exception:
+            log.exception('Light tower update failed')
+
+    def _close_light_tower(self) -> None:
+        tower, self._tower = self._tower, None
+        if tower is not None:
+            try:
+                tower.close()
+            except Exception:
+                log.exception('Light tower close failed')
 
     @property
     def _auto(self) -> Dict[str, Any]:

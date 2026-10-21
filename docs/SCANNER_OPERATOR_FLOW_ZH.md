@@ -12,7 +12,7 @@ Serial Number 區是五步引導流程，同一時間只有一個輸入框可用
 4. **MCIO card serial number**：掃 MCIO 卡 SN，必須 `APL` 開頭。此時 Step1 已通過，掃 MCIO**不再**呼叫 SFIS。
 5. **Capture & inspect**：拍照判定，OK 後送 Step4。
 
-未簽入時兩個掃碼欄位都停用；SmartCam 掃碼槍傳來的完整條碼會被站台拒絕，不會建立週期或呼叫 SFIS。掃錯標籤（在產品步驟掃到 `APL` 開頭、或在 MCIO 步驟掃到 `K2V5` 開頭）會顯示紅字並附上掃到的字串，狀態不變；前綴規則寫在 `config/apl_workflow.json` 的 `sn_prefix` 與 `mcio_sn_prefix`，比對不分大小寫。（注意：Step1 失敗的重試狀態下掃到 MCIO 標籤，會先顯示「SN 已鎖定」而不是前綴錯誤，因為此時站台在等重掃產品 SN。）
+未簽入時兩個掃碼欄位都停用；SmartCam 掃碼槍傳來的完整條碼會被站台拒絕，不會建立週期或呼叫 SFIS。掃錯標籤（在產品步驟掃到 `APL` 開頭、或在 MCIO 步驟掃到 `K2V5` 開頭）會顯示紅字並附上掃到的字串，狀態不變；前綴規則寫在 `config/apl_workflow.json` 的 `sn_prefix` 與 `mcio_sn_prefix`，比對不分大小寫。標籤長度固定：`sn_length`（產品 SN，19 碼）與 `mcio_sn_length`（MCIO，12 碼），長度不符同樣以紅字顯示並附上實際碼數；設為 `0` 表示不檢查長度。前綴先檢查、長度後檢查，只在 snapshot 模式生效。（注意：Step1 失敗的重試狀態下掃到 MCIO 標籤，會先顯示「SN 已鎖定」而不是前綴錯誤，因為此時站台在等重掃產品 SN。）
 
 掃碼槍是後端獨占讀取，無法靠焦點決定這一槍要填哪一格，因此由**站台公布的 `active_scan_field`** 決定：產品步驟（`WAITING_SN` 與 Step1 失敗的重試狀態）收產品 SN、`WAITING_MCIO_SN` 收 MCIO 卡 SN。瀏覽器兩個欄位也送同一支 `/api/apl/scan`，並多帶一個 `expect` 欄位，避免畫面比站台慢一秒時填錯格。
 

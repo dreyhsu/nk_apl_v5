@@ -414,6 +414,92 @@ class MCIOScanTests(unittest.TestCase):
         self.assertEqual(self.transport.calls[-1][1]["mcio_sn"], "APL-001")
 
 
+class SerialLengthTests(unittest.TestCase):
+    """sn_length / mcio_sn_length: exact label lengths, checked like the prefixes."""
+
+    SN = "K2V5-00000000000001"     # 19 characters
+    MCIO = "APL-00000001"          # 12 characters
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = self.root / "workflow.json"
+        self.base = {
+            "station_id": "AI-CAM", "station_mode": "remote",
+            "inspection_mode": "single_snapshot_cover_card",
+            "target_state": "50_COVER_CLOSED_CARD_PRESENT",
+            "steps": ["EMPTY_FIXTURE", "50_PRODUCT_LOADED", "50_COVER_CLOSED",
+                      "50_COVER_CLOSED_CARD_PRESENT", "50_COVER_OPEN_CARD_PRESENT"],
+            "template_root": "templates", "dmz": {"mode": "http"},
+            "sn_prefix": "K2V5", "mcio_sn_prefix": "APL",
+            "sn_length": 19, "mcio_sn_length": 12,
+        }
+        self.transport = Transport()
+        self.station = self.open_station()
+        self.station.set_operator("M031978")
+
+    def open_station(self, **overrides):
+        self.config.write_text(json.dumps({**self.base, **overrides}), encoding="utf-8")
+        return APLStation(self.config, self.root / "data", transport=self.transport, matcher=object())
+
+    def tearDown(self):
+        self.station.close()
+        self.temp.cleanup()
+
+    def events(self):
+        rows = self.station.db.execute("SELECT event FROM events ORDER BY id").fetchall()
+        return [row["event"] for row in rows]
+
+    def test_labels_of_the_configured_length_open_capture(self):
+        self.assertTrue(self.station.scan(self.SN)["success"])
+        station = self.station.scan(self.MCIO)["station"]
+        self.assertEqual(station["state"], "WAITING_CAPTURE")
+        self.assertEqual(station["sn_length"], 19)
+        self.assertEqual(station["mcio_sn_length"], 12)
+
+    def test_a_short_product_sn_is_rejected_without_a_cycle(self):
+        reply = self.station.scan("K2V5-0001")
+        self.assertFalse(reply["success"])
+        self.assertIn("must be 19 characters", reply["error"])
+        self.assertIn("(9 chars)", reply["error"])
+        self.assertEqual(reply["station"]["cycle_id"], "")
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.events(), [])
+
+    def test_a_long_mcio_sn_is_rejected_and_journaled(self):
+        self.station.scan(self.SN)
+        reply = self.station.scan(self.MCIO + "9")
+        self.assertFalse(reply["success"])
+        self.assertIn("must be 12 characters", reply["error"])
+        self.assertEqual(reply["station"]["state"], "WAITING_MCIO_SN")
+        self.assertEqual(reply["station"]["mcio_sn"], "")
+        self.assertIn("MCIO_SN_REJECTED", self.events())
+
+    def test_the_prefix_check_still_comes_first(self):
+        reply = self.station.scan("APL-0000000000000001")
+        self.assertIn("must start with K2V5", reply["error"])
+
+    def test_zero_or_absent_means_any_length(self):
+        self.station.close()
+        self.base.pop("mcio_sn_length")
+        self.station = self.open_station(sn_length=0)
+        self.station.set_operator("M031978")
+        self.assertTrue(self.station.scan("K2V5-1")["success"])
+        self.assertTrue(self.station.scan("APL-1")["success"])
+
+    def test_legacy_workflow_serials_stay_free_form(self):
+        self.station.close()
+        self.station = self.open_station(inspection_mode="legacy_workflow")
+        self.station.set_operator("M031978")
+        self.assertTrue(self.station.scan("K2V5-1")["success"])
+
+    def test_invalid_lengths_fail_at_startup(self):
+        for bad in ({"sn_length": 200}, {"sn_length": -1}, {"mcio_sn_length": "12"},
+                    {"mcio_sn_length": True}, {"sn_length": 20, "sn_max_length": 19}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.open_station(**bad)
+
+
 class AutomaticStep4Tests(unittest.TestCase):
     """Backend contracts the automatic Step4 in captureInspection depends on."""
 
