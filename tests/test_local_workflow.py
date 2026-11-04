@@ -20,6 +20,9 @@ class LocalWorkflowTests(unittest.TestCase):
         source_config = ROOT / 'config' / 'apl_workflow.json'
         config = json.loads(source_config.read_text(encoding='utf-8'))
         config['inspection_mode'] = 'legacy_workflow'
+        config['steps'] = list(STEPS)
+        config['ng_states'] = ['30_PRODUCT_LOADED', '30_COVER_CLOSED']
+        config['removal_state'] = 'EMPTY_FIXTURE'
         config['template_root'] = str((ROOT / 'templates').resolve())
         self.config = Path(self.temp.name) / 'legacy_workflow.json'
         self.config.write_text(json.dumps(config), encoding='utf-8')

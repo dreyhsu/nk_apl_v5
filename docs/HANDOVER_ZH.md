@@ -92,6 +92,28 @@ SmartCam 直接部署慣用目錄：
 `target` 分數必須達門檻，且分別高於「關蓋無卡」與「開蓋有卡」至少
 `min_gap`。判定框只在接受時顯示。
 
+單張模式只載入 `target_state` 與 `snapshot_reject_states` 指定的模板，
+目前為以下三個資料夾（位於 `template_root`）：
+
+- `50_COVER_CLOSED_CARD_PRESENT_CROOP`：關蓋有卡，PASS 目標。
+- `50_COVER_CLOSED_CROOP`：關蓋無卡，插卡檢查的反例。
+- `50_COVER_OPEN_CARD_PRESENT_CROOP`：開蓋有卡，關蓋檢查的反例。
+
+兩種反例都必須保留；缺少指定類別的有效模板時，檢查會報錯。
+單張模式不使用 `steps`、`ng_states`、`removal_state` 來載入模板，因此
+`EMPTY_FIXTURE_CROOP`、`50_PRODUCT_LOADED_CROOP`、`30_PRODUCT_LOADED_CROOP`、
+`30_COVER_CLOSED_CROOP` 不必存在，也不影響單張模式的通過條件。
+專案仍保留這些資料夾供舊流程使用，但正式設定檔已移除
+`steps`、`ng_states`、`removal_state`。若使用 `legacy_workflow`，需在另一份設定檔
+明確提供舊流程設定；舊流程依然按 `steps + ng_states + removal_state` 載入模板。
+
+離線圖片測試 `scripts/image_match_test.py` 使用同一份設定與判定函式，顯示
+載入類別、三類分數、插卡／關蓋分數差與結果，並可輸出標註圖片及完整 JSON。
+每張圖片獨立判定，不模擬 Auto Capture 的連續命中次數。
+資料夾批次測試會自動建立 `image_match_labels.json`（檔名對應人工答案
+`true`／`false`／`null`），重跑保留答案並列出誤判；結果另存
+`image_match_results.json`。操作步驟見 [圖片比對與人工答案](IMAGE_MATCH_TEST_ZH.md)。
+
 調整 ROI、門檻或樣本前，必須保留原始設定，並使用正常、無卡、開蓋、遮擋、
 偏移與錯誤安裝資料重新驗證。
 

@@ -5,11 +5,22 @@ Runs the same APLMatcher and overlay renderer the production station uses, but
 headless: no station, no SFIS, no upload. Every output image carries the ROI,
 the matched bounding box, and the match state/score. Accepts a single image or
 a directory of images.
+
+In single_snapshot_cover_card mode, loads the target and two counterexamples
+only, and reports the same card/cover score margins as Auto Capture. Each image
+is an independent visual inspection; consecutive-hit counting is camera-only.
+
+Creates image_match_labels.json beside the inputs: map each filename to true
+(should PASS), false (should fail), or null (not labeled). Existing labels are
+preserved and new images are added automatically. Every run lists mismatches
+and writes image_match_results.json (override with --json).
 """
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import cv2
@@ -24,6 +35,38 @@ from workflow_view import draw_opencv  # noqa: E402
 # Same set APLMatcher accepts for golden samples.
 SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 OVERLAY_TAG = "_overlay"
+LABELS_NAME = "image_match_labels.json"
+RESULTS_NAME = "image_match_results.json"
+
+
+def _save_json(path, value):
+    """Replace complete JSON atomically so reruns preserve manual answers."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, ensure_ascii=False, indent=2, default=float)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _sync_labels(path, images):
+    """Do not infer ground truth from predictions or remove old manual labels."""
+    labels = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    if not isinstance(labels, dict):
+        raise ValueError("Labels must be an object mapping filenames to true, false, or null")
+    for name, value in labels.items():
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"Invalid label for {name!r}: use true, false, or null")
+    for image in images:
+        labels.setdefault(image.name, None)
+    _save_json(path, labels)
+    return labels
 
 
 def _annotate(vis, result):
@@ -37,6 +80,15 @@ def _annotate(vis, result):
                 (0, 0, 0), 4, cv2.LINE_AA)
     cv2.putText(vis, line, (24, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                 color, 2, cv2.LINE_AA)
+    if "conditions" in result:
+        conditions = result["conditions"]
+        line = (f"Card: {'OK' if conditions['mcio_card_present'] else 'NG'} "
+                f"(margin {conditions['card_margin']:.3f})  "
+                f"Cover: {'OK' if conditions['cover_closed'] else 'NG'} "
+                f"(margin {conditions['cover_margin']:.3f})")
+        for stroke, ink in ((4, (0, 0, 0)), (2, color)):
+            cv2.putText(vis, line, (24, y - 36), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8, ink, stroke, cv2.LINE_AA)
     return vis
 
 
@@ -62,7 +114,7 @@ def _write(path, image, quality):
     path.write_bytes(buffer.tobytes())
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, type=Path,
                         help="Input image, or a directory of images, to run matching on")
@@ -73,12 +125,15 @@ def main():
                         default=ROOT / "config" / "apl_workflow.json",
                         help="APL workflow configuration file")
     parser.add_argument("--json", type=Path, default=None,
-                        help="Also write the full per-image match results as JSON")
+                        help=f"Per-image results JSON (default: {RESULTS_NAME} in the input folder)")
+    parser.add_argument("--labels", type=Path, default=None,
+                        help=f"Manual answers JSON (default: {LABELS_NAME} in the input folder); "
+                             "filename -> true, false, or null")
     parser.add_argument("--no-overlay", action="store_true",
                         help="Only report scores; skip writing annotated images")
     parser.add_argument("--quality", type=int, default=95,
                         help="Overlay JPEG quality (1-100)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not 1 <= args.quality <= 100:
         parser.error("--quality must be between 1 and 100")
@@ -87,6 +142,20 @@ def main():
     images = _collect(args.image)
     if not images:
         parser.error(f"No image with a supported suffix in {args.image}")
+
+    input_dir = args.image if args.image.is_dir() else args.image.parent
+    labels_path = args.labels if args.labels is not None else input_dir / LABELS_NAME
+    report_path = args.json if args.json is not None else input_dir / RESULTS_NAME
+    protected_paths = {args.config.resolve(), *(path.resolve() for path in images)}
+    if (labels_path.resolve() == report_path.resolve()
+            or labels_path.resolve() in protected_paths
+            or report_path.resolve() in protected_paths):
+        parser.error("Labels, results, workflow config, and input images must use different paths")
+    try:
+        labels = _sync_labels(labels_path, images)
+    except (OSError, ValueError) as exc:
+        parser.error(f"Cannot load/save labels {labels_path}: {exc}")
+    print(f"manual answers: {labels_path} (true=PASS, false=fail, null=unlabeled)")
 
     # --output as a file only makes sense for a single input image.
     out_file = out_dir = None
@@ -102,37 +171,57 @@ def main():
 
     config = json.loads(Path(args.config).read_bytes())
     matcher = APLMatcher(config, str(args.config))
-    snapshot = str(config.get("inspection_mode")) == "single_snapshot_cover_card"
+    snapshot = matcher.inspection_mode == "single_snapshot_cover_card"
     evaluate = matcher.evaluate_snapshot if snapshot else matcher.evaluate
     ref_w, ref_h = matcher.size
+    print(f"inspection mode: {matcher.inspection_mode}")
+    for name, samples in matcher.samples.items():
+        print(f"  golden sample: {name}_CROOP ({len(samples)} images)")
+    if snapshot:
+        print("PASS requires target score >= threshold and both card/cover margins >= min_gap.")
+        print("Each image is evaluated independently; Auto Capture consecutive hits are not simulated.")
 
     report = []
+    mismatches = []
+    errors = []
     accepted = failed = 0
     peak_score = 0.0
 
     for path in images:
-        frame = _read(path)
-        if frame is None or not frame.size:
-            print(f"error: {path.name}: not a decodable image", file=sys.stderr)
-            failed += 1
-            continue
-        height, width = frame.shape[:2]
-        if (width, height) != (ref_w, ref_h):
-            print(f"error: {path.name}: image is {width}x{height}; must be {ref_w}x{ref_h} "
-                  "to match the golden samples (no auto-scaling)", file=sys.stderr)
+        expected = labels[path.name]
+        try:
+            frame = _read(path)
+            if frame is None or not frame.size:
+                raise ValueError("not a decodable image")
+            height, width = frame.shape[:2]
+            if (width, height) != (ref_w, ref_h):
+                raise ValueError(f"image is {width}x{height}; must be {ref_w}x{ref_h} "
+                                 "to match the golden samples (no auto-scaling)")
+            result = evaluate(frame)
+        except (OSError, ValueError, cv2.error) as exc:
+            error = str(exc)
+            print(f"error: {path.name}: {error}", file=sys.stderr)
+            errors.append((path.name, error))
+            report.append({"image": str(path), "overlay": None, "expected_pass": expected,
+                           "actual_pass": None, "correct": None, "error": error, "result": None})
             failed += 1
             continue
 
-        result = evaluate(frame)
         raw = result.get("raw", UNKNOWN)
         peak_score = max(peak_score, float(result.get("score", 0.0)))
-        if raw != UNKNOWN:
+        passed = bool(result["accepted"]) if snapshot else raw != UNKNOWN
+        if passed:
             accepted += 1
+        correct = None if expected is None else passed == expected
+        if correct is False:
+            mismatches.append((path.name, expected, passed, result))
 
         state = {
-            "state": "JUDGING",
-            "inspection_mode": config.get("inspection_mode"),
-            "steps": [{"name": matcher.target_state}],
+            "state": ("PASS_CONFIRM" if passed else "NOT_MATCHED") if snapshot else "JUDGING",
+            "inspection_mode": matcher.inspection_mode,
+            "step_index": int(passed) if snapshot else 0,
+            "steps": [{"name": name} for name in
+                      ([matcher.target_state] if snapshot else config["steps"])],
             "sn": "IMAGE_TEST",
             "matching": result | {"stable": result.get("stable", raw)},
         }
@@ -149,23 +238,51 @@ def main():
         print(f"{path.name}: {raw}  score={result.get('score', 0.0):.3f} "
               f"gap={result.get('gap', 0.0):.3f}  {result.get('reason', '')}"
               + (f"  -> {written}" if written else ""))
+        if snapshot:
+            conditions = result["conditions"]
+            verdict = "PASS" if passed else "NOT_MATCHED"
+            print(f"  {verdict}: card={'OK' if conditions['mcio_card_present'] else 'NG'} "
+                  f"(margin={conditions['card_margin']:.3f}), "
+                  f"cover={'OK' if conditions['cover_closed'] else 'NG'} "
+                  f"(margin={conditions['cover_margin']:.3f})")
+            for name, score in result["class_scores"].items():
+                print(f"  {name}: {score:.3f}")
+        if expected is not None:
+            print(f"  answer: {'PASS' if expected else 'FAIL'}; "
+                  f"{'CORRECT' if correct else 'MISMATCH'}")
         report.append({"image": str(path), "overlay": str(written) if written else None,
-                       "result": result})
+                       "expected_pass": expected, "actual_pass": passed, "correct": correct,
+                       "error": None, "result": result})
 
-    if args.json is not None:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=float),
-                             encoding="utf-8")
-        print(f"wrote {args.json}")
+    _save_json(report_path, report)
+    print(f"wrote {report_path}")
 
-    evaluated = len(report)
+    evaluated = len(report) - failed
+    compared = sum(item["correct"] is not None for item in report)
+    unlabeled = sum(labels[path.name] is None for path in images)
     print(f"  images evaluated : {evaluated}")
     print(f"  accepted         : {accepted}")
+    print(f"  labels compared  : {compared}")
+    print(f"  unlabeled        : {unlabeled}")
+    print(f"  mismatches       : {len(mismatches)}")
+    if compared:
+        print(f"  accuracy         : {(compared - len(mismatches)) / compared:.1%}")
     print(f"  peak score       : {peak_score:.3f} (threshold {matcher.threshold:.3f}, "
           f"min gap {matcher.min_gap:.3f})")
     if failed:
         print(f"  skipped          : {failed}", file=sys.stderr)
-    return 1 if failed or not evaluated else 0
+    if mismatches:
+        print("\nMISMATCHES (manual answer vs template matching):")
+        for name, expected, actual, result in mismatches:
+            kind = "FALSE PASS" if actual else "FALSE REJECT"
+            print(f"  {name}: {kind}; expected={'PASS' if expected else 'FAIL'}, "
+                  f"actual={'PASS' if actual else 'FAIL'}, score={result['score']:.3f}, "
+                  f"gap={result['gap']:.3f}, reason={result['reason']}")
+    if errors:
+        print("\nIMAGE ERRORS:", file=sys.stderr)
+        for name, error in errors:
+            print(f"  {name}: {error}", file=sys.stderr)
+    return 1 if failed or mismatches or not evaluated else 0
 
 
 if __name__ == "__main__":

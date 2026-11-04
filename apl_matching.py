@@ -54,7 +54,16 @@ class APLMatcher:
         self.method = getattr(cv2, method_name)
         root = (Path(config_path).parent / config.get("template_root", "../templates")).resolve()
         self.samples = {}
-        classes = list(config["steps"]) + list(config.get("ng_states", [])) + [config.get("removal_state", "EMPTY_FIXTURE")]
+        if self.inspection_mode == "single_snapshot_cover_card":
+            # These two counterexamples are used by evaluate_snapshot below.
+            # Reject an incomplete configuration rather than silently skipping
+            # either the card or the cover comparison.
+            required_rejects = {"50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"}
+            if not required_rejects.issubset(self.snapshot_reject_states):
+                raise ValueError("Snapshot inspection requires both cover/card reject states")
+            classes = [self.target_state] + self.snapshot_reject_states
+        else:
+            classes = list(config["steps"]) + list(config.get("ng_states", [])) + [config.get("removal_state", "EMPTY_FIXTURE")]
         for state in dict.fromkeys(classes):
             folder = root / (state + "_CROOP")
             samples = []
