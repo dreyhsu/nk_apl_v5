@@ -69,6 +69,12 @@ def _sync_labels(path, images):
     return labels
 
 
+def _condition_text(label, status, margin):
+    if status is None or margin is None:
+        return f"{label}: N/A"
+    return f"{label}: {'OK' if status else 'NG'} (margin {margin:.3f})"
+
+
 def _annotate(vis, result):
     """Draw the score/gap/reason line the workflow panel omits."""
     raw = result.get("raw", UNKNOWN)
@@ -83,10 +89,10 @@ def _annotate(vis, result):
                 color, 2, cv2.LINE_AA)
     if "conditions" in result:
         conditions = result["conditions"]
-        line = (f"Card: {'OK' if conditions['mcio_card_present'] else 'NG'} "
-                f"(margin {conditions['card_margin']:.3f})  "
-                f"Cover: {'OK' if conditions['cover_closed'] else 'NG'} "
-                f"(margin {conditions['cover_margin']:.3f})")
+        line = "  ".join([
+            _condition_text("Card", conditions.get("mcio_card_present"), conditions.get("card_margin")),
+            _condition_text("Cover", conditions.get("cover_closed"), conditions.get("cover_margin")),
+        ])
         for stroke, ink in ((4, (0, 0, 0)), (2, color)):
             cv2.putText(vis, line, (24, y - 36), cv2.FONT_HERSHEY_SIMPLEX,
                         0.8, ink, stroke, cv2.LINE_AA)
@@ -170,15 +176,18 @@ def main(argv=None):
             out_dir = args.output
             out_dir.mkdir(parents=True, exist_ok=True)
 
-    config = json.loads(Path(args.config).read_bytes())
-    matcher = APLMatcher(config, str(args.config))
+    try:
+        config = json.loads(Path(args.config).read_bytes())
+        matcher = APLMatcher(config, str(args.config))
+    except (OSError, ValueError, cv2.error) as exc:
+        parser.error(f"Cannot initialize matching from {args.config}: {exc}")
     snapshot = matcher.inspection_mode == "single_snapshot_cover_card"
     evaluate = matcher.evaluate_snapshot if snapshot else matcher.evaluate
     ref_w, ref_h = matcher.size
     print(f"inspection mode: {matcher.inspection_mode}")
     print(f"template angles (degrees): {matcher.template_angles_deg}")
     for name, samples in matcher.samples.items():
-        print(f"  golden sample: {name}_CROOP ({len(samples)} images)")
+        print(f"  golden sample: {matcher.sample_folders[name]} ({len(samples)} images)")
     if snapshot:
         print("PASS requires target score >= threshold and EVERY reject-state margin >= min_gap.")
         print("Each image is evaluated independently; Auto Capture consecutive hits are not simulated.")
@@ -243,10 +252,9 @@ def main(argv=None):
         if snapshot:
             conditions = result["conditions"]
             verdict = "PASS" if passed else "NOT_MATCHED"
-            print(f"  {verdict}: card={'OK' if conditions['mcio_card_present'] else 'NG'} "
-                  f"(margin={conditions['card_margin']:.3f}), "
-                  f"cover={'OK' if conditions['cover_closed'] else 'NG'} "
-                  f"(margin={conditions['cover_margin']:.3f})")
+            card = _condition_text("card", conditions.get("mcio_card_present"), conditions.get("card_margin"))
+            cover = _condition_text("cover", conditions.get("cover_closed"), conditions.get("cover_margin"))
+            print(f"  {verdict}: {card}, {cover}")
             for name, score in result["class_scores"].items():
                 margin = result["reject_margins"].get(name)
                 detail = (f"  margin={margin:.3f} "

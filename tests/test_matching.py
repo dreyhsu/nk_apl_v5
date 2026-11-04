@@ -116,11 +116,38 @@ class SnapshotTemplateLoadingTests(unittest.TestCase):
                     self.matcher()
             path.write_bytes(content)
 
-    def test_reject_comparisons_cannot_be_disabled_by_omitting_states(self):
-        for states in ([], self.rejects[:1], self.rejects[1:]):
+    def test_reject_config_requires_nonempty_state_names(self):
+        for states in ([], "REJECT", [None], [""], ["  "], [1]):
             with self.subTest(states=states):
-                with self.assertRaisesRegex(ValueError, "requires both"):
+                with self.assertRaisesRegex(ValueError, "non-empty list"):
                     self.matcher(snapshot_reject_states=states)
+
+    def test_reject_names_are_configurable_and_absent_diagnostics_are_unknown(self):
+        custom = "CUSTOM_REJECT"
+        source = self.root / "templates" / (self.rejects[0] + "_CROOP")
+        source.rename(source.with_name(custom))
+        matcher = self.matcher(snapshot_reject_states=[custom], template_angles_deg=[-1, 0, 1])
+        for state in (self.target, self.rejects[0]):
+            frame = np.zeros((48, 48, 3), dtype=np.uint8)
+            frame[4:20, 5:21] = cv2.cvtColor(self.images[state], cv2.COLOR_GRAY2BGR)
+            with self.subTest(state=state):
+                result = matcher.evaluate_snapshot(frame)
+                self.assertEqual(result["accepted"], state == self.target)
+                self.assertEqual(set(result["reject_margins"]), {custom})
+                self.assertTrue(all(value is None for value in result["conditions"].values()))
+                if state == self.target:
+                    self.assertEqual(result["reason"], "accepted")
+                else:
+                    self.assertEqual(result["failed_reject_states"], [custom])
+                    self.assertIn(result["reason"], {"below_threshold", "reject_state_or_ambiguous"})
+
+    def test_state_named_folder_takes_precedence_over_legacy_folder(self):
+        folder = self.root / "templates" / self.target
+        folder.mkdir()
+        cv2.imwrite(str(folder / "direct.png"), self.images[self.target])
+        matcher = self.matcher()
+        self.assertEqual(matcher.samples[self.target][0][0], "direct.png")
+        self.assertEqual(matcher.sample_folders[self.target], folder.resolve())
 
     def test_legacy_mode_still_requires_its_configured_folders(self):
         with self.assertRaisesRegex(ValueError, "No valid golden sample for EMPTY_FIXTURE"):

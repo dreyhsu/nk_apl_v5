@@ -9,14 +9,17 @@ python scripts/image_match_test.py --image "照片資料夾"
 工具會比對該資料夾內所有支援的圖片，不遞迴子資料夾。
 支援 JPG、JPEG、PNG、BMP、TIF、TIFF；自動略過先前產生的 `*_overlay` 圖片。
 輸入照片尺寸必須符合 `config/apl_workflow.json` 的 `reference_size`。
-預設使用三類 Golden Sample，判定關蓋與插卡；每張圖片獨立判定，
+使用設定檔指定的目標與 Reject State Golden Sample；每張圖片獨立判定，
 不模擬 Auto Capture 的連續命中次數。
 
 PASS 必須同時符合：目標分數 ≥ `threshold`，且目標分數減去
 `snapshot_reject_states` 每一類的最高分數，都 ≥ `min_gap`。
-新增 Reject State 時，建立 `templates/<狀態名稱>_CROOP/` 放入裁切模板，
+新增 Reject State 時，建立 `templates/<狀態名稱>/` 放入裁切模板，
 並將狀態名稱加入設定的 `snapshot_reject_states`；重新執行即可生效。
-保留原有關蓋無卡與開蓋有卡兩類。
+也支援舊版 `templates/<狀態名稱>_CROOP/`，兩者都有時優先使用無後綴資料夾。
+Reject State 不限制固定名稱，但清單必須有至少一個有效類別。
+若未設定 `50_COVER_CLOSED` 或 `50_COVER_OPEN_CARD_PRESENT`，
+對應的插卡或關蓋診斷顯示 `N/A`，JSON 欄位為 `null`；PASS 仍依全部設定反例判定。
 工具顯示每類分數差與 OK／NG，並列出所有分數差不足的類別。
 
 `config/apl_workflow.json` 的 `template_angles_deg: [-1, 0, 1]` 啟用 ±1° 搜尋。
@@ -83,7 +86,7 @@ MISMATCHES (manual answer vs template matching):
 `result.gap` 是所有反例分數差的最小值。
 `result.angle_deg` 是目標模板最佳搜尋角度；`result.class_angles_deg`
 記錄每一類最佳搜尋角度（正值逆時針）。
-目標分數已達門檻、插卡／關蓋兩類比較通過，但新增反例比較不通過時，
+目標分數已達門檻、拒絕原因來自自訂反例時，
 `reason` 為 `reject_state_or_ambiguous`。
 
 損壞、無法讀取或尺寸不符的照片會列於 `IMAGE ERRORS`，也記錄在結果 JSON，

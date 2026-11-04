@@ -110,11 +110,15 @@ SmartCam 直接部署慣用目錄：
 - `50_COVER_CLOSED_CROOP`：關蓋無卡，插卡檢查的反例。
 - `50_COVER_OPEN_CARD_PRESENT_CROOP`：開蓋有卡，關蓋檢查的反例。
 
-兩種反例都必須保留；缺少指定類別的有效模板時，檢查會報錯。
-新增反例時，在 `template_root` 建立 `<狀態名稱>_CROOP` 資料夾並放入有效裁切模板，
+反例名稱由 `snapshot_reject_states` 決定，必須設定至少一類，沒有固定名稱限制；
+缺少設定清單中任一類的有效模板時，檢查會報錯。
+新增反例時，在 `template_root` 建立 `<狀態名稱>` 資料夾並放入有效裁切模板，
 再將狀態名稱（不含 `_CROOP`）加入 `snapshot_reject_states`。
+同時支援舊版 `<狀態名稱>_CROOP` 資料夾；兩者都有時，優先使用無後綴資料夾。
 重新載入比對器後，新類別會自動加入分數差判定，無須再改程式。
 `target_state` 不能同時列為反例。
+`conditions` 中的插卡／關蓋診斷只在清單包含對應舊名稱時產生，否則為 `null`，
+圖片測試顯示 `N/A`。移除某種反例代表不再使用它進行該項判斷。
 結果中的 `reject_margins` 記錄每一類的目標分數差，`failed_reject_states`
 列出未達 `min_gap` 的類別；`gap` 為所有反例分數差的最小值。
 單張模式不使用 `steps`、`ng_states`、`removal_state` 來載入模板，因此

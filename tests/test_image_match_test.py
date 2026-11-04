@@ -60,19 +60,18 @@ class ImageMatchTestTests(unittest.TestCase):
                     self.assertEqual(result["angle_deg"], result["class_angles_deg"][config["target_state"]])
                     self.assertEqual(result["accepted"], state == config["target_state"])
                     if state == config["target_state"]:
-                        self.assertTrue(result["conditions"]["mcio_card_present"])
-                        self.assertTrue(result["conditions"]["cover_closed"])
-                    elif state == "50_COVER_CLOSED":
-                        self.assertFalse(result["conditions"]["mcio_card_present"])
+                        for condition in ("mcio_card_present", "cover_closed"):
+                            if result["conditions"][condition] is not None:
+                                self.assertTrue(result["conditions"][condition])
                     else:
-                        self.assertFalse(result["conditions"]["cover_closed"])
+                        self.assertIn(state, result["failed_reject_states"])
                     frame = cv2.imread(item["image"])
                     self.assertEqual(result, matcher.evaluate_snapshot(frame))
                     overlay = cv2.imread(item["overlay"])
                     self.assertEqual(overlay.shape, frame.shape)
                     self.assertFalse(np.array_equal(overlay, frame))
             text = output.getvalue()
-            self.assertIn("PASS: card=OK", text)
+            self.assertIn("PASS: card: OK", text)
             self.assertIn("NOT_MATCHED:", text)
             self.assertIn("accepted         : 1", text)
             self.assertNotIn("EMPTY_FIXTURE", text)
@@ -209,6 +208,40 @@ class ManualAnswerTests(unittest.TestCase):
             self.run_images("--json", str(self.labels), "--no-overlay")
         self.assertEqual(raised.exception.code, 2)
         self.assertFalse(self.labels.exists())
+
+    def test_custom_only_rejects_and_state_named_folders_work_with_overlays(self):
+        state = "CUSTOM_REJECT"
+        source = self.root / "templates" / "50_COVER_CLOSED_CROOP"
+        source.rename(source.with_name(state))
+        target = self.root / "templates" / "50_COVER_CLOSED_CARD_PRESENT_CROOP"
+        target.rename(target.with_name("50_COVER_CLOSED_CARD_PRESENT"))
+        config = json.loads(self.config.read_text())
+        config.update(snapshot_reject_states=[state], template_angles_deg=[-1, 0, 1])
+        self.config.write_text(json.dumps(config))
+        code, output, errors = self.run_images()
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertIn("card: N/A, cover: N/A", output)
+        report = json.loads(self.results.read_text())
+        for item in report:
+            self.assertTrue(Path(item["overlay"]).exists())
+            self.assertEqual(set(item["result"]["reject_margins"]), {state})
+        reject = next(row for row in report if Path(row["image"]).name == "no_card.png")
+        self.assertFalse(reject["actual_pass"])
+        self.assertEqual(reject["result"]["failed_reject_states"], [state])
+        self.assertIn(reject["result"]["reason"], {"below_threshold", "reject_state_or_ambiguous"})
+
+    def test_missing_configured_templates_report_a_clear_startup_error(self):
+        config = json.loads(self.config.read_text())
+        config["snapshot_reject_states"] = ["MISSING_REJECT"]
+        self.config.write_text(json.dumps(config))
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as raised:
+                main(["--image", str(self.inputs), "--config", str(self.config), "--no-overlay"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("No valid golden sample for MISSING_REJECT", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
 
 
 if __name__ == "__main__":

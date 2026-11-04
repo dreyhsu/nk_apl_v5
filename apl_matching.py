@@ -34,9 +34,13 @@ class APLMatcher:
         self.cv2, self.np = cv2, np
         self.inspection_mode = str(config.get("inspection_mode", "legacy_workflow"))
         self.target_state = str(config.get("target_state", "50_COVER_CLOSED_CARD_PRESENT"))
-        self.snapshot_reject_states = list(config.get(
+        reject_states = config.get(
             "snapshot_reject_states", ["50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"]
-        ))
+        )
+        if (not isinstance(reject_states, list) or not reject_states
+                or any(not isinstance(state, str) or not state.strip() for state in reject_states)):
+            raise ValueError("snapshot_reject_states must be a non-empty list of state names")
+        self.snapshot_reject_states = list(dict.fromkeys(reject_states))
         self.size = tuple(int(x) for x in config.get("reference_size", [1920, 1080]))
         self.roi = tuple(int(x) for x in config.get("search_roi", [751, 254, 431, 588]))
         if len(self.size) != 2 or min(self.size) <= 0 or len(self.roi) != 4:
@@ -61,21 +65,20 @@ class APLMatcher:
         self.template_angles_deg = list(dict.fromkeys(float(angle) for angle in angles))
         root = (Path(config_path).parent / config.get("template_root", "../templates")).resolve()
         self.samples = {}
+        self.sample_folders = {}
         self.template_variants = {}
         if self.inspection_mode == "single_snapshot_cover_card":
-            # These two counterexamples are used by evaluate_snapshot below.
-            # Reject an incomplete configuration rather than silently skipping
-            # either the card or the cover comparison.
-            required_rejects = {"50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"}
-            if not required_rejects.issubset(self.snapshot_reject_states):
-                raise ValueError("Snapshot inspection requires both cover/card reject states")
             if self.target_state in self.snapshot_reject_states:
                 raise ValueError("Target state cannot also be a snapshot reject state")
             classes = [self.target_state] + self.snapshot_reject_states
         else:
             classes = list(config["steps"]) + list(config.get("ng_states", [])) + [config.get("removal_state", "EMPTY_FIXTURE")]
         for state in dict.fromkeys(classes):
-            folder = root / (state + "_CROOP")
+            # State-named folders are preferred; retain legacy _CROOP folders.
+            folder = root / state
+            if not folder.is_dir():
+                folder = root / (state + "_CROOP")
+            self.sample_folders[state] = folder
             samples = []
             for path in sorted(folder.glob("*")):
                 if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}:
@@ -174,17 +177,19 @@ class APLMatcher:
         failed_reject_states = [
             state for state, margin in reject_margins.items() if margin < self.min_gap
         ]
-        # Retain the card/cover diagnostics used by the station and image tool.
-        card_margin = reject_margins["50_COVER_CLOSED"]
-        cover_margin = reject_margins["50_COVER_OPEN_CARD_PRESENT"]
-        card_present = card_margin >= self.min_gap
-        cover_closed = cover_margin >= self.min_gap
+        # Optional diagnostics for the original two named counterexamples.
+        # Custom reject names still participate fully in the generic decision;
+        # an absent diagnostic is unknown, never a claimed card/cover success.
+        card_margin = reject_margins.get("50_COVER_CLOSED")
+        cover_margin = reject_margins.get("50_COVER_OPEN_CARD_PRESENT")
+        card_present = card_margin >= self.min_gap if card_margin is not None else None
+        cover_closed = cover_margin >= self.min_gap if cover_margin is not None else None
         accepted = target["score"] >= self.threshold and not failed_reject_states
         reason = (
             "accepted" if accepted else
             "below_threshold" if target["score"] < self.threshold else
-            "card_missing_or_ambiguous" if not card_present else
-            "cover_open_or_ambiguous" if not cover_closed else
+            "card_missing_or_ambiguous" if card_present is False else
+            "cover_open_or_ambiguous" if cover_closed is False else
             "reject_state_or_ambiguous"
         )
         return {
