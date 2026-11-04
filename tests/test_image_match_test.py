@@ -55,6 +55,9 @@ class ImageMatchTestTests(unittest.TestCase):
                 with self.subTest(state=state):
                     result = item["result"]
                     self.assertEqual(set(result["class_scores"]), set(classes))
+                    self.assertEqual(set(result["class_angles_deg"]), set(classes))
+                    self.assertEqual(result["class_angles_deg"][state], 0)
+                    self.assertEqual(result["angle_deg"], result["class_angles_deg"][config["target_state"]])
                     self.assertEqual(result["accepted"], state == config["target_state"])
                     if state == config["target_state"]:
                         self.assertTrue(result["conditions"]["mcio_card_present"])
@@ -179,6 +182,27 @@ class ManualAnswerTests(unittest.TestCase):
         self.assertFalse(self.labels.exists())
         self.assertFalse(self.results.exists())
         self.assertEqual(list(self.inputs.glob("*_overlay.jpg")), [])
+
+    def test_extra_reject_is_used_by_batch_decision_and_report(self):
+        state = "50_CARD_NOT_FULLY_INSERTED"
+        folder = self.root / "templates" / (state + "_CROOP")
+        folder.mkdir()
+        sample = self.root / "templates" / "50_COVER_CLOSED_CARD_PRESENT_CROOP" / "sample.png"
+        (folder / "sample.png").write_bytes(sample.read_bytes())
+        config = json.loads(self.config.read_text())
+        config["snapshot_reject_states"] = ["50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT", state]
+        self.config.write_text(json.dumps(config))
+        self.labels.write_text(json.dumps({"pass.png": False}))
+        code, output, _ = self.run_images("--no-overlay")
+        self.assertEqual(code, 0)
+        report = json.loads(self.results.read_text())
+        item = next(row for row in report if Path(row["image"]).name == "pass.png")
+        self.assertFalse(item["actual_pass"])
+        self.assertTrue(item["correct"])
+        self.assertEqual(item["result"]["failed_reject_states"], [state])
+        self.assertIn("reject_state_or_ambiguous", output)
+        self.assertIn(f"failed reject states: {state}", output)
+        self.assertIn("margin=0.000 (NG)", output)
 
     def test_answers_and_results_cannot_share_a_path(self):
         with self.assertRaises(SystemExit) as raised:

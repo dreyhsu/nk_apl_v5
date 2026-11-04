@@ -6,8 +6,8 @@ headless: no station, no SFIS, no upload. Every output image carries the ROI,
 the matched bounding box, and the match state/score. Accepts a single image or
 a directory of images.
 
-In single_snapshot_cover_card mode, loads the target and two counterexamples
-only, and reports the same card/cover score margins as Auto Capture. Each image
+In single_snapshot_cover_card mode, loads the target and all configured reject
+states, and reports the same score margins as Auto Capture. Each image
 is an independent visual inspection; consecutive-hit counting is camera-only.
 
 Creates image_match_labels.json beside the inputs: map each filename to true
@@ -74,7 +74,8 @@ def _annotate(vis, result):
     raw = result.get("raw", UNKNOWN)
     color = (90, 210, 130) if raw != UNKNOWN else (100, 100, 255)  # BGR green / red
     line = (f"{raw}  score={result.get('score', 0.0):.3f} "
-            f"gap={result.get('gap', 0.0):.3f}  {result.get('reason', '')}")
+            f"gap={result.get('gap', 0.0):.3f}  angle={result.get('angle_deg', 0.0):g}deg  "
+            f"{result.get('reason', '')}")
     y = vis.shape[0] - 28
     cv2.putText(vis, line, (24, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                 (0, 0, 0), 4, cv2.LINE_AA)
@@ -175,10 +176,11 @@ def main(argv=None):
     evaluate = matcher.evaluate_snapshot if snapshot else matcher.evaluate
     ref_w, ref_h = matcher.size
     print(f"inspection mode: {matcher.inspection_mode}")
+    print(f"template angles (degrees): {matcher.template_angles_deg}")
     for name, samples in matcher.samples.items():
         print(f"  golden sample: {name}_CROOP ({len(samples)} images)")
     if snapshot:
-        print("PASS requires target score >= threshold and both card/cover margins >= min_gap.")
+        print("PASS requires target score >= threshold and EVERY reject-state margin >= min_gap.")
         print("Each image is evaluated independently; Auto Capture consecutive hits are not simulated.")
 
     report = []
@@ -246,7 +248,14 @@ def main(argv=None):
                   f"cover={'OK' if conditions['cover_closed'] else 'NG'} "
                   f"(margin={conditions['cover_margin']:.3f})")
             for name, score in result["class_scores"].items():
-                print(f"  {name}: {score:.3f}")
+                margin = result["reject_margins"].get(name)
+                detail = (f"  margin={margin:.3f} "
+                          f"({'OK' if margin >= matcher.min_gap else 'NG'})"
+                          if margin is not None else "  (target)")
+                angle = result["class_angles_deg"][name]
+                print(f"  {name}: {score:.3f}{detail}  angle={angle:g}deg")
+            if result["failed_reject_states"]:
+                print("  failed reject states: " + ", ".join(result["failed_reject_states"]))
         if expected is not None:
             print(f"  answer: {'PASS' if expected else 'FAIL'}; "
                   f"{'CORRECT' if correct else 'MISMATCH'}")

@@ -27,9 +27,10 @@
     }
   },
   "method": "TM_CCOEFF_NORMED",
+  "template_angles_deg": [-1, 0, 1],
   "template_root": "../templates",
   "target_state": "50_COVER_CLOSED_CARD_PRESENT",
-  "snapshot_reject_states": ["50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"],
+  "snapshot_reject_states": ["50_CARD_NOT_FULLY_INSERTED", "50_COVER_CLOSED"],
   "sn_max_length": 128,
   "sn_prefix": "",
   "sn_length": 19,

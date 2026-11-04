@@ -81,6 +81,7 @@ SmartCam 直接部署慣用目錄：
   "threshold": 0.8,
   "min_gap": 0.05,
   "method": "TM_CCOEFF_NORMED",
+  "template_angles_deg": [-1, 0, 1],
   "target_state": "50_COVER_CLOSED_CARD_PRESENT",
   "snapshot_reject_states": [
     "50_COVER_CLOSED",
@@ -89,17 +90,33 @@ SmartCam 直接部署慣用目錄：
 }
 ```
 
-`target` 分數必須達門檻，且分別高於「關蓋無卡」與「開蓋有卡」至少
-`min_gap`。判定框只在接受時顯示。
+`target` 分數必須達 `threshold`，且高於 `snapshot_reject_states` 中每一類
+反例的最高模板分數至少 `min_gap`，才會 PASS。任一類分數差不足就拒絕。
+判定框只在接受時顯示。
+
+`template_angles_deg` 指定模板搜尋角度，目前為 −1°、0°、+1°。
+目標與每一類反例都在所有樣本及角度中取最高分，再套用門檻與分數差規則。
+旋轉模板在載入時快取，逐張影像比對時不再旋轉；三個角度約增加到三倍比對次數。
+設為 `[0]` 可關閉旋轉搜尋，未設定時也預設 `[0]`。
+角度以度為單位，正值為逆時針；使用固定模板大小、線性插值及邊緣像素補值，
+旋轉時邊角可能裁切，模板仍可放入原有 ROI。
+結果中的 `angle_deg` 為目標模板最佳角度，`class_angles_deg` 為每一類最佳角度；
+它們表示搜尋使用的模板旋轉角度，並非精確量測產品角度。
 
 單張模式只載入 `target_state` 與 `snapshot_reject_states` 指定的模板，
-目前為以下三個資料夾（位於 `template_root`）：
+預設為以下三個資料夾（位於 `template_root`）：
 
 - `50_COVER_CLOSED_CARD_PRESENT_CROOP`：關蓋有卡，PASS 目標。
 - `50_COVER_CLOSED_CROOP`：關蓋無卡，插卡檢查的反例。
 - `50_COVER_OPEN_CARD_PRESENT_CROOP`：開蓋有卡，關蓋檢查的反例。
 
 兩種反例都必須保留；缺少指定類別的有效模板時，檢查會報錯。
+新增反例時，在 `template_root` 建立 `<狀態名稱>_CROOP` 資料夾並放入有效裁切模板，
+再將狀態名稱（不含 `_CROOP`）加入 `snapshot_reject_states`。
+重新載入比對器後，新類別會自動加入分數差判定，無須再改程式。
+`target_state` 不能同時列為反例。
+結果中的 `reject_margins` 記錄每一類的目標分數差，`failed_reject_states`
+列出未達 `min_gap` 的類別；`gap` 為所有反例分數差的最小值。
 單張模式不使用 `steps`、`ng_states`、`removal_state` 來載入模板，因此
 `EMPTY_FIXTURE_CROOP`、`50_PRODUCT_LOADED_CROOP`、`30_PRODUCT_LOADED_CROOP`、
 `30_COVER_CLOSED_CROOP` 不必存在，也不影響單張模式的通過條件。

@@ -52,8 +52,16 @@ class APLMatcher:
         if method_name not in {"TM_CCOEFF_NORMED", "TM_CCORR_NORMED", "TM_SQDIFF_NORMED"}:
             raise ValueError("Unsupported template matching method")
         self.method = getattr(cv2, method_name)
+        angles = config.get("template_angles_deg", [0])
+        if (not isinstance(angles, list) or not angles
+                or any(isinstance(angle, bool) or not isinstance(angle, (int, float))
+                       or not math.isfinite(angle) or not -180 <= angle <= 180
+                       for angle in angles)):
+            raise ValueError("template_angles_deg must be a non-empty list of finite angles from -180 to 180")
+        self.template_angles_deg = list(dict.fromkeys(float(angle) for angle in angles))
         root = (Path(config_path).parent / config.get("template_root", "../templates")).resolve()
         self.samples = {}
+        self.template_variants = {}
         if self.inspection_mode == "single_snapshot_cover_card":
             # These two counterexamples are used by evaluate_snapshot below.
             # Reject an incomplete configuration rather than silently skipping
@@ -61,6 +69,8 @@ class APLMatcher:
             required_rejects = {"50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"}
             if not required_rejects.issubset(self.snapshot_reject_states):
                 raise ValueError("Snapshot inspection requires both cover/card reject states")
+            if self.target_state in self.snapshot_reject_states:
+                raise ValueError("Target state cannot also be a snapshot reject state")
             classes = [self.target_state] + self.snapshot_reject_states
         else:
             classes = list(config["steps"]) + list(config.get("ng_states", [])) + [config.get("removal_state", "EMPTY_FIXTURE")]
@@ -82,6 +92,22 @@ class APLMatcher:
             if not samples:
                 raise ValueError("No valid golden sample for " + state)
             self.samples[state] = samples
+            variants = []
+            # Prefer the original template on exact score ties. Rotation is
+            # performed once here, never in the per-frame matching loop.
+            for name, image in samples:
+                for angle in sorted(self.template_angles_deg, key=lambda value: value != 0):
+                    if angle == 0:
+                        rotated = image
+                    else:
+                        th, tw = image.shape
+                        matrix = cv2.getRotationMatrix2D(((tw - 1) / 2, (th - 1) / 2), angle, 1.0)
+                        rotated = cv2.warpAffine(image, matrix, (tw, th),
+                                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                    if float(rotated.std()) < 1e-6:
+                        raise ValueError("Constant rotated template cannot be matched reliably: " + name)
+                    variants.append((name, angle, rotated))
+            self.template_variants[state] = variants
 
         if self.inspection_mode == "single_snapshot_cover_card":
             required = [self.target_state] + self.snapshot_reject_states
@@ -93,15 +119,15 @@ class APLMatcher:
         cv2 = self.cv2
         x, y, _, _ = self.roi
         best_by_class = {}
-        for state, samples in self.samples.items():
+        for state, variants in self.template_variants.items():
             best = None
-            for name, template in samples:
+            for name, angle, template in variants:
                 scores = cv2.matchTemplate(gray, template, self.method)
                 mn, mx, mnloc, mxloc = cv2.minMaxLoc(scores)
                 score, location = (1.0 - float(mn), mnloc) if self.method == cv2.TM_SQDIFF_NORMED else (float(mx), mxloc)
                 if not math.isfinite(score):
                     score = -1.0
-                item = {"score": score, "template": name,
+                item = {"score": score, "template": name, "angle_deg": angle,
                         "box": [x + location[0], y + location[1], template.shape[1], template.shape[0]]}
                 if best is None or score > best["score"]:
                     best = item
@@ -127,6 +153,8 @@ class APLMatcher:
             "box": best["box"] if reason == "accepted" else None,
             "roi": list(self.roi), "class_scores": {k: v["score"] for k, v in best_by_class.items()},
             "template": best["template"],
+            "angle_deg": best.get("angle_deg", 0.0),
+            "class_angles_deg": {name: item.get("angle_deg", 0.0) for name, item in best_by_class.items()},
         }
 
     def evaluate_snapshot(self, frame):
@@ -139,18 +167,25 @@ class APLMatcher:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y+h, x:x+w]
         scores = self._best_by_class(gray)
         target = scores[self.target_state]
-        closed_without_card = scores.get("50_COVER_CLOSED")
-        open_with_card = scores.get("50_COVER_OPEN_CARD_PRESENT")
-        card_margin = target["score"] - (closed_without_card["score"] if closed_without_card else -1.0)
-        cover_margin = target["score"] - (open_with_card["score"] if open_with_card else -1.0)
+        reject_margins = {
+            state: target["score"] - scores[state]["score"]
+            for state in self.snapshot_reject_states
+        }
+        failed_reject_states = [
+            state for state, margin in reject_margins.items() if margin < self.min_gap
+        ]
+        # Retain the card/cover diagnostics used by the station and image tool.
+        card_margin = reject_margins["50_COVER_CLOSED"]
+        cover_margin = reject_margins["50_COVER_OPEN_CARD_PRESENT"]
         card_present = card_margin >= self.min_gap
         cover_closed = cover_margin >= self.min_gap
-        accepted = target["score"] >= self.threshold and card_present and cover_closed
+        accepted = target["score"] >= self.threshold and not failed_reject_states
         reason = (
             "accepted" if accepted else
             "below_threshold" if target["score"] < self.threshold else
             "card_missing_or_ambiguous" if not card_present else
-            "cover_open_or_ambiguous"
+            "cover_open_or_ambiguous" if not cover_closed else
+            "reject_state_or_ambiguous"
         )
         return {
             "raw": self.target_state if accepted else UNKNOWN,
@@ -159,11 +194,15 @@ class APLMatcher:
             "reason": reason,
             "best_state": self.target_state,
             "score": target["score"],
-            "gap": min(card_margin, cover_margin),
+            "gap": min(reject_margins.values()),
+            "reject_margins": reject_margins,
+            "failed_reject_states": failed_reject_states,
             "box": target["box"] if accepted else None,
             "roi": list(self.roi),
             "class_scores": {name: item["score"] for name, item in scores.items()},
             "template": target["template"],
+            "angle_deg": target.get("angle_deg", 0.0),
+            "class_angles_deg": {name: item.get("angle_deg", 0.0) for name, item in scores.items()},
             "conditions": {
                 "cover_closed": cover_closed,
                 "mcio_card_present": card_present,
