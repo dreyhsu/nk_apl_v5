@@ -1,0 +1,1238 @@
+[
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012310944Z_K2V520S1PI7B36A246C_NOT_MATCHED_ea8820e81c7d_f634af24b125_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012310944Z_K2V520S1PI7B36A246C_NOT_MATCHED_ea8820e81c7d_f634af24b125_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5547642707824707,
+      "gap": -0.11778062582015991,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.11778062582015991,
+        "50_COVER_CLOSED": 0.04682469367980957
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5547642707824707,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6725448966026306,
+        "50_COVER_CLOSED": 0.5079395771026611
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": 0.04682469367980957
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012319307Z_K2V520S1PI7B36A246C_NOT_MATCHED_ea8820e81c7d_2a37fdc7ff76_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012319307Z_K2V520S1PI7B36A246C_NOT_MATCHED_ea8820e81c7d_2a37fdc7ff76_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5549432635307312,
+      "gap": -0.1167595386505127,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.1167595386505127,
+        "50_COVER_CLOSED": 0.05496180057525635
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5549432635307312,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6717028021812439,
+        "50_COVER_CLOSED": 0.49998146295547485
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.05496180057525635
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012339922Z_K2V520S1PI7B36A246C_TIMEOUT_PASS_ea8820e81c7d_9723800eb873_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T012339922Z_K2V520S1PI7B36A246C_TIMEOUT_PASS_ea8820e81c7d_9723800eb873_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5588710904121399,
+      "gap": -0.11424773931503296,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.11424773931503296,
+        "50_COVER_CLOSED": 0.04738771915435791
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5588710904121399,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6731188297271729,
+        "50_COVER_CLOSED": 0.511483371257782
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": 0.04738771915435791
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013016515Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_e30e74c1dd64_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013016515Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_e30e74c1dd64_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.594068706035614,
+      "gap": -0.09813505411148071,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.09813505411148071,
+        "50_COVER_CLOSED": 0.0915479063987732
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.594068706035614,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6922037601470947,
+        "50_COVER_CLOSED": 0.5025207996368408
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.0915479063987732
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013037084Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_973142cbb266_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013037084Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_973142cbb266_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5622527599334717,
+      "gap": -0.12065994739532471,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.12065994739532471,
+        "50_COVER_CLOSED": 0.0670536458492279
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5622527599334717,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6829127073287964,
+        "50_COVER_CLOSED": 0.4951991140842438
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": 1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.0670536458492279
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013227222Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_ea1e51674519_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261013T013227222Z_K2V520S1PI7B36A246C_NOT_MATCHED_191b1894fb3b_ea1e51674519_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5945995450019836,
+      "gap": -0.09720414876937866,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.09720414876937866,
+        "50_COVER_CLOSED": 0.07920539379119873
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5945995450019836,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6918036937713623,
+        "50_COVER_CLOSED": 0.5153941512107849
+      },
+      "template": "01 (4).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.07920539379119873
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065613627Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_7463b33d63a8_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065613627Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_7463b33d63a8_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.46971777081489563,
+      "gap": -0.08485856652259827,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.017730355262756348,
+        "50_COVER_CLOSED": -0.08485856652259827
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.46971777081489563,
+        "50_CARD_NOT_FULLY_INSERTED": 0.487448126077652,
+        "50_COVER_CLOSED": 0.5545763373374939
+      },
+      "template": "01 (5).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.08485856652259827
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065647912Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_19e3a80ee5cf_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065647912Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_19e3a80ee5cf_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.6142124533653259,
+      "gap": -0.03578603267669678,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.03578603267669678,
+        "50_COVER_CLOSED": 0.12793412804603577
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.6142124533653259,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6499984860420227,
+        "50_COVER_CLOSED": 0.48627832531929016
+      },
+      "template": "01 (5).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.12793412804603577
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065657202Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_d23971f17d28_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065657202Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_d23971f17d28_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.6118799448013306,
+      "gap": -0.03564095497131348,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.03564095497131348,
+        "50_COVER_CLOSED": 0.09210085868835449
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.6118799448013306,
+        "50_CARD_NOT_FULLY_INSERTED": 0.647520899772644,
+        "50_COVER_CLOSED": 0.5197790861129761
+      },
+      "template": "01 (5).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.09210085868835449
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065717947Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_00a89399ce05_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065717947Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_00a89399ce05_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5479284524917603,
+      "gap": -0.06876605749130249,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.06876605749130249,
+        "50_COVER_CLOSED": 0.024205267429351807
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5479284524917603,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6166945099830627,
+        "50_COVER_CLOSED": 0.5237231850624084
+      },
+      "template": "01 (1).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": 0.024205267429351807
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065724441Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_b3adda01d77b_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065724441Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_b3adda01d77b_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.6437358260154724,
+      "gap": -0.03106027841567993,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.03106027841567993,
+        "50_COVER_CLOSED": 0.12268579006195068
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.6437358260154724,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6747961044311523,
+        "50_COVER_CLOSED": 0.5210500359535217
+      },
+      "template": "01 (5).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.12268579006195068
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065745481Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_31f2b6d055ac_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065745481Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_31f2b6d055ac_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.4773850440979004,
+      "gap": -0.10342395305633545,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.008937627077102661,
+        "50_COVER_CLOSED": -0.10342395305633545
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.4773850440979004,
+        "50_CARD_NOT_FULLY_INSERTED": 0.48632267117500305,
+        "50_COVER_CLOSED": 0.5808089971542358
+      },
+      "template": "01 (4).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.10342395305633545
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065814324Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_f7a8f82081b4_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065814324Z_K2V530S1PI7B56AV54C_NOT_MATCHED_c4b604678f98_f7a8f82081b4_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5925940871238708,
+      "gap": -0.11044454574584961,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.11044454574584961,
+        "50_COVER_CLOSED": 0.06975436210632324
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5925940871238708,
+        "50_CARD_NOT_FULLY_INSERTED": 0.7030386328697205,
+        "50_COVER_CLOSED": 0.5228397250175476
+      },
+      "template": "01 (4).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.06975436210632324
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065852425Z_K2V530S1PI7B56AV54C_NOT_MATCHED_a118eafc4825_1232f515bd59_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T065852425Z_K2V530S1PI7B56AV54C_NOT_MATCHED_a118eafc4825_1232f515bd59_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5828221440315247,
+      "gap": -0.107546865940094,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.107546865940094,
+        "50_COVER_CLOSED": 0.04855608940124512
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5828221440315247,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6903690099716187,
+        "50_COVER_CLOSED": 0.5342660546302795
+      },
+      "template": "01 (4).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": 0.04855608940124512
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T072632926Z_K2V520S2PI7B469V542_NOT_MATCHED_ea430b79f359_334f246e5b97_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T072632926Z_K2V520S2PI7B469V542_NOT_MATCHED_ea430b79f359_334f246e5b97_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5565325617790222,
+      "gap": -0.06348353624343872,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.06348353624343872,
+        "50_COVER_CLOSED": 0.012778639793395996
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5565325617790222,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6200160980224609,
+        "50_COVER_CLOSED": 0.5437539219856262
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": 0.012778639793395996
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T072804915Z_K2V520S2PI7B469V542_NOT_MATCHED_bfce7c3523f3_57144ab398e2_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T072804915Z_K2V520S2PI7B469V542_NOT_MATCHED_bfce7c3523f3_57144ab398e2_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5710422992706299,
+      "gap": -0.0646200180053711,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.0646200180053711,
+        "50_COVER_CLOSED": 0.054343223571777344
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5710422992706299,
+        "50_CARD_NOT_FULLY_INSERTED": 0.635662317276001,
+        "50_COVER_CLOSED": 0.5166990756988525
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.054343223571777344
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075450251Z_K2V520S2PI7B469V542_OK_d38f866fb98e_7a14d4440da6_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075450251Z_K2V520S2PI7B469V542_OK_d38f866fb98e_7a14d4440da6_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5643715858459473,
+      "gap": -0.09582823514938354,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.09582823514938354,
+        "50_COVER_CLOSED": 0.053032875061035156
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5643715858459473,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6601998209953308,
+        "50_COVER_CLOSED": 0.5113387107849121
+      },
+      "template": "01 (4).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.053032875061035156
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075650827Z_K2V520S2PI7B469V542_OK_8fe8692afa4d_5e80e04e754a_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075650827Z_K2V520S2PI7B469V542_OK_8fe8692afa4d_5e80e04e754a_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5563639402389526,
+      "gap": -0.09288835525512695,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.09288835525512695,
+        "50_COVER_CLOSED": 0.07552334666252136
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5563639402389526,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6492522954940796,
+        "50_COVER_CLOSED": 0.4808405935764313
+      },
+      "template": "01 (1).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.07552334666252136
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075733917Z_K2V520S2PI7B469V542_OK_2af6b2518ea6_8f5726fa02f1_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261102T075733917Z_K2V520S2PI7B469V542_OK_2af6b2518ea6_8f5726fa02f1_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.542012095451355,
+      "gap": -0.11577808856964111,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.11577808856964111,
+        "50_COVER_CLOSED": 0.058920204639434814
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.542012095451355,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6577901840209961,
+        "50_COVER_CLOSED": 0.48309189081192017
+      },
+      "template": "01 (5).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.058920204639434814
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032433195Z_K2V520S2PI7B46AN4T6_OK_6246a277be8e_1496f2a61bae_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032433195Z_K2V520S2PI7B46AN4T6_OK_6246a277be8e_1496f2a61bae_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.652278482913971,
+      "gap": -0.06172758340835571,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.06172758340835571,
+        "50_COVER_CLOSED": 0.09676134586334229
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.652278482913971,
+        "50_CARD_NOT_FULLY_INSERTED": 0.7140060663223267,
+        "50_COVER_CLOSED": 0.5555171370506287
+      },
+      "template": "01 (1).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.09676134586334229
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032526707Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_743e70e07208_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032526707Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_743e70e07208_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.4140046536922455,
+      "gap": -0.09513726830482483,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.02198493480682373,
+        "50_COVER_CLOSED": -0.09513726830482483
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.4140046536922455,
+        "50_CARD_NOT_FULLY_INSERTED": 0.4359895884990692,
+        "50_COVER_CLOSED": 0.5091419219970703
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.09513726830482483
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032530363Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_bb7aed391c36_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032530363Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_bb7aed391c36_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.41267654299736023,
+      "gap": -0.08673611283302307,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.007819563150405884,
+        "50_COVER_CLOSED": -0.08673611283302307
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.41267654299736023,
+        "50_CARD_NOT_FULLY_INSERTED": 0.4204961061477661,
+        "50_COVER_CLOSED": 0.4994126558303833
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": 1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.08673611283302307
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032551464Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_27fad0c01a12_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032551464Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_27fad0c01a12_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.3982326090335846,
+      "gap": -0.09797999262809753,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.02275809645652771,
+        "50_COVER_CLOSED": -0.09797999262809753
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.3982326090335846,
+        "50_CARD_NOT_FULLY_INSERTED": 0.4209907054901123,
+        "50_COVER_CLOSED": 0.49621260166168213
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.09797999262809753
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032555401Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_4d07a9056940_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032555401Z_K2V520S2PI7B46AN4T6_NOT_MATCHED_5193745db20c_4d07a9056940_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.39990487694740295,
+      "gap": -0.12079593539237976,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.020781129598617554,
+        "50_COVER_CLOSED": -0.12079593539237976
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED",
+        "50_COVER_CLOSED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.39990487694740295,
+        "50_CARD_NOT_FULLY_INSERTED": 0.4206860065460205,
+        "50_COVER_CLOSED": 0.5207008123397827
+      },
+      "template": "01 (5).png",
+      "angle_deg": 1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": 1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": false,
+        "cover_margin": null,
+        "card_margin": -0.12079593539237976
+      }
+    }
+  },
+  {
+    "image": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032607791Z_K2V520S2PI7B46AN4T6_OK_5193745db20c_f33a2fb65367_raw.jpg",
+    "overlay": "D:\\Dre\\nk_apl_v5\\test_assets\\images\\1105\\20261103T032607791Z_K2V520S2PI7B46AN4T6_OK_5193745db20c_f33a2fb65367_raw_overlay.jpg",
+    "expected_pass": null,
+    "actual_pass": false,
+    "correct": null,
+    "error": null,
+    "result": {
+      "raw": "UNKNOWN",
+      "stable": "UNKNOWN",
+      "accepted": false,
+      "reason": "below_threshold",
+      "best_state": "50_COVER_CLOSED_CARD_PRESENT",
+      "score": 0.5569396615028381,
+      "gap": -0.059615254402160645,
+      "reject_margins": {
+        "50_CARD_NOT_FULLY_INSERTED": -0.059615254402160645,
+        "50_COVER_CLOSED": 0.10877585411071777
+      },
+      "failed_reject_states": [
+        "50_CARD_NOT_FULLY_INSERTED"
+      ],
+      "box": null,
+      "roi": [
+        751,
+        254,
+        431,
+        588
+      ],
+      "class_scores": {
+        "50_COVER_CLOSED_CARD_PRESENT": 0.5569396615028381,
+        "50_CARD_NOT_FULLY_INSERTED": 0.6165549159049988,
+        "50_COVER_CLOSED": 0.44816380739212036
+      },
+      "template": "01 (4).png",
+      "angle_deg": -1.0,
+      "class_angles_deg": {
+        "50_COVER_CLOSED_CARD_PRESENT": -1.0,
+        "50_CARD_NOT_FULLY_INSERTED": -1.0,
+        "50_COVER_CLOSED": -1.0
+      },
+      "conditions": {
+        "cover_closed": null,
+        "mcio_card_present": true,
+        "cover_margin": null,
+        "card_margin": 0.10877585411071777
+      }
+    }
+  }
+]
