@@ -33,8 +33,8 @@ class InputTests(unittest.TestCase):
         self.station.close()
         self.temp.cleanup()
 
-    def start_cycle(self, station, sn='K2V5-IN-PROGRESS', mcio='APL-CARD-1'):
-        """The real config declares both label prefixes and both scans are required."""
+    def start_cycle(self, station, sn='K2V5-IN-PROGRESS-01', mcio='APL-CARD-001'):
+        """The real config fixes both label lengths (19 / 12) and both scans are required."""
         self.assertTrue(station.set_operator('OP-TEST')['success'])
         self.assertTrue(station.scan(sn)['success'])
         return station.scan(mcio)
@@ -94,7 +94,7 @@ class InputTests(unittest.TestCase):
 
     def test_active_sn_prevents_switching(self):
         self.assertTrue(self.station.set_operator('OP-TEST')['success'])
-        self.assertTrue(self.station.scan('K2V5-IN-PROGRESS')['success'])
+        self.assertTrue(self.station.scan('K2V5-IN-PROGRESS-01')['success'])
         with self.assertRaisesRegex(ValueError, 'Finish or reset'):
             self.inputs.restore()
         self.runtime.stop.assert_not_called()
@@ -151,8 +151,8 @@ class InputTests(unittest.TestCase):
         after = browser_station.status()
         self.assertIs(self.inputs.station, browser_station)
         self.assertEqual(after['state'], 'WAITING_CAPTURE')
-        self.assertEqual(after['sn'], 'K2V5-IN-PROGRESS')
-        self.assertEqual(after['mcio_sn'], 'APL-CARD-1')
+        self.assertEqual(after['sn'], 'K2V5-IN-PROGRESS-01')
+        self.assertEqual(after['mcio_sn'], 'APL-CARD-001')
         self.assertEqual(after['cycle_id'], before['cycle_id'])
         self.assertEqual(result['input']['id'], self.inputs.current['id'])
         self.assertEqual(result['input']['name'], 'replacement.mp4')
@@ -165,7 +165,7 @@ class InputTests(unittest.TestCase):
         })
         browser_station = self.inputs.station
         self.assertTrue(browser_station.set_operator('OP-TEST')['success'])
-        self.assertTrue(browser_station.scan('K2V5-IN-PROGRESS')['success'])
+        self.assertTrue(browser_station.scan('K2V5-IN-PROGRESS-01')['success'])
         self.assertEqual(browser_station.status()['state'], 'WAITING_MCIO_SN')
 
         result = self.inputs.start_browser({
@@ -176,12 +176,12 @@ class InputTests(unittest.TestCase):
         after = browser_station.status()
         self.assertEqual(result['input']['name'], 'replacement.mp4')
         self.assertEqual(after['state'], 'WAITING_MCIO_SN')
-        self.assertEqual(after['sn'], 'K2V5-IN-PROGRESS')
-        self.assertTrue(browser_station.scan('APL-CARD-1')['success'])
+        self.assertEqual(after['sn'], 'K2V5-IN-PROGRESS-01')
+        self.assertTrue(browser_station.scan('APL-CARD-001')['success'])
         self.assertEqual(browser_station.status()['state'], 'WAITING_CAPTURE')
 
     def test_live_cycle_can_switch_to_browser_video_without_resetting_sn(self):
-        self.assertTrue(self.start_cycle(self.station, sn='K2V5-LIVE-TO-VIDEO')['success'])
+        self.assertTrue(self.start_cycle(self.station, sn='K2V5-LIVE-TO-VIDEO1')['success'])
         before = self.station.status()
 
         result = self.inputs.start_browser({
@@ -192,8 +192,8 @@ class InputTests(unittest.TestCase):
         after = self.station.status()
         self.assertIs(self.inputs.station, self.station)
         self.assertEqual(after['state'], 'WAITING_CAPTURE')
-        self.assertEqual(after['sn'], 'K2V5-LIVE-TO-VIDEO')
-        self.assertEqual(after['mcio_sn'], 'APL-CARD-1')
+        self.assertEqual(after['sn'], 'K2V5-LIVE-TO-VIDEO1')
+        self.assertEqual(after['mcio_sn'], 'APL-CARD-001')
         self.assertEqual(after['cycle_id'], before['cycle_id'])
         self.assertEqual(after['source'], 'browser_video')
         self.assertTrue(after['test_mode'])

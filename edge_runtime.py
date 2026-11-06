@@ -37,6 +37,8 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from light_tower import PatliteTower, select_event
+
 try:  # Only present on the Qualcomm image / GStreamer-enabled Linux hosts.
     import gi  # type: ignore
     gi.require_version('Gst', '1.0')
@@ -2171,6 +2173,7 @@ class EdgeRuntime:
                 if station_state is not None:
                     self._auto_capture_tick(frame, station_state, backend_status,
                                             time.monotonic())
+                    self._light_tower_tick(station_state)
         except Exception as exc:
             with self.lock:
                 self.status_text = 'ERROR'
@@ -2203,12 +2206,6 @@ class EdgeRuntime:
                 except Exception as exc:
                     release = {'safe': False, 'success': False}
                     errors.append(str(exc))
-            # The probe worker can still start a commit, so it is joined first.
-            probe_thread = self._auto_probe_thread
-            if probe_thread is not None and probe_thread.is_alive():
-                probe_thread.join(timeout=10.0)
-                if probe_thread.is_alive():
-                    errors.append('Automatic capture probe did not finish')
             auto_thread = self._auto_thread
             if auto_thread is not None and auto_thread.is_alive():
                 auto_thread.join(timeout=10.0)
@@ -2227,8 +2224,7 @@ class EdgeRuntime:
             recovery_was_eligible = release.get('reopen_eligible', False)
             if not software_release.get('success', False) or software_release.get('recorder_null') is False:
                 release = {**release, 'safe': False, 'software_recorder_null': False, 'reopen_eligible': False}
-            if (self._probe_process is not None or (auto_thread is not None and auto_thread.is_alive())
-                    or (probe_thread is not None and probe_thread.is_alive())):
+            if self._probe_process is not None or (auto_thread is not None and auto_thread.is_alive()):
                 release = {**release, 'reopen_eligible': False}
             if recovery_was_eligible and not release.get('reopen_eligible'):
                 try:
@@ -2262,6 +2258,8 @@ class EdgeRuntime:
                 self._station_fault_thread = threading.Thread(target=notify_fault, daemon=True,
                                                              name='camera-fault-notify')
                 self._station_fault_thread.start()
+            # Last, so it never delays the camera release: a stopped camera is a dark tower.
+            self._close_light_tower()
 
     def _storage_status(self) -> Dict[str, Any]:
         try:
@@ -2323,6 +2321,7 @@ class EdgeRuntime:
                 'has_raw': bool(self.latest_raw_jpeg),
                 'has_result': bool(self.latest_result_jpeg),
                 'auto_capture': self._auto_capture_status(),
+                'light_tower': self._tower.status() if self._tower is not None else {'enabled': False},
                 **storage,
             }
 
@@ -2414,16 +2413,42 @@ class EdgeRuntime:
 
     # Immutable defaults, so an instance built without __init__ reads None safely.
     _auto_thread = None
-    _auto_probe_thread = None
+    _tower = None
 
-    @property
-    def _auto_lock(self) -> threading.RLock:
-        """Guards the probe state shared by the camera thread and the probe
-        worker. Taken before station.lock, never after it."""
-        lock = self.__dict__.get('_auto_lock_obj')
-        if lock is None:
-            lock = self.__dict__.setdefault('_auto_lock_obj', threading.RLock())
-        return lock
+    def _light_tower_tick(self, station_state) -> None:
+        """Point the PATLITE tower at the current station phase. request() only
+        stores the pattern for the tower's own worker, and this never raises into
+        the camera run loop."""
+        try:
+            settings = getattr(self.station, 'light_tower', None)
+            if not isinstance(settings, dict) or not settings.get('enabled'):
+                self._close_light_tower()
+                return
+            wanted = (settings['host'], settings['port'], settings['timeout_sec'])
+            tower = self._tower
+            if tower is not None and tower.settings != wanted:
+                self._close_light_tower()
+                tower = None
+            if tower is None:
+                tower = self._tower = PatliteTower(*wanted)
+            cycle_id = str(station_state.get('cycle_id') or '')
+            event = select_event(
+                camera_live=True,
+                state=station_state.get('state'),
+                auto_armed=bool(self._auto['armed']),
+                # Set only when the probe's window ran out; a manual retry clears it.
+                timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id)
+            tower.request(event, settings['events'][event])
+        except Exception:
+            log.exception('Light tower update failed')
+
+    def _close_light_tower(self) -> None:
+        tower, self._tower = self._tower, None
+        if tower is not None:
+            try:
+                tower.close()
+            except Exception:
+                log.exception('Light tower close failed')
 
     @property
     def _auto(self) -> Dict[str, Any]:
@@ -2499,113 +2524,70 @@ class EdgeRuntime:
             log.debug('Could not clear the overlay preview', exc_info=True)
 
     def _auto_capture_tick(self, frame, station_state, backend_status, now) -> None:
-        """Arm the automatic Capture & Inspect probe on the camera thread and hand
-        the due frame to the apl-auto-probe worker. Writes nothing: the first
-        accepted frame is committed through the same inspect_frame path the
-        operator's button uses.
+        """Dry-run template matching on the live frame while the station waits for
+        a capture. Writes nothing: the first accepted frame is committed through
+        the same inspect_frame path the operator's button uses.
 
-        Never blocks: matching every golden sample takes about half a second on
-        the SmartCam, so the camera thread only copies the frame and returns. A
-        frame that arrives while the worker is still busy is simply not probed,
-        so the probe always looks at a fresh frame and never queues stale ones.
-
-        Never raises. An exception escaping here would take down the whole camera
-        run loop and release the device."""
+        Never raises. inspect_snapshot and _save re-raise on a stale cycle or a
+        journal fault, and an exception escaping here would take down the whole
+        camera run loop and release the device."""
         station = self.station
         try:
-            with self._auto_lock:
-                cfg = self._auto_capture_settings(station)
-                cycle_id = str(station_state.get('cycle_id') or '')
-                if cycle_id != self._auto['cycle']:
-                    self._auto.update(cycle=cycle_id, suspended_cycle=None, last_commit=None)
-                # A manual capture bumps attempt_count, which restarts the window too.
-                key = (cycle_id, station_state.get('attempt_count', 0))
-                if key != self._auto['key']:
-                    self._auto.update(key=key, hits=0, score=None, best_score=None,
-                                      window_started=None, elapsed=0.0, next_probe=0.0, error='')
-                blocked = self._auto_capture_blocked(station, station_state, backend_status,
-                                                     cfg, cycle_id)
-                if blocked:
-                    self._auto_disarm(blocked, station)
-                    return
-                # The timeout window opens when the probe actually arms, not when the
-                # key changed: cycle_id is stamped at the product SN scan, so a window
-                # started there would already have burnt the SFIS Step1 round trip and
-                # the operator's MCIO scan before capture even opened.
-                started = self._auto['window_started']
-                if started is None:
-                    started = self._auto['window_started'] = now
-                self._auto.update(armed=True, elapsed=now - started)
-                # Throttled independently of infer_fps, which the operator can edit.
-                if now < self._auto['next_probe']:
-                    return
-                probe = self._auto_probe_thread
-                if probe is not None and probe.is_alive():
-                    return
-                self._auto['next_probe'] = now + 1.0 / max(0.1, float(cfg['fps']))
-                job = {'frame': frame.copy(), 'frame_seq': self.frame_seq, 'key': key,
-                       'cycle_id': cycle_id, 'cfg': cfg, 'now': now,
-                       'matcher': station.matcher}
-                thread = threading.Thread(target=self._auto_probe, args=(station, job),
-                                          name='apl-auto-probe', daemon=True)
-                self._auto_probe_thread = thread
-                thread.start()
+            cfg = self._auto_capture_settings(station)
+            cycle_id = str(station_state.get('cycle_id') or '')
+            if cycle_id != self._auto['cycle']:
+                self._auto.update(cycle=cycle_id, suspended_cycle=None, last_commit=None)
+            # A manual capture bumps attempt_count, which restarts the window too.
+            key = (cycle_id, station_state.get('attempt_count', 0))
+            if key != self._auto['key']:
+                self._auto.update(key=key, hits=0, score=None, best_score=None,
+                                  window_started=None, elapsed=0.0, next_probe=0.0, error='')
+            blocked = self._auto_capture_blocked(station, station_state, backend_status,
+                                                 cfg, cycle_id)
+            if blocked:
+                self._auto_disarm(blocked, station)
+                return
+            # The timeout window opens when the probe actually arms, not when the
+            # key changed: cycle_id is stamped at the product SN scan, so a window
+            # started there would already have burnt the SFIS Step1 round trip and
+            # the operator's MCIO scan before capture even opened.
+            started = self._auto['window_started']
+            if started is None:
+                started = self._auto['window_started'] = now
+            self._auto.update(armed=True, elapsed=now - started)
+            # Throttled independently of infer_fps, which the operator can edit.
+            if now < self._auto['next_probe']:
+                return
+            self._auto['next_probe'] = now + 1.0 / max(0.1, float(cfg['fps']))
+            match = station.matcher.evaluate_snapshot(frame)
+            score = match.get('score')
+            if isinstance(score, (int, float)):
+                best = self._auto['best_score']
+                self._auto['best_score'] = (score if not isinstance(best, (int, float))
+                                            else max(best, score))
+            self._auto.update(score=score, reason=str(match.get('reason') or ''),
+                              hits=self._auto['hits'] + 1 if match.get('accepted') else 0,
+                              last_match=match)
+            station.set_preview_matching(match, self._auto_overlay())
+            if self._auto['hits'] >= int(cfg['required_hits']):
+                self._start_auto_commit(frame, station, cycle_id, 'accepted')
+            elif float(cfg['timeout_sec']) > 0 and self._auto['elapsed'] >= float(cfg['timeout_sec']):
+                # One timeout attempt per cycle. The operator restarts the probe
+                # with the button, which clears suspended_cycle in inspect_frame.
+                self._auto['suspended_cycle'] = cycle_id
+                self._start_auto_commit(frame, station, cycle_id, 'timeout',
+                                        timeout_pass=cfg.get('timeout_action') == 'pass')
         except Exception as exc:
             log.exception('Automatic capture probe failed')
             self._auto.update(armed=False, hits=0, reason='probe_error', error=str(exc))
 
-    def _auto_probe(self, station, job) -> None:
-        """Match one probed frame off the camera thread, then decide on it."""
-        try:
-            match = job['matcher'].evaluate_snapshot(job['frame'])
-            with self._auto_lock:
-                # The station may have moved on while this frame was being matched:
-                # a new cycle or a manual capture changed the key, the state left
-                # WAITING_CAPTURE, or the camera began stopping. The station is asked
-                # directly, since the camera thread may not have ticked since.
-                state = station.status()
-                current = (str(state.get('cycle_id') or ''), state.get('attempt_count', 0))
-                if (current != job['key'] or self._auto['key'] != job['key']
-                        or state.get('can_capture') is not True or not self._auto['armed']
-                        or self.stop_event.is_set() or self._stopping or self._release_failed):
-                    return
-                cfg = job['cfg']
-                score = match.get('score')
-                if isinstance(score, (int, float)):
-                    best = self._auto['best_score']
-                    self._auto['best_score'] = (score if not isinstance(best, (int, float))
-                                                else max(best, score))
-                self._auto.update(score=score, reason=str(match.get('reason') or ''),
-                                  hits=self._auto['hits'] + 1 if match.get('accepted') else 0,
-                                  last_match=match)
-                station.set_preview_matching(match, self._auto_overlay())
-                started = self._auto['window_started']
-                elapsed = job['now'] - (job['now'] if started is None else started)
-                if self._auto['hits'] >= int(cfg['required_hits']):
-                    self._start_auto_commit(job['frame'], station, job['cycle_id'], 'accepted',
-                                            match=match, frame_seq=job['frame_seq'])
-                elif float(cfg['timeout_sec']) > 0 and elapsed >= float(cfg['timeout_sec']):
-                    # One timeout attempt per cycle. The operator restarts the probe
-                    # with the button, which clears suspended_cycle in inspect_frame.
-                    self._auto['suspended_cycle'] = job['cycle_id']
-                    self._start_auto_commit(job['frame'], station, job['cycle_id'], 'timeout',
-                                            timeout_pass=cfg.get('timeout_action') == 'pass',
-                                            match=match, frame_seq=job['frame_seq'])
-        except Exception as exc:
-            log.exception('Automatic capture probe failed')
-            with self._auto_lock:
-                if self._auto['key'] == job['key']:
-                    self._auto.update(armed=False, hits=0, reason='probe_error', error=str(exc))
-
     def _start_auto_commit(self, frame, station, cycle_id, trigger: str,
-                           timeout_pass: bool = False, match=None, frame_seq=None) -> None:
+                           timeout_pass: bool = False) -> None:
         """Hand the probed frame to a short-lived worker. The evidence write holds
         station.frame_lock and fsyncs SQLite, and inspect_snapshot may raise, so
-        neither belongs on the camera thread. The probe's own verdict on this very
-        frame is passed along, so the commit does not match it a second time while
-        holding frame_lock."""
+        neither belongs on the camera thread."""
         source = {'mode': 'camera',
-                  'captured_from_frame_seq': self.frame_seq if frame_seq is None else frame_seq,
+                  'captured_from_frame_seq': self.frame_seq,
                   'auto_capture': True,
                   'auto_capture_trigger': trigger,
                   'auto_capture_hits': int(self._auto['hits']),
@@ -2617,8 +2599,7 @@ class EdgeRuntime:
 
         def commit():
             try:
-                result = self.inspect_frame(snapshot, source, timeout_pass=timeout_pass,
-                                            match=match)
+                result = self.inspect_frame(snapshot, source, timeout_pass=timeout_pass)
                 if result.get('success'):
                     state = result.get('station') or {}
                     self._auto['last_commit'] = {
@@ -2647,8 +2628,7 @@ class EdgeRuntime:
         self._auto_thread = thread
         thread.start()
 
-    def inspect_frame(self, frame, source_context=None, timeout_pass=False,
-                      match=None) -> Dict[str, Any]:
+    def inspect_frame(self, frame, source_context=None, timeout_pass=False) -> Dict[str, Any]:
         with self.lock:
             station = self.station
         if station is None:
@@ -2659,8 +2639,7 @@ class EdgeRuntime:
         generation = getattr(self, '_camera_generation', 0)
         cancelled = (lambda: self.stop_event.is_set() or generation != self._camera_generation) if source.get('mode') == 'camera' else None
         result = station.inspect_snapshot(frame, source=source, quality=self.cfg.snapshot_quality,
-                                          cancelled=cancelled, timeout_pass=timeout_pass,
-                                          precomputed_match=match)
+                                          cancelled=cancelled, timeout_pass=timeout_pass)
         if cancelled is not None and cancelled():
             return {'success': False, 'error': 'Camera stopped during inspection'}
         if result.get('success'):

@@ -13,6 +13,7 @@ from pathlib import Path
 from apl_matching import APLMatcher, StableStateFilter, UNKNOWN
 from dmz_client import DMZClient, bypass_enabled
 from inspection_store import InspectionStore
+from light_tower import validated_light_tower
 from workflow_view import STEP_LABELS
 
 
@@ -35,6 +36,9 @@ class APLStation:
         # apart from a scanner misread, for both the HID and the browser path.
         self.sn_prefix = self._validated_prefix("sn_prefix", "sn_max_length")
         self.mcio_sn_prefix = self._validated_prefix("mcio_sn_prefix", "mcio_sn_max_length")
+        # Exact label lengths (0 = any length); snapshot mode only, like the prefixes.
+        self.sn_length = self._validated_length("sn_length", "sn_max_length")
+        self.mcio_sn_length = self._validated_length("mcio_sn_length", "mcio_sn_max_length")
         self.target_state = str(self.config.get("target_state", "50_COVER_CLOSED_CARD_PRESENT"))
         self.config_fingerprint = hashlib.sha256(config_bytes).hexdigest()
         template_hash = hashlib.sha256()
@@ -60,6 +64,8 @@ class APLStation:
         self.storage_error = ""
         self.filter = StableStateFilter(self.config.get("stable_frames", 2))
         self.auto_capture = self._validated_auto_capture()
+        # Driven by the camera runtime; validated here so a bad block fails at startup.
+        self.light_tower = validated_light_tower(self.config.get("light_tower"))
         self.local_mode = (transport is None and self.config.get('station_mode') == 'local') if local_mode is None else local_mode
         self.test_mode = bool(test_mode)
         self.transport = None if self.local_mode else transport or DMZClient(dmz_config)
@@ -136,6 +142,14 @@ class APLStation:
             raise ValueError(key + " must be shorter than " + max_key)
         return value
 
+    def _validated_length(self, key, max_key, default_max=128):
+        value = self.config.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(key + " must be a whole number (0 = any length)")
+        if not 0 <= value <= max(1, int(self.config.get(max_key, default_max))):
+            raise ValueError(key + " must be between 0 and " + max_key)
+        return value
+
     def _validated_auto_capture(self):
         """Continuous template matching settings. Everything defaults to off so a
         config without the block keeps the operator-triggered Capture & Inspect."""
@@ -195,6 +209,15 @@ class APLStation:
         if not self.snapshot_mode:
             return ""
         return self.sn_prefix if which == "sn" else self.mcio_sn_prefix
+
+    def _serial_length(self, which):
+        if not self.snapshot_mode:
+            return 0
+        return self.sn_length if which == "sn" else self.mcio_sn_length
+
+    def _wrong_length_error(self, field, length, instruction, value):
+        return ("Wrong label: the " + field + " must be " + str(length) + " characters. "
+                + instruction + ". Scanned: " + str(value)[:32] + " (" + str(len(value)) + " chars)")
 
     def _empty_matching(self):
         return {"raw": UNKNOWN, "stable": UNKNOWN, "box": None,
@@ -426,6 +449,8 @@ class APLStation:
             "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
             "mcio_sn": self.mcio_sn, "sn_prefix": self._serial_prefix("sn"),
             "mcio_sn_prefix": self._serial_prefix("mcio"),
+            "sn_length": self._serial_length("sn"),
+            "mcio_sn_length": self._serial_length("mcio"),
             "active_scan_field": "sn" if self.state == "WAITING_SN" or step1_retry else "mcio_sn" if self.state == "WAITING_MCIO_SN" else "",
             "step1_retry_required": step1_retry,
             "operator": self.operator, "cycle_operator": self.cycle_operator,
@@ -634,6 +659,10 @@ class APLStation:
             # No cycle exists yet, so this rejection must not journal a row.
             return self._reject_scan_locked(self._wrong_label_error(
                 "product serial number", prefix, "Scan the product serial number label", sn)), None
+        length = self._serial_length("sn")
+        if length and len(sn) != length:
+            return self._reject_scan_locked(self._wrong_length_error(
+                "product serial number", length, "Scan the product serial number label", sn)), None
         self.cycle_id = uuid.uuid4().hex
         self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
         self.sn, self.source = sn, str(source)[:40]
@@ -666,6 +695,11 @@ class APLStation:
         if prefix and not value.upper().startswith(prefix.upper()):
             return self._reject_scan_locked(self._wrong_label_error(
                 "MCIO card serial number", prefix, "Scan the MCIO card label", value),
+                "MCIO_SN_REJECTED"), None
+        length = self._serial_length("mcio")
+        if length and len(value) != length:
+            return self._reject_scan_locked(self._wrong_length_error(
+                "MCIO card serial number", length, "Scan the MCIO card label", value),
                 "MCIO_SN_REJECTED"), None
         self.mcio_sn = value
         self.last_error = ""
@@ -936,10 +970,7 @@ class APLStation:
             return self._frame_result(frame, snapshot)
 
     def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None,
-                         timeout_pass=False, precomputed_match=None):
-        """precomputed_match is the automatic probe's verdict on this same frame;
-        reusing it spares a second full template pass under frame_lock, which the
-        camera thread's process_frame is waiting on."""
+                         timeout_pass=False):
         with self.lock:
             if cancelled is not None and cancelled():
                 return self._reply('Camera stopped before inspection')
@@ -956,8 +987,7 @@ class APLStation:
             try:
                 if self.matcher is None:
                     self.matcher = APLMatcher(self.config, self.config_path)
-                match = (dict(precomputed_match) if precomputed_match is not None
-                         else self.matcher.evaluate_snapshot(frame))
+                match = self.matcher.evaluate_snapshot(frame)
             except Exception as exc:
                 with self.lock:
                     if self.cycle_id == cycle_id:

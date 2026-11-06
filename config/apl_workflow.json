@@ -14,6 +14,18 @@
     "timeout_sec": 20.0,
     "timeout_action": "not_matched"
   },
+  "light_tower": {
+    "enabled": false,
+    "host": "192.168.10.1",
+    "port": 10000,
+    "timeout_sec": 1.0,
+    "events": {
+      "camera_on": {"comment": "Camera live, waiting for a unit: green slow blink", "red": 0, "amber": 0, "green": 2},
+      "auto_capture_start": {"comment": "MCIO SN scanned, auto-capture window running: amber slow blink", "red": 0, "amber": 2, "green": 0},
+      "judge_timeout": {"comment": "Auto-capture timed out without a match: red fast blink", "red": 4, "amber": 0, "green": 0},
+      "judge_pass": {"comment": "Judge PASS, waiting for upload: green steady", "red": 0, "amber": 0, "green": 1}
+    }
+  },
   "method": "TM_CCOEFF_NORMED",
   "template_root": "../templates",
   "target_state": "50_COVER_CLOSED_CARD_PRESENT",
@@ -23,8 +35,10 @@
   "removal_state": "EMPTY_FIXTURE",
   "sn_max_length": 128,
   "sn_prefix": "",
+  "sn_length": 19,
   "mcio_sn_max_length": 128,
   "mcio_sn_prefix": "",
+  "mcio_sn_length": 12,
   "emp_no_max_length": 32,
   "dmz": {
     "mode": "http",
