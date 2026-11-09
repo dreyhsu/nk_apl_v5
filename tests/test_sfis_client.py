@@ -75,6 +75,59 @@ class SFISClientTests(unittest.TestCase):
                 "success": True, "data": "FAIL1,PASM1 ", "message": "", "errorCode": None,
             })
 
+    def configured_step1_exceptions(self):
+        config_path = Path(__file__).resolve().parents[1] / "config" / "apl_workflow.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))["dmz"]
+        self.client = DMZClient(config)
+        return config["step1_allowed_fail_responses"]
+
+    def test_step1_accepts_configured_fail_responses(self):
+        allowed = self.configured_step1_exceptions()
+        self.assertEqual(allowed, [
+            "FAIL1,Retest Rule(1A/2A/3A/4A) not found in SFIS!",
+            'FAIL1,"PT" was not completed (Type=1A)',
+        ])
+        for data in allowed:
+            with self.subTest(data=data):
+                response = {"success": True, "data": " " + data + " \r\n", "errorCode": None}
+                result, _ = self.send_with("/sn/check", response)
+                self.assertTrue(result["accepted"])
+                self.assertEqual(result["sfis_response"], response)
+
+    def test_step1_exceptions_are_disabled_by_default(self):
+        default_client = self.client
+        for data in self.configured_step1_exceptions():
+            with self.subTest(data=data):
+                self.client = default_client
+                with self.assertRaisesRegex(DMZError, "business validation failed"):
+                    self.send_with("/sn/check", {"success": True, "data": data})
+
+    def test_step1_exceptions_do_not_allow_other_failures(self):
+        self.configured_step1_exceptions()
+        for data in ['FAIL1,"PT" was not completed (Type=2A)', "FAIL1,PASM1", "FAIL1,HS_ASSY"]:
+            with self.subTest(data=data), self.assertRaisesRegex(DMZError, "business validation failed"):
+                self.send_with("/sn/check", {"success": True, "data": data})
+
+    def test_step1_exceptions_do_not_override_api_errors(self):
+        for data in self.configured_step1_exceptions():
+            for success, error_code in [(False, None), (True, "E01")]:
+                with self.subTest(data=data, success=success, error_code=error_code):
+                    with self.assertRaisesRegex(DMZError, "SFIS rejected request"):
+                        self.send_with("/sn/check", {
+                            "success": success, "data": data, "errorCode": error_code,
+                        })
+
+    def test_step1_exceptions_never_apply_to_step4(self):
+        for data in self.configured_step1_exceptions():
+            with self.subTest(data=data), self.assertRaisesRegex(DMZError, "business validation failed"):
+                self.send_with("/result", {"success": True, "data": data},
+                               {**self.payload, "result": "PASS"})
+
+    def test_step1_exceptions_require_a_list_of_fail_strings(self):
+        for invalid in [None, "FAIL1,error", [None], [""], ["OK"]]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "step1_allowed_fail_responses"):
+                DMZClient({"step1_allowed_fail_responses": invalid})
+
     def test_step4_uses_same_confirmed_fields_and_normalizes_ack(self):
         payload = {**self.payload, "result": "PASS"}
         result, request = self.send_with("/result", {

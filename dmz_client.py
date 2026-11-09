@@ -54,6 +54,13 @@ class DMZClient:
         self.station = str(os.environ.get("APL_SFIS_STATION", cfg.get("station", ""))).strip()
         self.employee_no = str(os.environ.get("APL_SFIS_EMP_NO", cfg.get("employee_no", ""))).strip()
         self.step1_path = str(cfg.get("step1_path", "/Step1")).strip()
+        step1_allowed = cfg.get("step1_allowed_fail_responses", [])
+        if not isinstance(step1_allowed, list) or any(
+            not isinstance(value, str) or not value.strip().upper().startswith("FAIL")
+            for value in step1_allowed
+        ):
+            raise ValueError("dmz.step1_allowed_fail_responses must be a list of FAIL response strings")
+        self.step1_allowed_fail_responses = {value.strip() for value in step1_allowed}
         self.step4_path = str(cfg.get("step4_path", "/Step4")).strip()
         self.step4_enabled = bool(cfg.get("step4_enabled", False))
         self.step4_extra_fields = dict(cfg.get("step4_extra_fields") or {})
@@ -130,8 +137,7 @@ class DMZClient:
             body[self.mcio_field] = mcio
         return mapping[path], body
 
-    @staticmethod
-    def _normalize_sfis_response(path, payload, response):
+    def _normalize_sfis_response(self, path, payload, response):
         if not isinstance(response, dict):
             raise DMZError("SFIS response must be a JSON object")
         data = response.get("data")
@@ -140,7 +146,11 @@ class DMZClient:
             detail = response.get("message") or error_code or "request rejected"
             raise DMZError("SFIS rejected request: " + str(detail))
         if isinstance(data, str) and data.strip().upper().startswith("FAIL"):
-            raise DMZError("SFIS business validation failed: " + data.strip())
+            # Only explicitly listed Step1 business failures are allowed. Keep
+            # Step4 and the success/errorCode checks above strict.
+            allowed = path == "/sn/check" and data.strip() in self.step1_allowed_fail_responses
+            if not allowed:
+                raise DMZError("SFIS business validation failed: " + data.strip())
         normalized = {
             "accepted": True,
             "sn": payload["sn"],
