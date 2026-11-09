@@ -25,6 +25,7 @@ dist/
 # Runtime data and user uploads
 runtime_data/
 uploads/
+test_output/
 
 # Local databases and their journal files
 *.db

@@ -5,6 +5,8 @@ Runs the same APLMatcher and overlay renderer the production station uses, but
 headless: no station, no SFIS, no upload. Every output image carries the ROI,
 the matched bounding box, and the match state/score. Accepts a single image or
 a directory of images.
+Overlay images are saved in the repository's ignored test_output/ directory
+unless --output is supplied.
 
 In single_snapshot_cover_card mode, loads the target and all configured reject
 states, and reports the same score margins as Auto Capture. Each image
@@ -127,7 +129,7 @@ def main(argv=None):
                         help="Input image, or a directory of images, to run matching on")
     parser.add_argument("--output", type=Path, default=None,
                         help="Annotated output file (single image) or directory "
-                             "(default: <input>_overlay.jpg beside each input)")
+                             "(default: test_output/<input>_overlay.jpg in the repository)")
     parser.add_argument("--config", type=Path,
                         default=ROOT / "config" / "apl_workflow.json",
                         help="APL workflow configuration file")
@@ -166,14 +168,15 @@ def main(argv=None):
 
     # --output as a file only makes sense for a single input image.
     out_file = out_dir = None
-    if args.output is not None and not args.no_overlay:
-        if len(images) == 1 and args.output.suffix.lower() in SUFFIXES:
-            out_file = args.output
+    if not args.no_overlay:
+        output = args.output if args.output is not None else ROOT / "test_output"
+        if len(images) == 1 and output.suffix.lower() in SUFFIXES:
+            out_file = output
             out_file.parent.mkdir(parents=True, exist_ok=True)
         else:
-            if len(images) > 1 and args.output.suffix.lower() in SUFFIXES:
+            if len(images) > 1 and output.suffix.lower() in SUFFIXES:
                 parser.error("--output must be a directory when --image is a directory")
-            out_dir = args.output
+            out_dir = output
             out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -240,10 +243,8 @@ def main(argv=None):
         if not args.no_overlay:
             if out_file is not None:
                 written = out_file
-            elif out_dir is not None:
-                written = out_dir / (path.stem + OVERLAY_TAG + ".jpg")
             else:
-                written = path.with_name(path.stem + OVERLAY_TAG + ".jpg")
+                written = out_dir / (path.stem + OVERLAY_TAG + ".jpg")
             _write(written, _annotate(draw_opencv(frame, state), result), args.quality)
 
         print(f"{path.name}: {raw}  score={result.get('score', 0.0):.3f} "

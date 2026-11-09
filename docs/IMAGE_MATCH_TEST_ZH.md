@@ -34,7 +34,10 @@ Reject State 不限制固定名稱，但清單必須有至少一個有效類別�
 
 - `image_match_labels.json`：人工答案；首次建立時，每張照片的值為 `null`。
 - `image_match_results.json`：這次執行的結果；每次重跑更新。
-- `照片名稱_overlay.jpg`：含 ROI、比對分數與插卡／關蓋判定的圖片。
+
+標註圖片 `照片名稱_overlay.jpg`（含 ROI、比對分數與插卡／關蓋判定）
+預設存放在專案根目錄的 `test_output/`，此資料夾已由 Git 忽略；
+可用 `--output` 指定其他輸出位置。
 
 ## 填寫人工答案
 
