@@ -1,5 +1,7 @@
 # NK APL VisionEdge：單張拍照判定
 
+2026-11-09 本機更新：Capture 比對、證據寫入與持續取像已分離；自動檢驗由單一背景工作處理，保留 5 FPS 上限、2 次命中及 20 秒 NOT_MATCHED 規則。SFIS／DMZ 與 HTTPS 設定沿用此版。完整差異、診斷日誌與板端待驗收項目見[Capture／直播實作紀錄](docs/APL_CAPTURE_STREAM_ISOLATION_IMPLEMENTATION_20261109_ZH.md)。以下歷史操作說明須搭配實際設定；PC 通過不代表板端驗收。
+
 ## 專案定位
 
 本資料夾是 NK APL 產線的單張判定開發版。操作員上班先輸入工號簽入，之後掃描

@@ -1,5 +1,15 @@
 # NK APL 文件索引
 
+## APL_1109 版本現況
+
+最新本機修改：[Capture 與持續取像分離：實作及驗證紀錄](APL_CAPTURE_STREAM_ISOLATION_IMPLEMENTATION_20261109_ZH.md)。背景自動比對、手動拍照身分固定、存證交易與停止保護已實作；370 項 PC 回歸中 366 通過、4 項影片缺失跳過。尚未部署／驗收 SmartCam。
+
+修改前基準見 [APL_1109 新增功能與版本差異整理（2026-11-09）](APL_1109_VERSION_REVIEW_20261109_ZH.md)。本文依 `main@199972c` 的實際程式、設定與 PC 測試整理 PATLITE 三色燈、19／12 碼 SN 檢查、自動檢驗執行方式，以及與先前 10/15 串流優化分支的差異。
+
+[Capture 期間持續取像與直播的修改計畫](plan/APL_CAPTURE_STREAM_ISOLATION_PLAN_20261109_ZH.md) 整理手動比對與存證的阻塞重現、預覽與自動檢驗的分工，以及 PC／SmartCam 的驗收方式。
+
+下列既有 README／交接文件包含尚未更新的 bypass、Step4、前綴與來源版本敘述；本版現況請搭配上述整理、實際設定及環境覆寫核對。
+
 ## 交接閱讀順序
 
 1. [專案目前規格](../README_APL_ZH.md)

@@ -172,18 +172,38 @@ def responsive_station_status():
             _station_lock.release()
 
 
+def station_command_error():
+    if _shutdown_requested.is_set():
+        return jsonify({'success': False, 'error': 'Station is stopping'}), 503
+    if camera_lifecycle().notification_pending:
+        return jsonify({'success': False, 'error': 'Station interruption update is pending'}), 409
+    if camera_lifecycle().transition_lock.locked():
+        return jsonify({'success': False, 'error': 'Camera transition is in progress'}), 409
+    return None
+
+
 def station_command(func):
     @wraps(func)
     def locked(*args, **kwargs):
         with _station_lock:
-            if _shutdown_requested.is_set():
-                return jsonify({'success': False, 'error': 'Station is stopping'}), 503
-            if camera_lifecycle().notification_pending:
-                return jsonify({'success': False, 'error': 'Station interruption update is pending'}), 409
-            if camera_lifecycle().transition_lock.locked():
-                return jsonify({'success': False, 'error': 'Camera transition is in progress'}), 409
-            return func(*args, **kwargs)
+            error = station_command_error()
+            return error if error is not None else func(*args, **kwargs)
     return locked
+
+
+_capture_gate = threading.Lock()
+
+
+def single_capture(func):
+    @wraps(func)
+    def capture(*args, **kwargs):
+        if not _capture_gate.acquire(blocking=False):
+            return jsonify({'success': False, 'error': 'Capture & Inspect is already in progress'}), 409
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _capture_gate.release()
+    return capture
 
 
 def video_test_required(func):
@@ -376,13 +396,25 @@ def apl_terminate():
 
 
 @app.route('/api/apl/capture-inspect', methods=['POST'])
-@station_command
+@single_capture
 def apl_capture_inspect():
-    source_context = INPUTS.status() if INPUTS is not None else None
-    return station_response(EDGE.capture_and_inspect(source_context))
+    with _station_lock:
+        error = station_command_error()
+        if error is not None:
+            return error
+        target = station()
+        context = INPUTS.status() if INPUTS is not None else {}
+        if context.get('mode', 'camera') != 'camera':
+            return station_response(EDGE.capture_and_inspect(context))
+        with target.lock:
+            expected = (target.cycle_id, target.generation, target.attempt_count)
+        generation = EDGE._camera_generation
+    return station_response(EDGE.capture_and_inspect(context, target=target, expected=expected,
+                                                     camera_generation=generation))
 
 
 @app.route('/api/apl/capture-inspect-frame', methods=['POST'])
+@single_capture
 @station_command
 @video_test_required
 def apl_capture_inspect_frame():
@@ -768,7 +800,8 @@ def _shutdown():
             if not scanner_done.wait(2.0):
                 errors.append('Scanner shutdown timed out')
         # Do not close station storage while its runtime is still producing data.
-        if not (EDGE.thread and EDGE.thread.is_alive()) and not camera_lifecycle().notification_pending:
+        worker_alive = EDGE.inspection_worker_alive()
+        if not (EDGE.thread and EDGE.thread.is_alive()) and not worker_alive and not camera_lifecycle().notification_pending:
             if _station_lock.acquire(timeout=3.0):
                 try:
                     # VideoTestInputs owns both production and test station storage.
@@ -793,7 +826,7 @@ def _shutdown():
             else:
                 errors.append('Station storage retained: request is still in progress')
         else:
-            errors.append('Station storage retained: runtime is still alive')
+            errors.append('Station storage retained: camera, inspection or notification is still active')
         _shutdown_result = {'success': safe and not errors, 'safe': safe, 'error': '; '.join(errors)}
         print(f'[VisionEdge] shutdown result: {_shutdown_result}', flush=True)
         return dict(_shutdown_result)

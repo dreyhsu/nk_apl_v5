@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -51,17 +52,21 @@ class InspectionStore:
     @staticmethod
     def _write_atomic(path: Path, data: bytes) -> None:
         temporary = path.with_name(path.name + '.tmp')
-        temporary.write_bytes(data)
-        temporary.replace(path)
+        try:
+            with temporary.open('wb') as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
-    def save_attempt(self, *, cycle_id, sn, visual_result, raw_frame, result_frame,
-                     matching, mcio_sn='', source=None, quality=92):
-        captured_at = time.time()
-        attempt_id = uuid.uuid4().hex
+    def prepare_attempt(self, *, cycle_id, sn, visual_result, raw_frame, result_frame,
+                        matching, mcio_sn='', source=None, quality=92, attempt_id, captured_at):
         stamp = datetime.fromtimestamp(captured_at, timezone.utc)
         folder = self.root / stamp.strftime('%Y-%m-%d')
         folder.mkdir(parents=True, exist_ok=True)
-        stem = f"{stamp.strftime('%Y%m%dT%H%M%S')}{stamp.microsecond // 1000:03d}Z_{self._safe_sn(sn)}_{visual_result}_{cycle_id[:12]}_{attempt_id[:12]}"
+        stem = f"{stamp.strftime('%Y%m%dT%H%M%S')}{stamp.microsecond // 1000:03d}Z_{self._safe_sn(sn)}_{visual_result}_{cycle_id[:12]}_{attempt_id}"
         raw_path = folder / f'{stem}_raw.jpg'
         result_path = folder / f'{stem}_result.jpg'
         json_path = folder / f'{stem}.json'
@@ -88,19 +93,51 @@ class InspectionStore:
             written.append(result_path)
             self._write_atomic(json_path, json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8'))
             written.append(json_path)
-            with self.db:
-                self.db.execute(
-                    "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (attempt_id, cycle_id, sn, captured_at, visual_result,
-                     str(source.get('mode') or 'camera'), json.dumps(source, ensure_ascii=False),
-                     json.dumps(matching, ensure_ascii=False), payload['raw_image'],
-                     payload['result_image'], str(json_path.relative_to(self.root)).replace('\\', '/')),
-                )
+            if os.name == 'posix':
+                for directory in (folder, self.root):
+                    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
         except Exception:
             for path in written:
                 path.unlink(missing_ok=True)
             raise
         return payload
+
+    def insert_attempt(self, attempt):
+        source = attempt['source']
+        json_path = attempt['raw_image'].removesuffix('_raw.jpg') + '.json'
+        self.db.execute(
+            "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (attempt['attempt_id'], attempt['cycle_id'], attempt['sn'], attempt['captured_at_epoch'],
+             attempt['visual_result'], str(source.get('mode') or 'camera'), json.dumps(source, ensure_ascii=False),
+             json.dumps(attempt['matching'], ensure_ascii=False), attempt['raw_image'], attempt['result_image'], json_path),
+        )
+
+    def discard_uncommitted(self, attempt_id, captured_at):
+        """Only remove files belonging to a journaled, uncommitted attempt."""
+        if not re.fullmatch('[0-9a-f]{32}', attempt_id):
+            return
+        if self.db.execute("SELECT 1 FROM attempts WHERE attempt_id=?", (attempt_id,)).fetchone():
+            return
+        folder = self.root / datetime.fromtimestamp(captured_at, timezone.utc).strftime('%Y-%m-%d')
+        for suffix in ('_raw.jpg', '_result.jpg', '.json'):
+            for pattern in (suffix, suffix + '.tmp'):
+                for path in folder.glob(f'*_{attempt_id}{pattern}'):
+                    path.unlink(missing_ok=True)
+
+    def save_attempt(self, **values):
+        attempt_id, captured_at = uuid.uuid4().hex, time.time()
+        attempt = self.prepare_attempt(**values, attempt_id=attempt_id, captured_at=captured_at)
+        try:
+            with self.db:
+                self.insert_attempt(attempt)
+        except Exception:
+            self.discard_uncommitted(attempt_id, captured_at)
+            raise
+        return attempt
 
     def list_cycles(self, *, sn='', visual_result='', limit=100, offset=0):
         clauses, values = [], []

@@ -197,10 +197,10 @@ class InputTests(unittest.TestCase):
         self.assertEqual(after['cycle_id'], before['cycle_id'])
         self.assertEqual(after['source'], 'browser_video')
         self.assertTrue(after['test_mode'])
-        # Under bypass a test cycle can close itself locally, but it must still be
-        # unmistakably a test: the label and the bypass flag say so.
-        self.assertTrue(after['dmz']['bypass'])
-        self.assertEqual(after['dmz']['label'], 'BROWSER TEST - SFIS BYPASS')
+        self.assertFalse(self.station.bypass_sfis)
+        self.assertFalse(after['dmz']['configured'])
+        self.assertEqual(after['dmz']['mode'], 'local')
+        self.assertEqual(after['dmz']['label'], 'BROWSER TEST - SFIS DISABLED')
         self.assertEqual(result['input']['mode'], 'browser_video')
         self.runtime.stop.assert_not_called()
 

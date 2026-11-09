@@ -127,7 +127,7 @@ class APLMatcher:
         if (frame.shape[1], frame.shape[0]) != self.size:
             raise ValueError("Camera frame dimensions do not match golden sample reference")
         x, y, w, h = self.roi
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y+h, x:x+w]
+        gray = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
         scores = self._best_by_class(gray)
         target = scores[self.target_state]
         closed_without_card = scores.get("50_COVER_CLOSED")

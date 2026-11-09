@@ -22,9 +22,12 @@ class MatchingTests(unittest.TestCase):
         cls.config = json.loads(cls.config_path.read_text(encoding="utf-8"))
         cls.matcher = APLMatcher(cls.config, cls.config_path)
 
-    def test_all_seven_classes_have_two_samples(self):
+    def test_all_seven_classes_load_current_golden_inventory(self):
         self.assertEqual(len(self.matcher.samples), 7)
-        self.assertTrue(all(len(samples) == 2 for samples in self.matcher.samples.values()))
+        self.assertEqual(sum(map(len, self.matcher.samples.values())), 20)
+        for state, samples in self.matcher.samples.items():
+            expected = 8 if state == '50_COVER_CLOSED_CARD_PRESENT' else 2
+            self.assertEqual(len(samples), expected, state)
 
     def test_each_golden_sample_recognizes_its_class(self):
         width, height = self.matcher.size

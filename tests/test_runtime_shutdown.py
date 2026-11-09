@@ -265,6 +265,25 @@ class RuntimeShutdownTests(unittest.TestCase):
         self.edge._stopping = True
         self.assertFalse(self.edge.start()['success'])
 
+    def test_background_inspection_wait_uses_remaining_stop_budget(self):
+        self.edge._stop_deadline = 0
+        worker = Mock()
+        worker.is_alive.return_value = True
+        self.edge._auto_thread = worker
+        with patch.object(self.edge, '_make_backend', side_effect=RuntimeError('cancelled')):
+            self.edge._run()
+        worker.join.assert_called_once_with(timeout=0.0)
+        self.assertIn('Automatic capture did not finish', self.edge.last_error)
+        self.assertFalse(self.edge.start()['success'])
+
+    def test_manual_writer_blocks_reopening_until_done(self):
+        done = threading.Event()
+        self.edge.station = SimpleNamespace(_writer_done=done)
+        self.assertTrue(self.edge.inspection_worker_alive())
+        self.assertFalse(self.edge.start()['success'])
+        done.set()
+        self.assertFalse(self.edge.inspection_worker_alive())
+
     def test_explicit_opencv_does_not_probe_qti(self):
         self.edge.cfg.backend = 'opencv'
         with patch.object(self.edge, '_probe_qti', side_effect=AssertionError('unnecessary probe')), \
@@ -325,6 +344,7 @@ class ServerShutdownTests(unittest.TestCase):
 
     def test_shutdown_is_once_and_scanner_failure_does_not_skip_camera(self):
         edge = Mock(thread=None)
+        edge.inspection_worker_alive.return_value = False
         edge.stop.return_value = {'success': True, 'safe': True}
         scanner = Mock()
         scanner.stop.side_effect = RuntimeError('scanner failed')
