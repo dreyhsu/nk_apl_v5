@@ -3,7 +3,7 @@
   "station_mode": "remote",
   "inspection_mode": "single_snapshot_cover_card",
   "reference_size": [1920, 1080],
-  "search_roi": [825, 275, 270, 435],
+  "search_roi": [825, 285, 270, 435],
   "threshold": 0.77,
   "min_gap": 0.05,
   "stable_frames": 2,
