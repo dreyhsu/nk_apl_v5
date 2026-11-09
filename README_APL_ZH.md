@@ -145,6 +145,7 @@ PC 無法驗證 Qualcomm QTI 相機、GStreamer、MediaMTX、HDMI 與實體掃�
 ## 資料位置
 
 - 工站狀態：`runtime_data/apl/station.sqlite3`
+- 工站歷史資料表、升級方式與 dashboard 查詢：[STATION_HISTORY.md](docs/STATION_HISTORY.md)
 - 判定證據：`runtime_data/apl/evidence/YYYY-MM-DD/`
 - Golden Samples：`templates/`
 - 開發影片：`test_assets/videos/`
