@@ -81,6 +81,7 @@ class APLStation:
         self.cycle_id = ""
         self.sn = ""
         self.mcio_sn = ""
+        self.mcio_scanned_at = None
         self.operator = ""
         self.cycle_operator = None
         self.source = ""
@@ -247,6 +248,7 @@ class APLStation:
         self.cycle_station_id = detail.get("station_id", self.config.get("station_id", "NK_APL_50"))
         self.cycle_operator = detail.get("cycle_operator")
         self.mcio_sn = detail.get("mcio_sn", "")
+        self.mcio_scanned_at = row["mcio_scanned_at"]
         if self.cycle_operator and not self.operator:
             self.operator = self.cycle_operator
         self.matching = detail.get("matching") or self._empty_matching()
@@ -278,7 +280,8 @@ class APLStation:
 
     def _save(self, event, payload=None, *, state_override=None, outbox=None):
         try:
-            return self._write_save(event, payload, state_override=state_override, outbox=outbox)
+            with self.db:
+                return self._write_save(event, payload, state_override=state_override, outbox=outbox)
         except Exception:
             self.storage_error = "Station journal could not be committed; restore storage and restart."
             self.last_error = self.storage_error
@@ -288,6 +291,7 @@ class APLStation:
             raise
 
     def _write_save(self, event, payload=None, *, state_override=None, outbox=None):
+        """Write journal rows inside the caller's transaction; never commit here."""
         now = time.time()
         detail = json.dumps({"step_times": self.step_times, "last_error": self.last_error,
                              "last_result": self.last_result, "started_at": self.started_at,
@@ -295,23 +299,30 @@ class APLStation:
                              "fingerprints": self.cycle_fingerprints, "station_id": self.cycle_station_id,
                              "cycle_operator": self.cycle_operator, "matching": self.matching,
                              "mcio_sn": self.mcio_sn}, ensure_ascii=False)
-        with self.db:
-            self.db.execute("""INSERT INTO cycles VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(cycle_id) DO UPDATE SET source=excluded.source,
-                state=excluded.state,result=excluded.result,
-                updated_at=excluded.updated_at,step_index=excluded.step_index,detail_json=excluded.detail_json""",
-                (self.cycle_id, self.sn, self.source, state_override or self.state, self.result,
-                 self.created_at, now, self.sn_request_id, self.report_request_id, self.step_index, detail))
-            self.db.execute("INSERT INTO events(cycle_id,ts,event,payload_json) VALUES (?,?,?,?)",
-                            (self.cycle_id, now, event, json.dumps(payload or {}, ensure_ascii=False)))
-            if outbox == "pending":
-                body = json.dumps(self._payload(result=True), sort_keys=True)
-                self.db.execute("""INSERT INTO outbox VALUES (?,?,?,'PENDING',1,?,NULL)
-                    ON CONFLICT(request_id) DO UPDATE SET attempts=attempts+1,updated_at=excluded.updated_at""",
-                    (self.report_request_id, self.cycle_id, body, now))
-            elif isinstance(outbox, dict):
-                self.db.execute("UPDATE outbox SET status='ACKED',updated_at=?,response_json=? WHERE request_id=?",
-                                (now, json.dumps(outbox), self.report_request_id))
+        self.db.execute("""INSERT INTO cycles
+            (cycle_id, sn, source, state, result, created_at, updated_at,
+             sn_request_id, report_request_id, step_index, detail_json,
+             mcio_sn, sn_scanned_at, mcio_scanned_at, completed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(cycle_id) DO UPDATE SET source=excluded.source,
+            state=excluded.state,result=excluded.result,
+            updated_at=excluded.updated_at,step_index=excluded.step_index,detail_json=excluded.detail_json,
+            sn_request_id=excluded.sn_request_id,report_request_id=excluded.report_request_id,
+            mcio_sn=excluded.mcio_sn,mcio_scanned_at=excluded.mcio_scanned_at,
+            completed_at=excluded.completed_at""",
+            (self.cycle_id, self.sn, self.source, state_override or self.state, self.result,
+             self.created_at, now, self.sn_request_id, self.report_request_id, self.step_index, detail,
+             self.mcio_sn or None, self.created_at, self.mcio_scanned_at, self.completed_at))
+        self.db.execute("INSERT INTO events(cycle_id,ts,event,payload_json) VALUES (?,?,?,?)",
+                        (self.cycle_id, now, event, json.dumps(payload or {}, ensure_ascii=False)))
+        if outbox == "pending":
+            body = json.dumps(self._payload(result=True), sort_keys=True)
+            self.db.execute("""INSERT INTO outbox VALUES (?,?,?,'PENDING',1,?,NULL)
+                ON CONFLICT(request_id) DO UPDATE SET attempts=attempts+1,updated_at=excluded.updated_at""",
+                (self.report_request_id, self.cycle_id, body, now))
+        elif isinstance(outbox, dict):
+            self.db.execute("UPDATE outbox SET status='ACKED',updated_at=?,response_json=? WHERE request_id=?",
+                            (now, json.dumps(outbox), self.report_request_id))
 
     def _payload(self, result=False):
         body = {"sn": self.sn, "cycle_id": self.cycle_id,
@@ -362,6 +373,7 @@ class APLStation:
         self.state = "WAITING_SN"
         self.cycle_id = self.sn = self.source = ""
         self.mcio_sn = ""
+        self.mcio_scanned_at = None
         self.cycle_operator = None
         self.sn_request_id = self.report_request_id = ""
         self.step_index = 0
@@ -667,6 +679,7 @@ class APLStation:
         self.sn_request_id, self.report_request_id = uuid.uuid4().hex, uuid.uuid4().hex
         self.sn, self.source = sn, str(source)[:40]
         self.mcio_sn = ""
+        self.mcio_scanned_at = None
         self.cycle_operator = self.operator or None
         self.created_at = time.time()
         self.started_at = time.time() if self.snapshot_mode else None
@@ -702,6 +715,7 @@ class APLStation:
                 "MCIO card serial number", length, "Scan the MCIO card label", value),
                 "MCIO_SN_REJECTED"), None
         self.mcio_sn = value
+        self.mcio_scanned_at = time.time()
         self.last_error = ""
         # Step1 already passed on the product SN; the MCIO scan only opens capture.
         self.state = "WAITING_CAPTURE"
@@ -981,6 +995,7 @@ class APLStation:
                 return self._reply("Capture & Inspect is unavailable in the current state")
             token = self.generation
             cycle_id, sn, mcio_sn = self.cycle_id, self.sn, self.mcio_sn
+            captured_at = time.time()
             self.state, self.last_error = "JUDGING", ""
             self._save("INSPECTION_REQUESTED", {"source": dict(source or {})})
         with self.frame_lock:
@@ -1000,6 +1015,7 @@ class APLStation:
                         or self.state != "JUDGING" or (cancelled is not None and cancelled())):
                     return self._reply("Inspection result was discarded because the cycle changed")
                 accepted = bool(match.get("accepted"))
+                judged_at = time.time()
                 # auto_capture.timeout_action='pass' closes the unit when the probe
                 # ran out of time. The real matcher verdict is kept verbatim and
                 # flagged, so neither the journal, the evidence nor the history can
@@ -1012,23 +1028,28 @@ class APLStation:
                 self.result = "PASS" if passed else "NOT_MATCHED"
                 self.state = "PASS_CONFIRM" if passed else "NOT_MATCHED"
                 self.step_index = 1 if passed else 0
-                self.completed_at = time.time() if passed else None
+                self.completed_at = judged_at if passed else None
                 self.step_times = [self.completed_at] if passed else []
                 snapshot = self._snapshot()
                 result_frame = self.matcher.draw(frame, snapshot)
+                def save_judgment(attempt):
+                    self._write_save(
+                        "INSPECTION_OK" if accepted else "INSPECTION_TIMEOUT_PASS" if auto_pass
+                        else "INSPECTION_NOT_MATCHED",
+                        {"attempt_id": attempt["attempt_id"], "reason": match.get("reason"),
+                         "timeout_auto_pass": auto_pass})
                 try:
                     attempt = self.evidence.save_attempt(
                         cycle_id=cycle_id, sn=sn, mcio_sn=mcio_sn,
                         visual_result="OK" if accepted else "TIMEOUT_PASS" if auto_pass else "NOT_MATCHED",
                         raw_frame=frame, result_frame=result_frame, matching=match,
                         source=source, quality=quality,
+                        captured_at=captured_at, judged_at=judged_at, on_saved=save_judgment,
                     )
-                    self._save("INSPECTION_OK" if accepted else "INSPECTION_TIMEOUT_PASS" if auto_pass
-                               else "INSPECTION_NOT_MATCHED",
-                               {"attempt_id": attempt["attempt_id"], "reason": match.get("reason"),
-                                "timeout_auto_pass": auto_pass})
                 except Exception as exc:
                     self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
+                    self.completed_at = None
+                    self.step_index, self.step_times = 0, []
                     self.last_error = "Inspection evidence could not be saved: " + str(exc)
                     self._save("EVIDENCE_SAVE_FAILED", {"error": self.last_error})
                     return self._reply(self.last_error)

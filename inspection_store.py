@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from station_schema import migrate_history
+
 
 class InspectionStore:
     def __init__(self, root: Path, db):
@@ -33,6 +35,7 @@ class InspectionStore:
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_attempts_cycle ON attempts(cycle_id, captured_at)")
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_attempts_sn ON attempts(sn, captured_at)")
         self.db.commit()
+        migrate_history(self.db)
 
     @staticmethod
     def _safe_sn(sn: str) -> str:
@@ -55,8 +58,15 @@ class InspectionStore:
         temporary.replace(path)
 
     def save_attempt(self, *, cycle_id, sn, visual_result, raw_frame, result_frame,
-                     matching, mcio_sn='', source=None, quality=92):
-        captured_at = time.time()
+                     matching, mcio_sn='', source=None, quality=92,
+                     captured_at=None, judged_at=None, on_saved=None):
+        """Save one capture. The station lock serializes numbering and writes.
+
+        Encode evidence before the short SQL transaction. If its callback or
+        commit fails, roll back all SQL changes and remove this capture's files.
+        """
+        captured_at = time.time() if captured_at is None else captured_at
+        judged_at = time.time() if judged_at is None else judged_at
         attempt_id = uuid.uuid4().hex
         stamp = datetime.fromtimestamp(captured_at, timezone.utc)
         folder = self.root / stamp.strftime('%Y-%m-%d')
@@ -66,12 +76,21 @@ class InspectionStore:
         result_path = folder / f'{stem}_result.jpg'
         json_path = folder / f'{stem}.json'
         source = dict(source or {})
+        attempt_no = self.db.execute(
+            'SELECT COALESCE(MAX(attempt_no), 0)+1 FROM attempts WHERE cycle_id=?',
+            (cycle_id,)).fetchone()[0]
+        capture_trigger = 'AUTO' if source.get('auto_capture') else 'MANUAL'
+        judge_pass = {'OK': 1, 'TIMEOUT_PASS': 1, 'NOT_MATCHED': 0}[visual_result]
         payload = {
             'schema_version': 2,
             'attempt_id': attempt_id,
             'cycle_id': cycle_id,
             'sn': sn,
             'mcio_sn': mcio_sn,
+            'attempt_no': attempt_no,
+            'judged_at_epoch': judged_at,
+            'judge_pass': judge_pass,
+            'capture_trigger': capture_trigger,
             'captured_at_utc': stamp.isoformat().replace('+00:00', 'Z'),
             'captured_at_epoch': captured_at,
             'visual_result': visual_result,
@@ -90,12 +109,21 @@ class InspectionStore:
             written.append(json_path)
             with self.db:
                 self.db.execute(
-                    "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    """INSERT INTO attempts
+                       (attempt_id, cycle_id, sn, captured_at, visual_result, source_mode,
+                        source_json, matching_json, raw_path, result_path, json_path,
+                        attempt_no, judged_at, judge_pass, capture_trigger)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (attempt_id, cycle_id, sn, captured_at, visual_result,
                      str(source.get('mode') or 'camera'), json.dumps(source, ensure_ascii=False),
                      json.dumps(matching, ensure_ascii=False), payload['raw_image'],
-                     payload['result_image'], str(json_path.relative_to(self.root)).replace('\\', '/')),
+                     payload['result_image'], str(json_path.relative_to(self.root)).replace('\\', '/'),
+                     attempt_no, judged_at, judge_pass, capture_trigger),
                 )
+                if on_saved is not None:
+                    # The station writes its cycle and event through this same
+                    # transaction; the callback must not commit independently.
+                    on_saved(payload)
         except Exception:
             for path in written:
                 path.unlink(missing_ok=True)
@@ -105,22 +133,15 @@ class InspectionStore:
     def list_cycles(self, *, sn='', visual_result='', limit=100, offset=0):
         clauses, values = [], []
         if sn:
-            clauses.append('c.sn LIKE ?')
+            clauses.append('sn LIKE ?')
             values.append('%' + str(sn) + '%')
         if visual_result:
-            clauses.append('a.visual_result = ?')
+            clauses.append('visual_result = ?')
             values.append(str(visual_result))
         where = (' WHERE ' + ' AND '.join(clauses)) if clauses else ''
         sql = f"""
-            SELECT c.cycle_id,c.sn,c.state,c.result,c.created_at,c.updated_at,
-                   COUNT(a.attempt_id) AS attempt_count,
-                   MAX(a.captured_at) AS last_capture_at,
-                   (SELECT visual_result FROM attempts z WHERE z.cycle_id=c.cycle_id
-                    ORDER BY z.captured_at DESC LIMIT 1) AS visual_result,
-                   (SELECT source_mode FROM attempts z WHERE z.cycle_id=c.cycle_id
-                    ORDER BY z.captured_at DESC LIMIT 1) AS source_mode
-            FROM cycles c LEFT JOIN attempts a ON a.cycle_id=c.cycle_id
-            {where} GROUP BY c.cycle_id ORDER BY c.updated_at DESC LIMIT ? OFFSET ?
+            SELECT *, cycle_status AS state FROM cycle_history
+            {where} ORDER BY updated_at DESC, cycle_id DESC LIMIT ? OFFSET ?
         """
         rows = self.db.execute(sql, values + [max(1, min(int(limit), 500)), max(0, int(offset))]).fetchall()
         return [dict(row) for row in rows]
@@ -130,7 +151,7 @@ class InspectionStore:
         if cycle is None:
             return None
         attempts = self.db.execute(
-            'SELECT * FROM attempts WHERE cycle_id=? ORDER BY captured_at', (cycle_id,)
+            'SELECT * FROM attempts WHERE cycle_id=? ORDER BY attempt_no', (cycle_id,)
         ).fetchall()
         result = dict(cycle)
         result['detail'] = json.loads(result.pop('detail_json') or '{}')
