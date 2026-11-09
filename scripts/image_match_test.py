@@ -6,7 +6,7 @@ headless: no station, no SFIS, no upload. Every output image carries the ROI,
 the matched bounding box, and the match state/score. Accepts a single image or
 a directory of images.
 Overlay images are saved in the repository's ignored test_output/ directory
-unless --output is supplied.
+(under <foldername>/ for a directory input) unless --output is supplied.
 
 In single_snapshot_cover_card mode, loads the target and all configured reject
 states, and reports the same score margins as Auto Capture. Each image
@@ -129,7 +129,8 @@ def main(argv=None):
                         help="Input image, or a directory of images, to run matching on")
     parser.add_argument("--output", type=Path, default=None,
                         help="Annotated output file (single image) or directory "
-                             "(default: test_output/<input>_overlay.jpg in the repository)")
+                             "(default: test_output/<foldername>/ for a directory input, "
+                             "or test_output/ for a single image, in the repository)")
     parser.add_argument("--config", type=Path,
                         default=ROOT / "config" / "apl_workflow.json",
                         help="APL workflow configuration file")
@@ -170,6 +171,8 @@ def main(argv=None):
     out_file = out_dir = None
     if not args.no_overlay:
         output = args.output if args.output is not None else ROOT / "test_output"
+        if args.output is None and args.image.is_dir():
+            output = output / args.image.resolve().name
         if len(images) == 1 and output.suffix.lower() in SUFFIXES:
             out_file = output
             out_file.parent.mkdir(parents=True, exist_ok=True)
