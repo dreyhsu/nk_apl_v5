@@ -82,17 +82,6 @@ class DMZClient:
         self.on_trace = None
 
     def _emit(self, event):
-        if event.get("phase") in {"response", "error", "bypass"}:
-            try:
-                # Log before invoking the optional browser trace hook, including
-                # API bodies rejected by validation and calls without a hook.
-                answer = event.get("raw_response", event.get("response"))
-                print(f"[SFIS {event['step'].upper()}] {event['phase']} "
-                      + json.dumps({"url": event.get("url", ""), "response": answer,
-                                    "detail": event.get("detail", "")}, ensure_ascii=False),
-                      flush=True)
-            except Exception:
-                pass
         hook = self.on_trace
         if hook is None:
             return

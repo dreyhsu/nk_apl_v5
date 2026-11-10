@@ -45,7 +45,7 @@
     "step1_path": "/Step1",
     "step1_allowed_fail_responses": [
       "FAIL1,Retest Rule(1A/2A/3A/4A) not found in SFIS!",
-      "FAIL1,\"PT\" was not completed (Type=1A)"
+      "FAIL1,\"PT\" was not completed (Type=1A)."
     ],
     "step4_path": "/Step4",
     "step4_enabled": true,

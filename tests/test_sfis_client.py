@@ -88,7 +88,7 @@ class SFISClientTests(unittest.TestCase):
         allowed = self.configured_step1_exceptions()
         self.assertEqual(allowed, [
             "FAIL1,Retest Rule(1A/2A/3A/4A) not found in SFIS!",
-            'FAIL1,"PT" was not completed (Type=1A)',
+            'FAIL1,"PT" was not completed (Type=1A).',
         ])
         for data in allowed:
             with self.subTest(data=data):
@@ -471,7 +471,7 @@ class SFISTraceTests(SnapshotSFISGateTests):
 
 
 class SFISWireTraceTests(SFISClientTests):
-    def test_both_steps_print_success_and_rejected_api_bodies(self):
+    def test_both_steps_trace_api_bodies_without_terminal_output(self):
         for path, step in [("/sn/check", "STEP1"), ("/result", "STEP4")]:
             for data in ["PASS", "FAIL1,PASM1"]:
                 with self.subTest(step=step, data=data):
@@ -486,17 +486,15 @@ class SFISWireTraceTests(SFISClientTests):
                         else:
                             self.send_with(path, body, {**self.payload, "result": "PASS"})
                     self.assertEqual(seen[-1]["raw_response"], body)
-                    self.assertIn(f"[SFIS {step}]", output.getvalue())
-                    self.assertIn(json.dumps(body), output.getvalue())
+                    self.assertEqual(output.getvalue(), "")
 
-    def test_terminal_response_is_printed_without_a_browser_hook(self):
+    def test_no_terminal_output_without_a_browser_hook(self):
         output = io.StringIO()
         with redirect_stdout(output):
             self.send_with("/sn/check", {"success": True, "data": "PASS"})
-        self.assertIn('[SFIS STEP1] response', output.getvalue())
-        self.assertIn('"data": "PASS"', output.getvalue())
+        self.assertEqual(output.getvalue(), "")
 
-    def test_http_error_body_is_kept_in_the_trace_and_console(self):
+    def test_http_error_body_is_traced_without_terminal_output(self):
         seen = []
         self.client.on_trace = seen.append
         error = urllib.error.HTTPError(self.client.base_url, 500, "Server error", {},
@@ -507,7 +505,7 @@ class SFISWireTraceTests(SFISClientTests):
                 self.client.send("/sn/check", self.payload)
         self.assertEqual(seen[-1]["phase"], "error")
         self.assertIn("SFIS unavailable", seen[-1]["raw_response"])
-        self.assertIn("SFIS unavailable", output.getvalue())
+        self.assertEqual(output.getvalue(), "")
 
     def test_the_trace_carries_the_real_url_body_and_answer(self):
         seen = []
