@@ -82,6 +82,17 @@ class DMZClient:
         self.on_trace = None
 
     def _emit(self, event):
+        if event.get("phase") in {"response", "error", "bypass"}:
+            try:
+                # Log before invoking the optional browser trace hook, including
+                # API bodies rejected by validation and calls without a hook.
+                answer = event.get("raw_response", event.get("response"))
+                print(f"[SFIS {event['step'].upper()}] {event['phase']} "
+                      + json.dumps({"url": event.get("url", ""), "response": answer,
+                                    "detail": event.get("detail", "")}, ensure_ascii=False),
+                      flush=True)
+            except Exception:
+                pass
         hook = self.on_trace
         if hook is None:
             return
@@ -216,7 +227,16 @@ class DMZClient:
                 raw = response.read(65537)
                 if len(raw) > 65536:
                     raise DMZError("DMZ response exceeds limit")
+                context["raw_response"] = raw.decode("utf-8", errors="replace")
                 result = json.loads(raw)
+                context["raw_response"] = result
+        except urllib.error.HTTPError as exc:
+            with exc:
+                raw = exc.read(65537)
+            context["raw_response"] = raw[:65536].decode("utf-8", errors="replace")
+            if len(raw) > 65536:
+                context["raw_response"] += " [truncated]"
+            raise DMZError("DMZ request failed: HTTPError " + str(exc.code)) from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise DMZError("DMZ request failed: " + type(exc).__name__) from exc
         if self.api_style == "sfis":

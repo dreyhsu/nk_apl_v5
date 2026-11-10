@@ -178,11 +178,17 @@ function logSfisEvent(entry){
   const style=SFIS_PHASE_STYLE[phase]||SFIS_TAG;
   const headline=`%c[SFIS ${step}] ${phase}%c ${sfisStamp(entry.ts)} · SN ${entry.sn||'—'} · MCIO ${entry.mcio_sn||'—'} · empNo ${entry.emp_no||'—'}`;
   const bad=style===SFIS_TAG_BAD;
+  // Keep the actual API answer visible without expanding diagnostic groups.
+  if(Object.prototype.hasOwnProperty.call(entry,'raw_response')||phase==='response'||phase==='bypass'){
+    const answer=Object.prototype.hasOwnProperty.call(entry,'raw_response')?entry.raw_response:(entry.response?.sfis_response??entry.response);
+    (bad?console.error:console.log)(`[SFIS ${step}] ${phase} · SN ${entry.sn||'—'} · Response:`,typeof answer==='string'?answer:JSON.stringify(answer));
+  }
   (bad?console.group:console.groupCollapsed).call(console,headline,style,'color:inherit;font-weight:normal');
   if(entry.url)console.log('URL        :',entry.url);
   if(entry.request_body)console.log('Request    :',entry.request_body);
   if(entry.response!==undefined&&entry.response!==null)console.log('Response   :',entry.response);
-  const sfis=entry.response&&entry.response.sfis_response;
+  if(entry.raw_response!==undefined)console.log('API response:',entry.raw_response);
+  const sfis=entry.raw_response??(entry.response&&entry.response.sfis_response);
   if(sfis)console.log('SFIS data  :',sfis.data??'(none)','· errorCode',sfis.errorCode??'(none)','· message',sfis.message||'(none)');
   if(entry.detail)(bad?console.error:console.log)('Detail     :',entry.detail);
   if(entry.hint)console.warn('Hint       :',entry.hint);
