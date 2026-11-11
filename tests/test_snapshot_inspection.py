@@ -3,9 +3,12 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 import numpy as np
 
@@ -226,6 +229,179 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(result["mcio_sn"], "APL-001")
         self.assertFalse(result["reported"])
 
+    def test_live_runtime_advances_during_matching_evidence_and_db_commit(self):
+        import cv2
+        self.start_cycle()
+        runtime = EdgeRuntime(None, self.root / "edge.ini")
+        runtime.cfg.product_id = 0
+        runtime.station = self.station
+        runtime.cfg.infer_fps = 30
+        counter = 0
+        def read(timeout):
+            nonlocal counter
+            time.sleep(0.01)
+            counter += 1
+            return np.full((8, 8, 3), counter % 200, np.uint8)
+        backend = SimpleNamespace(read=read, status=lambda: {}, set_overlay=lambda state: None,
+                                  stop=lambda: {"success": True, "safe": True})
+        with patch.object(runtime, "_make_backend", return_value=backend):
+            runtime.start()
+            try:
+                with runtime.frame_cond:
+                    self.assertTrue(runtime.frame_cond.wait_for(lambda: runtime.frame_seq >= 1, 3))
+                for obj, name in ((self.station.matcher, "evaluate_snapshot"),
+                                  (self.station.evidence, "prepare_attempt"),
+                                  (self.station.evidence, "insert_attempt")):
+                    with self.subTest(stage=name):
+                        entered, release = threading.Event(), threading.Event()
+                        original = getattr(obj, name)
+                        def delayed(*args, **kwargs):
+                            entered.set()
+                            if not release.wait(10):
+                                raise TimeoutError("test did not release inspection")
+                            return original(*args, **kwargs)
+                        with patch.object(obj, name, side_effect=delayed), ThreadPoolExecutor(1) as pool:
+                            capture = pool.submit(runtime.capture_and_inspect)
+                            try:
+                                self.assertTrue(entered.wait(2))
+                                with runtime.frame_cond:
+                                    seq = runtime.frame_seq
+                                    self.assertTrue(runtime.frame_cond.wait_for(lambda: runtime.frame_seq >= seq+6, 2))
+                                self.assertGreater(runtime.result_frame_seq, seq)
+                                if name == 'evaluate_snapshot':
+                                    before = runtime.frame_seq
+                                    started = time.monotonic()
+                                    with runtime.frame_cond:
+                                        self.assertTrue(runtime.frame_cond.wait_for(
+                                            lambda: time.monotonic() - started >= 6, 8))
+                                    self.assertGreater(runtime.frame_seq, before + 60)
+                            finally:
+                                release.set()
+                            result = capture.result(2)
+                        self.assertTrue(result["success"], result)
+                        attempt = result["attempt"]
+                        pixels = cv2.imread(str(self.station.resolve_evidence(attempt["raw_image"])))
+                        self.assertEqual(pixels[0, 0, 0], attempt["source"]["captured_from_frame_seq"] % 200)
+                        if result["station"]["state"] == "PASS_CONFIRM":
+                            self.station.terminate(self.station.cycle_id)
+                            self.start_cycle()
+            finally:
+                runtime.stop()
+
+    def test_failed_journal_rolls_back_files_attempt_and_pass(self):
+        self.start_cycle()
+        original = self.station._write_save
+        def fail_success(event, *args, **kwargs):
+            if event == "INSPECTION_OK":
+                raise OSError("disk full")
+            return original(event, *args, **kwargs)
+        with patch.object(self.station, "_write_save", side_effect=fail_success):
+            result = self.station.inspect_snapshot(self.frame(True))
+        self.assertFalse(result["success"])
+        self.assertEqual(self.station.status()["state"], "RECOVERY_REQUIRED")
+        self.assertFalse(self.station.status()["can_confirm_result"])
+        self.assertEqual(self.station.history_detail(self.station.cycle_id)["attempts"], [])
+        self.assertFalse(any(p.is_file() for p in self.station.evidence.root.rglob("*")))
+
+    def test_stop_during_database_write_rolls_back_and_blocks_step4(self):
+        self.start_cycle()
+        stopped = threading.Event()
+        original = self.station.evidence.insert_attempt
+        def stop_during_insert(attempt):
+            original(attempt)
+            stopped.set()
+        with patch.object(self.station.evidence, 'insert_attempt', side_effect=stop_during_insert):
+            result = self.station.inspect_snapshot(self.frame(True), cancelled=stopped.is_set)
+        self.assertFalse(result['success'])
+        self.assertEqual(self.station.state, 'RECOVERY_REQUIRED')
+        self.assertTrue(self.station._writer_done.is_set())
+        self.assertFalse(self.station.confirm_result(self.station.cycle_id)['success'])
+        self.assertEqual([path for path, _ in self.transport.calls], ['/sn/check'])
+        self.assertEqual(self.station.history_detail(self.station.cycle_id)['attempts'], [])
+        self.assertFalse(any(p.is_file() for p in self.station.evidence.root.rglob('*')))
+
+    def test_close_during_evidence_defers_database_close_until_writer_finishes(self):
+        import sqlite3
+        self.start_cycle()
+        original = self.station.evidence.prepare_attempt
+        def close_during_prepare(**kwargs):
+            self.station.close()
+            self.station.db.execute('SELECT 1')
+            self.assertFalse(self.station._writer_done.is_set())
+            return original(**kwargs)
+        with patch.object(self.station.evidence, 'prepare_attempt', side_effect=close_during_prepare):
+            result = self.station.inspect_snapshot(self.frame(True))
+        self.assertFalse(result['success'])
+        self.assertTrue(self.station._writer_done.is_set())
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.station.db.execute('SELECT 1')
+        self.assertFalse(any(p.is_file() for p in self.station.evidence.root.rglob('*')))
+
+    def test_capture_rejects_old_camera_and_cycle_identity(self):
+        self.start_cycle()
+        runtime = EdgeRuntime(None, self.root / 'edge.ini')
+        runtime.station = self.station
+        runtime.latest_raw = self.frame(True)
+        runtime.last_frame_monotonic = time.monotonic()
+        key = (self.station.cycle_id, self.station.generation, self.station.attempt_count)
+        runtime._camera_generation = 4
+        self.assertFalse(runtime.capture_and_inspect(camera_generation=3)['success'])
+        self.assertFalse(runtime.capture_and_inspect(expected=(key[0], key[1]+1, key[2]))['success'])
+        self.assertEqual(self.station.matcher.calls, 0)
+        runtime.last_frame_monotonic -= 4
+        self.assertFalse(runtime.capture_and_inspect()['success'])
+        self.assertEqual(self.station.history_detail(self.station.cycle_id)['attempts'], [])
+
+    def test_http_capture_keeps_status_responsive_and_rejects_duplicate(self):
+        import visionedge_server as web
+        self.start_cycle()
+        runtime = EdgeRuntime(None, self.root / 'edge.ini')
+        runtime.station = self.station
+        runtime.latest_raw = self.frame(True)
+        runtime.last_frame_monotonic = time.monotonic()
+        entered, release = threading.Event(), threading.Event()
+        original = self.station.evidence.prepare_attempt
+        def delayed(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError()
+            return original(**kwargs)
+        with patch.object(web, 'STATION', self.station), patch.object(web, 'EDGE', runtime), \
+                patch.object(web, 'INPUTS', None), patch.object(web, 'SCANNER', None), \
+                patch.object(self.station.evidence, 'prepare_attempt', side_effect=delayed), ThreadPoolExecutor(1) as pool:
+            future = pool.submit(lambda: web.app.test_client().post('/api/apl/capture-inspect'))
+            try:
+                self.assertTrue(entered.wait(2))
+                self.assertTrue(runtime.inspection_worker_alive())
+                status = web.app.test_client().get('/api/edge/status')
+                self.assertEqual(status.status_code, 200)
+                self.assertEqual(status.json['station']['state'], 'JUDGING')
+                self.assertFalse(status.json['station']['status_stale'])
+                duplicate = web.app.test_client().post('/api/apl/capture-inspect')
+                self.assertEqual(duplicate.status_code, 409)
+                self.assertIn('already in progress', duplicate.json['error'])
+            finally:
+                release.set()
+            self.assertEqual(future.result(2).status_code, 200)
+        self.assertEqual(self.station.attempt_count, 1)
+        self.assertFalse(runtime.inspection_worker_alive())
+
+    def test_recover_discards_only_interrupted_uncommitted_evidence(self):
+        self.start_cycle()
+        previous = self.station.inspect_snapshot(self.frame(False))["attempt"]
+        timestamp, attempt_id = time.time(), "abcd"*8
+        self.station.state = "JUDGING"
+        self.station._save("INSPECTION_REQUESTED", {"attempt_id": attempt_id, "captured_at": timestamp})
+        abandoned = self.station.evidence.prepare_attempt(
+            cycle_id=self.station.cycle_id, sn=self.station.sn, visual_result="OK", raw_frame=self.frame(True),
+            result_frame=self.frame(True), matching={}, attempt_id=attempt_id, captured_at=timestamp)
+        self.station.close()
+        self.station = APLStation(self.config, self.root/"data", transport=self.transport, matcher=SnapshotMatcher())
+        self.assertEqual(self.station.status()["attempt_count"], 1)
+        self.assertEqual(self.station.status()["state"], "RECOVERY_REQUIRED")
+        self.assertTrue(self.station.resolve_evidence(previous["raw_image"]).is_file())
+        self.assertFalse(self.station.resolve_evidence(abandoned["raw_image"]).exists())
+
     def test_runtime_inspects_supplied_browser_frame_with_the_same_matcher(self):
         self.start_cycle(sn="K2V5-BROWSER", mcio="APL-BROWSER")
         runtime = EdgeRuntime.__new__(EdgeRuntime)
@@ -337,7 +513,7 @@ class AutoCaptureProbeTests(unittest.TestCase):
         runtime.verdict = "WAIT"
         runtime.last_infer_at = None
         runtime.infer_seq = 0
-        runtime.frame_seq = 7
+        runtime.frame_seq = 6
         runtime.stop_event = threading.Event()
         runtime._stopping = False
         runtime._release_failed = False
@@ -351,6 +527,7 @@ class AutoCaptureProbeTests(unittest.TestCase):
 
     def tick(self, runtime, accepted, now, backend_status=None):
         """One inference slot, then wait out any commit the probe started."""
+        runtime.frame_seq += 1
         runtime._auto_capture_tick(self.frame(accepted), self.station.status(),
                                    backend_status or {}, now)
         thread = runtime._auto_thread
@@ -411,6 +588,78 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.assertEqual(self.attempts(), 0)
         self.assertEqual(runtime._auto["hits"], 1)
         self.assertEqual(self.station.status()["state"], "WAITING_CAPTURE")
+
+    def test_slow_probe_drops_busy_frames_and_manual_owns_its_capture(self):
+        runtime = self.build(enabled=True, fps=5, required_hits=1)
+        entered, release = threading.Event(), threading.Event()
+        original = self.matcher.evaluate_snapshot
+        def slow(frame):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError()
+            return original(frame)
+        with patch.object(self.matcher, "evaluate_snapshot", side_effect=slow), ThreadPoolExecutor(1) as pool:
+            runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 0)
+            self.assertTrue(entered.wait(2))
+            try:
+                for index in range(8):
+                    runtime.frame_seq += 1
+                    runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, index / 5)
+                self.assertEqual(runtime._auto_capture_status()["busy_frames"], 8)
+                future = pool.submit(runtime.inspect_frame, self.frame(False), {"mode":"camera"})
+                until = time.monotonic() + 2
+                while self.station.status()["state"] != "JUDGING" and time.monotonic() < until:
+                    time.sleep(0.005)
+                self.assertEqual(self.station.status()["state"], "JUDGING")
+            finally:
+                release.set()
+            self.assertTrue(future.result(2)["success"])
+            runtime._auto_thread.join(2)
+        detail = self.station.history_detail(self.station.cycle_id)["attempts"]
+        self.assertEqual([a["visual_result"] for a in detail], ["NOT_MATCHED"])
+        self.assertNotIn("auto_capture", detail[0]["source"])
+
+    def test_no_duplicate_hits_for_one_frame_and_late_positive_cannot_pass(self):
+        runtime = self.build(enabled=True, fps=5, required_hits=2, timeout_sec=5)
+        self.tick(runtime, True, 0)
+        seq = runtime.frame_seq
+        runtime._auto_capture_tick(self.frame(True), self.station.status(), {}, 1)
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(self.matcher.calls, 1)
+        self.tick(runtime, True, 5.01)
+        self.assertNotEqual(seq, runtime.frame_seq)
+        self.assertEqual(self.matcher.calls, 2)
+        attempt = self.station.history_detail(self.station.cycle_id)["attempts"][0]
+        self.assertEqual(attempt["visual_result"], "NOT_MATCHED")
+        self.assertTrue(attempt["matching"]["auto_window_expired"])
+        self.assertTrue(attempt["matching"]["accepted"])
+        self.assertFalse(self.station.status()["can_confirm_result"])
+
+    def test_matching_completion_crossing_twenty_seconds_is_timeout(self):
+        runtime = self.build(enabled=True, fps=5, required_hits=1, timeout_sec=20)
+        self.tick(runtime, False, 0)
+        original = self.matcher.evaluate_snapshot
+        def slow(frame):
+            time.sleep(0.04)
+            return original(frame)
+        with patch.object(self.matcher, 'evaluate_snapshot', side_effect=slow):
+            self.tick(runtime, True, 19.99)
+        result = self.station.history_detail(self.station.cycle_id)['attempts'][0]
+        self.assertEqual(result['visual_result'], 'NOT_MATCHED')
+        self.assertGreaterEqual(result['source']['auto_capture_elapsed'], 20)
+        self.assertEqual(self.matcher.calls, 2)
+
+    def test_late_probe_after_camera_generation_change_is_discarded(self):
+        runtime = self.build(enabled=True, required_hits=1)
+        original = self.matcher.evaluate_snapshot
+        def reconnect(frame):
+            runtime._camera_generation += 1
+            return original(frame)
+        with patch.object(self.matcher, 'evaluate_snapshot', side_effect=reconnect):
+            self.tick(runtime, True, 0)
+        self.assertEqual(self.attempts(), 0)
+        self.assertIsNone(self.station.preview_matching)
+        self.assertEqual(self.station.state, 'WAITING_CAPTURE')
 
     def test_timeout_commits_one_not_matched_attempt_then_stops(self):
         runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=5.0)

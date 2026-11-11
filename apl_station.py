@@ -4,6 +4,7 @@ import collections
 import copy
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -15,6 +16,8 @@ from dmz_client import DMZClient, bypass_enabled
 from inspection_store import InspectionStore
 from light_tower import validated_light_tower
 from workflow_view import STEP_LABELS
+
+log = logging.getLogger('camera.lifecycle')
 
 
 class APLStation:
@@ -56,6 +59,9 @@ class APLStation:
         self.removal_state = self.config.get("removal_state", "EMPTY_FIXTURE")
         self.lock = threading.RLock()
         self.frame_lock = threading.Lock()
+        self.attempt_count = 0
+        self._writer_done = threading.Event()
+        self._writer_done.set()
         self.closed = False
         self.generation = 0
         self.request_token = None
@@ -129,6 +135,7 @@ class APLStation:
         """)
         self.evidence = InspectionStore(self.data_dir / "evidence", self.db)
         self._recover()
+        self._preview_state = self._snapshot() if self.snapshot_mode else None
 
     def _validated_prefix(self, key, max_key, default_max=128):
         value = self.config.get(key, "")
@@ -237,6 +244,17 @@ class APLStation:
             return
         row = rows[0]
         self.cycle_id, self.sn, self.source = row["cycle_id"], row["sn"], row["source"]
+        self.attempt_count = self.db.execute(
+            "SELECT COUNT(*) FROM attempts WHERE cycle_id=?", (self.cycle_id,)
+        ).fetchone()[0]
+        if row['state'] in ('JUDGING', 'RECOVERY_REQUIRED'):
+            event = self.db.execute(
+                "SELECT payload_json FROM events WHERE cycle_id=? AND event='INSPECTION_REQUESTED' ORDER BY id DESC LIMIT 1",
+                (self.cycle_id,),
+            ).fetchone()
+            intent = json.loads(event[0]) if event else {}
+            if intent.get('attempt_id') and 'captured_at' in intent:
+                self.evidence.discard_uncommitted(intent['attempt_id'], intent['captured_at'])
         self.sn_request_id, self.report_request_id = row["sn_request_id"], row["report_request_id"]
         self.step_index, self.result, self.created_at = row["step_index"], row["result"], row["created_at"]
         detail = json.loads(row["detail_json"])
@@ -365,10 +383,12 @@ class APLStation:
 
     def _clear_matching(self):
         self.generation += 1
+        self.preview_matching = self.preview_auto = None
         self.filter.reset()
         self.matching = self._empty_matching()
 
     def _clear_cycle(self):
+        self.attempt_count = 0
         self._clear_matching()
         self.state = "WAITING_SN"
         self.cycle_id = self.sn = self.source = ""
@@ -424,19 +444,15 @@ class APLStation:
                               "can_confirm_result": self.state == "RESULT_CONFIRM" and self.request_token is None and dmz["configured"] and dmz.get("step4_enabled", True) and not self.storage_error,
                               "can_reset": self.state in {"SN_CONFIRM", "RUNNING", "RECOVERY_REQUIRED"} and self.request_token is None})
 
-    def _snapshot_single(self):
-        passed = self.state in {"PASS_CONFIRM", "UPLOADING"} and self.result == "PASS"
+    def _snapshot_single(self, outcome=None):
+        state, result, matching = outcome or (self.state, self.result, self.matching)
+        passed = state in {"PASS_CONFIRM", "UPLOADING"} and result == "PASS"
         active = bool(self.cycle_id)
-        attempt_count = 0
-        if active:
-            attempt_count = int(self.db.execute(
-                "SELECT COUNT(*) FROM attempts WHERE cycle_id=?", (self.cycle_id,)
-            ).fetchone()[0])
         step = {"id": 1, "step_no": 1, "name": self.target_state,
                 "state": self.target_state, "label": "Closed cover with MCIO card",
                 "required": True, "status": "DONE" if passed else "CURRENT" if active else "PENDING",
                 "completed_at": self.completed_at if passed else None}
-        alarm_active = self.state == "RECOVERY_REQUIRED"
+        alarm_active = state == "RECOVERY_REQUIRED"
         sop = {"enabled": True, "session_id": self.cycle_id,
                "state": "ALARM" if alarm_active else "COMPLETE" if passed else "RUNNING" if active else "WAITING",
                "complete": passed, "steps_complete": passed, "steps": [step],
@@ -455,29 +471,30 @@ class APLStation:
         # SN_CONFIRM is momentary on a passing Step1 but sticky on a failed one;
         # the sticky state must be terminable or a refused Step1 is a dead end.
         step1_retry = self._step1_retry_locked()
-        can_terminate = self.state in {"SN_CONFIRM", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
+        can_terminate = state in {"SN_CONFIRM", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"} and self.request_token is None
         return copy.deepcopy({
-            "inspection_mode": self.inspection_mode, "state": self.state,
+            "inspection_mode": self.inspection_mode, "state": state,
             "cycle_id": self.cycle_id, "sn": self.sn, "source": self.source,
             "mcio_sn": self.mcio_sn, "sn_prefix": self._serial_prefix("sn"),
             "mcio_sn_prefix": self._serial_prefix("mcio"),
             "sn_length": self._serial_length("sn"),
             "mcio_sn_length": self._serial_length("mcio"),
-            "active_scan_field": "sn" if self.state == "WAITING_SN" or step1_retry else "mcio_sn" if self.state == "WAITING_MCIO_SN" else "",
+            "active_scan_field": "sn" if state == "WAITING_SN" or step1_retry else "mcio_sn" if state == "WAITING_MCIO_SN" else "",
             "step1_retry_required": step1_retry,
             "operator": self.operator, "cycle_operator": self.cycle_operator,
             "operator_required": self._operator_required(),
             "local_mode": self.local_mode, "test_mode": self.test_mode,
             "step_index": 1 if passed else 0, "total_steps": 1, "steps": [step],
-            "matching": self.matching, "sop": sop, "dmz": transport,
+            "matching": matching, "sop": sop, "dmz": transport,
             "last_error": self.last_error, "last_result": self.last_result,
-            "result": self.result, "storage_error": self.storage_error,
+            "result": result, "storage_error": self.storage_error,
             "started_at": self.started_at, "completed_at": self.completed_at,
             "request_in_flight": self.request_token is not None,
-            "attempt_count": attempt_count,
-            "can_capture": self.state in {"WAITING_CAPTURE", "NOT_MATCHED"} and self.request_token is None and not self.storage_error,
+            "attempt_count": self.attempt_count,
+            "inspection_generation": self.generation,
+            "can_capture": state in {"WAITING_CAPTURE", "NOT_MATCHED"} and self.request_token is None and not self.storage_error,
             "can_confirm_sn": False,
-            "can_confirm_result": self.state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and transport.get("step4_enabled", True) and not self.storage_error,
+            "can_confirm_result": state == "PASS_CONFIRM" and self.request_token is None and transport.get("configured", False) and transport.get("step4_enabled", True) and not self.storage_error,
             "can_terminate": can_terminate,
             "can_reset": can_terminate,
         })
@@ -485,6 +502,19 @@ class APLStation:
     def status(self):
         with self.lock:
             return self._snapshot()
+
+    def preview_snapshot(self):
+        """A slow journal operation must not stall the camera thread."""
+        if self.lock.acquire(blocking=False):
+            try:
+                state = self._snapshot_single()
+                if self.preview_matching and state['can_capture']:
+                    state['matching'] = self.preview_matching
+                    state['auto_capture'] = self.preview_auto or {}
+                self._preview_state = state
+            finally:
+                self.lock.release()
+        return self._preview_state
 
     def set_test_mode(self, enabled, source='browser_video'):
         with self.lock:
@@ -495,6 +525,7 @@ class APLStation:
                 # and the retried Step1 reject permanently as a profile mismatch.
                 if not enabled or self.state not in {'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'NOT_MATCHED'}:
                     raise ValueError('Test mode can only be enabled before snapshot inspection')
+                self.generation += 1
                 self.test_mode = True
                 self.source = str(source or 'browser_video')[:40]
                 self.cycle_profile = self._transport_profile()
@@ -863,7 +894,7 @@ class APLStation:
             self._check_cycle(cycle_id)
             if not self.snapshot_mode:
                 return self._reply("Terminate Inspection is only available in snapshot mode")
-            if self.request_token is not None or self.state in {"JUDGING", "UPLOADING"}:
+            if not self._writer_done.is_set() or self.request_token is not None or self.state in {"JUDGING", "UPLOADING"}:
                 return self._reply("Wait for the current operation to finish before terminating")
             if self.state not in {"SN_CONFIRM", "WAITING_MCIO_SN", "WAITING_CAPTURE", "NOT_MATCHED", "PASS_CONFIRM", "RECOVERY_REQUIRED"}:
                 return self._reply("Terminate Inspection is unavailable in the current state")
@@ -925,13 +956,6 @@ class APLStation:
                 self._save("STEP_COMPLETED", {"step": stable, "step_index": self.step_index})
 
     def _frame_result(self, frame, snapshot):
-        # While the automatic probe is running the station has no committed match
-        # yet, so the overlay would freeze on UNKNOWN. Draw the live probe scores
-        # instead, on this throwaway copy of the snapshot only.
-        if (self.snapshot_mode and self.preview_matching
-                and snapshot.get("state") in {"WAITING_CAPTURE", "NOT_MATCHED"}):
-            snapshot = {**snapshot, "matching": self.preview_matching,
-                        "auto_capture": self.preview_auto or {}}
         vis = self.matcher.draw(frame, snapshot) if hasattr(self.matcher, "draw") else frame
         accepted = snapshot["matching"]["raw"]
         results = [{"label": name, "score": score, "pass": name == accepted,
@@ -939,7 +963,21 @@ class APLStation:
                    for name, score in snapshot["matching"].get("class_scores", {}).items()]
         return vis, snapshot["sop"]["complete"], results, [], snapshot["sop"]
 
-    def process_frame(self, frame):
+    def process_frame(self, frame, preview=None):
+        if self.snapshot_mode:
+            snapshot = self.preview_snapshot() if preview is None else preview
+            if self.matcher is None and self.frame_lock.acquire(blocking=False):
+                try:
+                    if self.matcher is None:
+                        self.matcher = APLMatcher(self.config, self.config_path)
+                except Exception as exc:
+                    self.matcher_error = str(exc)
+                    if not self.last_error:
+                        self.camera_fault("Template matching unavailable: " + str(exc))
+                finally:
+                    self.frame_lock.release()
+            return self._frame_result(frame, snapshot)
+
         with self.lock:
             token = self.generation
         with self.frame_lock:
@@ -949,10 +987,6 @@ class APLStation:
             try:
                 if self.matcher is None:
                     self.matcher = APLMatcher(self.config, self.config_path)
-                if self.snapshot_mode:
-                    with self.lock:
-                        snapshot = self._snapshot()
-                    return self._frame_result(frame, snapshot)
                 match = self.matcher.evaluate(frame)
             except Exception as exc:
                 with self.lock:
@@ -984,78 +1018,132 @@ class APLStation:
             return self._frame_result(frame, snapshot)
 
     def inspect_snapshot(self, frame, source=None, quality=92, cancelled=None,
-                         timeout_pass=False):
+                         timeout_pass=False, expected=None, matched=None):
+        source = dict(source or {})
+        clock = time.monotonic()
         with self.lock:
-            if cancelled is not None and cancelled():
+            if cancelled and cancelled():
                 return self._reply('Camera stopped before inspection')
             self._check_cycle(self.cycle_id)
             if not self.snapshot_mode:
                 return self._reply("Capture & Inspect is only available in snapshot mode")
-            if self.state not in {"WAITING_CAPTURE", "NOT_MATCHED"} or self.request_token is not None:
+            key = (self.cycle_id, self.generation, self.attempt_count)
+            if (expected is not None and expected != key or not self._writer_done.is_set()
+                    or self.state not in {"WAITING_CAPTURE", "NOT_MATCHED"} or self.request_token is not None):
                 return self._reply("Capture & Inspect is unavailable in the current state")
-            token = self.generation
             cycle_id, sn, mcio_sn = self.cycle_id, self.sn, self.mcio_sn
-            captured_at = time.time()
+            attempt_id, captured_at = uuid.uuid4().hex, time.time()
             self.state, self.last_error = "JUDGING", ""
-            self._save("INSPECTION_REQUESTED", {"source": dict(source or {})})
-        with self.frame_lock:
-            try:
-                if self.matcher is None:
-                    self.matcher = APLMatcher(self.config, self.config_path)
-                match = self.matcher.evaluate_snapshot(frame)
-            except Exception as exc:
-                with self.lock:
-                    if self.cycle_id == cycle_id:
-                        self.state = "RECOVERY_REQUIRED"
-                        self.last_error = "Template matching unavailable: " + str(exc)
-                        self._save("INSPECTION_FAILED", {"error": self.last_error})
-                    return self._reply(self.last_error)
+            self._save("INSPECTION_REQUESTED", {"source": source, "attempt_id": attempt_id, "captured_at": captured_at})
+            self._writer_done.clear()
+            self._preview_state = self._snapshot_single()
+
+        def valid():
+            return (not self.closed and self.state == "JUDGING"
+                    and key == (self.cycle_id, self.generation, self.attempt_count)
+                    and not (cancelled and cancelled()))
+
+        attempt = None
+        committed = False
+        phase = "matching"
+        try:
+            if matched is None:
+                with self.frame_lock:
+                    if self.matcher is None:
+                        self.matcher = APLMatcher(self.config, self.config_path)
+                    matched = self.matcher.evaluate_snapshot(frame)
+            match_finished = time.monotonic()
+            judged_at = time.time()
+            match = dict(matched)
+            timeout = source.get("auto_capture_trigger") == "timeout"
+            accepted = bool(match.get("accepted")) and not timeout
+            auto_pass = bool(timeout_pass) and not accepted
+            if auto_pass:
+                match["timeout_auto_pass"] = True
+            if timeout:
+                match["auto_window_expired"] = True
+            passed = accepted or auto_pass
+            result = "PASS" if passed else "NOT_MATCHED"
+            state = "PASS_CONFIRM" if passed else "NOT_MATCHED"
+            # Render the evidence from its final state without exposing PASS to Step4.
             with self.lock:
-                if (self.closed or token != self.generation or self.cycle_id != cycle_id
-                        or self.state != "JUDGING" or (cancelled is not None and cancelled())):
+                if not valid():
                     return self._reply("Inspection result was discarded because the cycle changed")
-                accepted = bool(match.get("accepted"))
-                judged_at = time.time()
-                # auto_capture.timeout_action='pass' closes the unit when the probe
-                # ran out of time. The real matcher verdict is kept verbatim and
-                # flagged, so neither the journal, the evidence nor the history can
-                # be read as a genuine visual match.
-                auto_pass = bool(timeout_pass) and not accepted
-                if auto_pass:
-                    match = {**match, "timeout_auto_pass": True}
-                passed = accepted or auto_pass
-                self.matching = match
-                self.result = "PASS" if passed else "NOT_MATCHED"
-                self.state = "PASS_CONFIRM" if passed else "NOT_MATCHED"
-                self.step_index = 1 if passed else 0
+                snapshot = self._snapshot_single(outcome=(state, result, match))
+            phase = "evidence"
+            result_frame = self.matcher.draw(frame, snapshot)
+            attempt = self.evidence.prepare_attempt(
+                cycle_id=cycle_id, sn=sn, mcio_sn=mcio_sn, attempt_id=attempt_id,
+                captured_at=captured_at, judged_at=judged_at, visual_result="OK" if accepted else "TIMEOUT_PASS" if auto_pass else "NOT_MATCHED",
+                raw_frame=frame, result_frame=result_frame, matching=match, source=source, quality=quality,
+            )
+            files_finished = time.monotonic()
+            phase = "commit"
+            with self.lock:
+                if not valid():
+                    return self._reply("Inspection result was discarded because the cycle changed")
+                self.matching, self.state, self.result = match, state, result
+                self.step_index = int(passed)
                 self.completed_at = judged_at if passed else None
                 self.step_times = [self.completed_at] if passed else []
-                snapshot = self._snapshot()
-                result_frame = self.matcher.draw(frame, snapshot)
-                def save_judgment(attempt):
-                    self._write_save(
-                        "INSPECTION_OK" if accepted else "INSPECTION_TIMEOUT_PASS" if auto_pass
-                        else "INSPECTION_NOT_MATCHED",
-                        {"attempt_id": attempt["attempt_id"], "reason": match.get("reason"),
-                         "timeout_auto_pass": auto_pass})
                 try:
-                    attempt = self.evidence.save_attempt(
-                        cycle_id=cycle_id, sn=sn, mcio_sn=mcio_sn,
-                        visual_result="OK" if accepted else "TIMEOUT_PASS" if auto_pass else "NOT_MATCHED",
-                        raw_frame=frame, result_frame=result_frame, matching=match,
-                        source=source, quality=quality,
-                        captured_at=captured_at, judged_at=judged_at, on_saved=save_judgment,
-                    )
-                except Exception as exc:
+                    with self.db:
+                        self.evidence.insert_attempt(attempt)
+                        self._write_save("INSPECTION_OK" if accepted else "INSPECTION_TIMEOUT_PASS" if auto_pass
+                                         else "INSPECTION_NOT_MATCHED",
+                                         {"attempt_id": attempt_id, "reason": match.get("reason"),
+                                          "timeout_auto_pass": auto_pass})
+                        if cancelled and cancelled():
+                            raise RuntimeError("Camera stopped before inspection commit")
+                except Exception:
+                    # Never expose an uncommitted PASS between lock acquisitions.
+                    self.state, self.result = "JUDGING", None
+                    self.matching = self._empty_matching()
+                    self.step_index, self.completed_at, self.step_times = 0, None, []
+                    raise
+                committed = True
+                self.attempt_count += 1
+                self.preview_matching = self.preview_auto = None
+                if cancelled and cancelled():
                     self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
-                    self.completed_at = None
-                    self.step_index, self.step_times = 0, []
-                    self.last_error = "Inspection evidence could not be saved: " + str(exc)
-                    self._save("EVIDENCE_SAVE_FAILED", {"error": self.last_error})
+                    self.step_index, self.completed_at, self.step_times = 0, None, []
+                    self.last_error = "Camera stopped before inspection result was published"
+                    self._save("INSPECTION_INTERRUPTED", {"attempt_id": attempt_id})
                     return self._reply(self.last_error)
                 reply = self._reply()
+                self._preview_state = reply["station"]
                 reply["attempt"] = attempt
-                return reply
+            log.info("CAPTURE_COMMITTED attempt=%s seq=%s match_ms=%.1f evidence_ms=%.1f commit_ms=%.1f",
+                     attempt_id, source.get("captured_from_frame_seq"), source.get('probe_ms', (match_finished-clock)*1000),
+                     (files_finished-match_finished)*1000, (time.monotonic()-files_finished)*1000)
+            return reply
+        except Exception as exc:
+            log.warning("CAPTURE_FAILED attempt=%s phase=%s error=%s", attempt_id, phase, exc)
+            with self.lock:
+                if not committed and valid():
+                    self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
+                    self.step_index, self.completed_at, self.step_times = 0, None, []
+                    self.last_error = ("Template matching unavailable: " if phase == "matching"
+                                       else "Inspection evidence could not be saved: ") + str(exc)
+                    self._save("INSPECTION_FAILED" if phase == "matching" else "EVIDENCE_SAVE_FAILED",
+                               {"error": self.last_error, "attempt_id": attempt_id})
+                return self._reply(self.last_error or str(exc))
+        finally:
+            with self.lock:
+                try:
+                    if (not self.closed and self.state == "JUDGING"
+                            and key == (self.cycle_id, self.generation, self.attempt_count)):
+                        self.state, self.result = "RECOVERY_REQUIRED", "INTERRUPTED"
+                        self.last_error = "Inspection was cancelled before a result could be published"
+                        self._save("INSPECTION_INTERRUPTED", {"attempt_id": attempt_id})
+                        log.info("CAPTURE_CANCELLED attempt=%s seq=%s", attempt_id,
+                                 source.get("captured_from_frame_seq"))
+                    if attempt is not None and not committed:
+                        self.evidence.discard_uncommitted(attempt_id, captured_at)
+                finally:
+                    self._writer_done.set()
+                    if self.closed:
+                        self.db.close()
 
     def list_history(self, **filters):
         with self.lock:
@@ -1074,4 +1162,5 @@ class APLStation:
                 self.closed = True
                 self.generation += 1
                 self.request_token = None
-                self.db.close()
+                if self._writer_done.is_set():
+                    self.db.close()
