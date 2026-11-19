@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from light_tower import (DEFAULT_EVENTS, PatliteTower, clear_packet, run_control_packet,
                          select_event, validated_light_tower)
@@ -114,8 +115,9 @@ class SelectEventTests(unittest.TestCase):
             # A failed manual capture is not a timeout.
             ((True, 'NOT_MATCHED', False, False), 'camera_on'),
             ((True, 'RECOVERY_REQUIRED', False, False), 'camera_on'),
-            ((True, 'PASS_CONFIRM', False, True), 'judge_pass'),
-            ((True, 'UPLOADING', False, False), 'judge_pass'),
+            # PASS is a timed runtime hold, not a sticky phase pattern.
+            ((True, 'PASS_CONFIRM', False, True), 'camera_on'),
+            ((True, 'UPLOADING', False, False), 'camera_on'),
         ]
         for args, expected in cases:
             with self.subTest(args=args):
@@ -192,6 +194,7 @@ class RuntimeTickTests(unittest.TestCase):
             self.skipTest(str(exc))
         self.requests = []
         runtime = EdgeRuntime.__new__(EdgeRuntime)
+        runtime.lock = threading.RLock()
         runtime.station = SimpleNamespace(light_tower=validated_light_tower(
             {'enabled': True, 'host': '127.0.0.1', 'port': 1}))
         self.runtime = runtime
@@ -210,13 +213,109 @@ class RuntimeTickTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        import edge_runtime
-        self._original = edge_runtime.PatliteTower
-        edge_runtime.PatliteTower = Recorder
+        sender = patch('edge_runtime.PatliteTower', Recorder)
+        sender.start()
+        self.addCleanup(sender.stop)
+        clock = patch('edge_runtime.time.monotonic', return_value=100.0)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
 
-    def tearDown(self):
-        import edge_runtime
-        edge_runtime.PatliteTower = self._original
+    @staticmethod
+    def passed(cycle_id='c1', state='PASS_CONFIRM'):
+        return {'state': state, 'cycle_id': cycle_id, 'result': 'PASS'}
+
+    def test_pass_expires_at_four_seconds_even_when_upload_is_pending(self):
+        self.runtime._light_tower_tick(self.passed())
+        self.clock.return_value = 103.999
+        self.runtime._light_tower_tick(self.passed(state='UPLOADING'))
+        self.clock.return_value = 104.0
+        self.runtime._light_tower_tick(self.passed(state='UPLOADING'))
+        self.clock.return_value = 105.0
+        self.runtime._light_tower_tick(self.passed())
+        self.assertEqual(self.requests, ['judge_pass', 'judge_pass', 'camera_on', 'camera_on'])
+
+    def test_early_step4_success_does_not_shorten_the_hold(self):
+        self.runtime._light_tower_tick(self.passed())
+        idle = {'state': 'WAITING_SN', 'cycle_id': '', 'result': None}
+        for now in (100.1, 103.999, 104.0):
+            self.clock.return_value = now
+            self.runtime._light_tower_tick(idle)
+        self.assertEqual(self.requests, ['judge_pass', 'judge_pass', 'judge_pass', 'camera_on'])
+
+    def test_step4_failures_and_retries_never_restart_the_timer(self):
+        self.runtime._light_tower_tick(self.passed())
+        for now, state in ((101.0, 'UPLOADING'), (102.0, 'PASS_CONFIRM'),
+                           (103.0, 'UPLOADING'), (104.0, 'PASS_CONFIRM'),
+                           (105.0, 'UPLOADING'), (106.0, 'PASS_CONFIRM')):
+            self.clock.return_value = now
+            self.runtime._light_tower_tick(self.passed(state=state))
+        self.assertEqual(self.requests, ['judge_pass'] * 4 + ['camera_on'] * 3)
+
+    def test_next_inspection_amber_cancels_the_hold_and_new_pass_restarts_it(self):
+        self.runtime._light_tower_tick(self.passed())
+        self.clock.return_value = 101.0
+        self.runtime._auto.update(armed=True)
+        self.runtime._light_tower_tick({'state': 'WAITING_CAPTURE', 'cycle_id': 'c2'})
+        self.runtime._auto.update(armed=False)
+        self.runtime._light_tower_tick({'state': 'WAITING_CAPTURE', 'cycle_id': 'c2'})
+        self.clock.return_value = 102.0
+        self.runtime._light_tower_tick(self.passed('c2'))
+        self.clock.return_value = 105.999
+        self.runtime._light_tower_tick(self.passed('c2'))
+        self.clock.return_value = 106.0
+        self.runtime._light_tower_tick(self.passed('c2'))
+        self.assertEqual(self.requests, ['judge_pass', 'auto_capture_start', 'camera_on',
+                                         'judge_pass', 'judge_pass', 'camera_on'])
+
+    def test_next_inspection_judging_or_timeout_cancels_the_hold(self):
+        for cycle, state, event in (('c1', 'JUDGING', 'auto_capture_start'),
+                                     ('c2', 'NOT_MATCHED', 'judge_timeout')):
+            with self.subTest(state=state):
+                self.runtime._light_tower_tick(self.passed(cycle))
+                self.runtime._auto.update(suspended_cycle='next')
+                self.runtime._light_tower_tick({'state': state, 'cycle_id': 'next'})
+                self.runtime._light_tower_tick({'state': 'WAITING_SN'})
+                self.assertEqual(self.requests[-3:], ['judge_pass', event, 'camera_on'])
+
+    def test_stale_judging_snapshot_of_the_passed_cycle_does_not_cancel_hold(self):
+        self.runtime._record_light_tower_pass(self.passed())
+        self.runtime._light_tower_tick({'state': 'JUDGING', 'cycle_id': 'c1'})
+        self.assertEqual(self.requests, ['judge_pass'])
+
+    def test_committed_pass_is_latched_even_if_step4_clears_it_before_first_tick(self):
+        self.runtime.cfg = SimpleNamespace(snapshot_quality=92)
+        self.runtime.stop_event = threading.Event()
+        self.runtime._camera_generation = 0
+        reply = {'success': True, 'station': self.passed()}
+        self.runtime.station.inspect_snapshot = Mock(return_value=reply)
+        self.runtime.inspect_frame(object(), {'mode': 'camera'})
+        self.clock.return_value = 100.1
+        self.runtime._light_tower_tick({'state': 'WAITING_SN'})
+        self.clock.return_value = 104.0
+        self.runtime._light_tower_tick({'state': 'WAITING_SN'})
+        self.assertEqual(self.requests, ['judge_pass', 'camera_on'])
+
+    def test_failed_or_unmatched_inspections_do_not_start_a_pass_hold(self):
+        self.runtime.cfg = SimpleNamespace(snapshot_quality=92)
+        self.runtime.stop_event = threading.Event()
+        self.runtime._camera_generation = 0
+        for reply in ({'success': False, 'station': self.passed()},
+                      {'success': True, 'station': {'state': 'NOT_MATCHED', 'cycle_id': 'c1',
+                                                     'result': 'NOT_MATCHED'}}):
+            self.runtime.station.inspect_snapshot = Mock(return_value=reply)
+            self.runtime.inspect_frame(object(), {'mode': 'camera'})
+            self.runtime._light_tower_tick({'state': 'WAITING_SN'})
+        self.assertEqual(self.requests, ['camera_on', 'camera_on'])
+
+    def test_close_clears_hold_and_does_not_replay_pending_pass(self):
+        self.runtime._light_tower_tick(self.passed())
+        first = self.towers[0]
+        self.runtime._close_light_tower()
+        self.assertTrue(first.closed)
+        self.assertIsNone(self.runtime._tower)
+        self.runtime._light_tower_tick(self.passed())
+        self.runtime._light_tower_tick(self.passed('c2'))
+        self.assertEqual(self.requests, ['judge_pass', 'camera_on', 'judge_pass'])
 
     def test_timeout_is_only_the_probe_window_of_this_cycle(self):
         self.runtime._auto.update(armed=True)

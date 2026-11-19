@@ -23,7 +23,7 @@
       "camera_on": {"comment": "Camera live, waiting for a unit: green slow blink", "red": 0, "amber": 0, "green": 2},
       "auto_capture_start": {"comment": "MCIO SN scanned, auto-capture window running: amber slow blink", "red": 0, "amber": 2, "green": 0},
       "judge_timeout": {"comment": "Auto-capture timed out without a match: red fast blink", "red": 4, "amber": 0, "green": 0},
-      "judge_pass": {"comment": "Judge PASS, waiting for upload: green steady", "red": 0, "amber": 0, "green": 1}
+      "judge_pass": {"comment": "Judge PASS: green steady for 4 seconds, then green slow blink regardless of upload status", "red": 0, "amber": 0, "green": 1}
     }
   },
   "method": "TM_CCOEFF_NORMED",

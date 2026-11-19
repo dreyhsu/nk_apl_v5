@@ -53,7 +53,7 @@ PATLITE 燈號 pattern。本文件定義 schema、協定對應與實作位置。
 | **相機開啟**（待機、串流中、無任務） | 0 | 0 | 2 | 0 | 0 | 0 | `00 00 02 00 00 00` | 綠慢閃＝就緒，等待進料 |
 | **自動拍照開始**（掃入 MCIO SN，20 秒窗口） | 0 | 2 | 0 | 0 | 0 | 0 | `00 02 00 00 00 00` | 琥珀慢閃＝拍照進行中 |
 | **判定逾時**（窗口內未 PASS / 拍照失敗） | 4 | 0 | 0 | 0 | 0 | 0 | `04 00 00 00 00 00` | 紅快閃＝需操作員介入 |
-| **判定 PASS** | 0 | 0 | 1 | 0 | 0 | 0 | `00 00 01 00 00 00` | 綠恆亮＝OK |
+| **判定 PASS** | 0 | 0 | 1 | 0 | 0 | 0 | `00 00 01 00 00 00` | 綠恆亮 4 秒＝OK，之後恢復綠慢閃 |
 
 四狀態互斥，每次送**完整 6-byte 絕對指令**（不用 `9` no-change delta），
 避免前一輪殘留通道卡在亮著。系統啟動 / 關閉 / 重置時送 `C` clear 全熄。
@@ -73,7 +73,8 @@ S  <R> <A> <G> <B> <W> <Buz>
 
 ## 色彩語意
 
-- **綠閃 → 綠恆亮**：整條 happy path 都是綠色，有動作（閃）＝進行/等待，恆亮＝完成可取件。
+- **綠閃 → 綠恆亮 4 秒 → 綠閃**：恆亮＝PASS；4 秒後恢復待機燈號，不表示 SFIS Step4 已成功。
+  上傳成功、等待、失敗或重試都不縮短或延長這 4 秒；下一件開始拍照或逾時時，琥珀／紅燈優先，取消前一件的恆綠。
 - **琥珀＝拍照進行中**：對應 overlay 在 `WAITING_CAPTURE`/`JUDGING` 畫的琥珀色（`workflow_view.py:88`）。
 - **紅快閃＝唯一告警態**（逾時）。
 - **藍 / 白 / 蜂鳴器**：本站不使用，保留給未來跨週期訊號（如 SFIS / 網路離線）。
@@ -87,12 +88,18 @@ S  <R> <A> <G> <B> <W> <Buz>
   連線失敗或 NAK 會記錄一次警告、每 2 秒重試，恢復後自動補送目前燈號。閃爍由 PATLITE 自身 pattern 處理。
 - **觸發**：`edge_runtime.py` `_light_tower_tick()` 在每次推論、auto-capture probe 之後依站台狀態挑事件
   （`light_tower.select_event`）：
-  - `PASS_CONFIRM` / `UPLOADING` → `judge_pass`
+  - PASS 結果提交成功時，以 monotonic clock 啟動一次 4 秒 `judge_pass`；每個 cycle 只觸發一次。
+    runtime 在回傳拍照結果前記錄，避免 Step4 太快完成、清除 cycle 後漏掉 PASS 燈號。
+    預覽迴圈首次看到 `PASS_CONFIRM` / `UPLOADING` 的 PASS 時也可啟動，但不會重啟同一 cycle 的計時。
+  - 4 秒內即使 Step4 成功、站台回到 `WAITING_SN`，仍維持 `judge_pass`；4 秒到期後切回 `camera_on`，
+    即使仍在 `PASS_CONFIRM` / `UPLOADING`、或 Step4 失敗重試，也不再延長恆綠。
+  - 下一個 cycle 需要 `auto_capture_start` 或 `judge_timeout` 時，立即取消前一件的 PASS 計時，以新燈號為準。
+    下一次 PASS 重新計時 4 秒。計時不阻塞相機或 SFIS；實際切換仍受相機迴圈排程與網路傳送時間影響。
   - `NOT_MATCHED` **且**本週期是 auto-capture 視窗逾時 → `judge_timeout`
     （手動拍照不符、`RECOVERY_REQUIRED` 不亮紅燈，回到 `camera_on`）
   - probe 已啟動的 `WAITING_CAPTURE`、或 `JUDGING` → `auto_capture_start`
   - 其他相機運作中的狀態 → `camera_on`
-  - 相機停止 → 送 `C` 全熄
+  - 相機停止／燈塔關閉 → 取消 PASS 計時，送 `C` 全熄；重新開啟不重播同一個待上傳 PASS
 - **config**：`config/apl_workflow.json` 的 `light_tower` 區塊，**預設 `enabled: false`**。
   IP 會變動，所以 `host` / `port` 寫在 config；改 IP 後重啟服務即可。
   每個事件可寫 `comment` 說明，`red/amber/green/blue/white` 取 0–7、9，`buzzer` 取 0、1、9；

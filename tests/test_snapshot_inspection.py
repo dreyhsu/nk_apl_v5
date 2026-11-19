@@ -15,6 +15,7 @@ import numpy as np
 from apl_matching import APLMatcher
 from apl_station import APLStation
 from edge_runtime import EdgeRuntime
+from light_tower import validated_light_tower
 from workflow_view import AUTO_PHASE_LABELS, auto_capture_line, workflow_view
 
 
@@ -428,6 +429,31 @@ class SnapshotInspectionTests(unittest.TestCase):
         self.assertEqual(result["attempt"]["source"]["selected_seconds"], 4.25)
         self.assertTrue(runtime.frame_pass)
         self.assertEqual(runtime.verdict, "OK")
+
+    def test_runtime_pass_light_survives_step4_before_the_first_preview_tick(self):
+        cycle = self.start_cycle()['station']['cycle_id']
+        self.station.light_tower = validated_light_tower({'enabled': True})
+        runtime = EdgeRuntime.__new__(EdgeRuntime)
+        runtime.lock = threading.RLock()
+        runtime.station = self.station
+        runtime.cfg = SimpleNamespace(snapshot_quality=92)
+        runtime.stop_event = threading.Event()
+        runtime._camera_generation = 0
+        with patch('edge_runtime.time.monotonic', return_value=100.0) as clock, \
+                patch('edge_runtime.PatliteTower') as sender:
+            result = runtime.inspect_frame(self.frame(True), {'mode': 'camera'})
+            self.assertTrue(result['success'])
+            self.assertEqual(result['station']['state'], 'PASS_CONFIRM')
+            uploaded = self.station.confirm_result(cycle)
+            self.assertTrue(uploaded['success'])
+            self.assertEqual(uploaded['station']['state'], 'WAITING_SN')
+            tower = sender.return_value
+            tower.settings = (self.station.light_tower['host'], self.station.light_tower['port'],
+                              self.station.light_tower['timeout_sec'])
+            for now, expected in ((100.1, 'judge_pass'), (103.999, 'judge_pass'), (104.0, 'camera_on')):
+                clock.return_value = now
+                runtime._light_tower_tick(self.station.status())
+                tower.request.assert_called_with(expected, self.station.light_tower['events'][expected])
 
 
 class GoldenSampleDecisionTests(unittest.TestCase):

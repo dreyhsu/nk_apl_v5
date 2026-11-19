@@ -37,7 +37,7 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
-from light_tower import PatliteTower, select_event
+from light_tower import PASS_HOLD_SECONDS, PatliteTower, select_event
 
 try:  # Only present on the Qualcomm image / GStreamer-enabled Linux hosts.
     import gi  # type: ignore
@@ -2437,11 +2437,25 @@ class EdgeRuntime:
     # Immutable defaults, so an instance built without __init__ reads None safely.
     _auto_thread = None
     _tower = None
+    _tower_pass_cycle = None
+    _tower_pass_until = 0.0
 
     def inspection_worker_alive(self):
         thread = self._auto_thread
         writer = getattr(self.station, '_writer_done', None)
         return bool(thread is not None and thread.is_alive() or writer is not None and not writer.is_set())
+
+    def _record_light_tower_pass(self, snapshot) -> None:
+        """Latch a committed PASS once, before a fast Step4 can clear its cycle."""
+        with self.lock:
+            settings = getattr(self.station, 'light_tower', None)
+            cycle_id = snapshot.get('cycle_id')
+            if (isinstance(settings, dict) and settings.get('enabled')
+                    and snapshot.get('state') in {'PASS_CONFIRM', 'UPLOADING'}
+                    and snapshot.get('result') == 'PASS'
+                    and cycle_id and cycle_id != self._tower_pass_cycle):
+                self._tower_pass_cycle = cycle_id
+                self._tower_pass_until = time.monotonic() + PASS_HOLD_SECONDS
 
     def _light_tower_tick(self, station_state) -> None:
         """Point the PATLITE tower at the current station phase. request() only
@@ -2459,19 +2473,30 @@ class EdgeRuntime:
                 tower = None
             if tower is None:
                 tower = self._tower = PatliteTower(*wanted)
-            cycle_id = str(station_state.get('cycle_id') or '')
-            event = select_event(
-                camera_live=True,
-                state=station_state.get('state'),
-                auto_armed=bool(self._auto['armed']),
-                # Set only when the probe's window ran out; a manual retry clears it.
-                timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id)
+            with self.lock:
+                # Also handle a PASS first observed by the preview loop.
+                self._record_light_tower_pass(station_state)
+                cycle_id = str(station_state.get('cycle_id') or '')
+                event = select_event(
+                    camera_live=True,
+                    state=station_state.get('state'),
+                    auto_armed=bool(self._auto['armed']),
+                    # Set only when the probe's window ran out; a manual retry clears it.
+                    timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id)
+                if (cycle_id != self._tower_pass_cycle
+                        and event in {'auto_capture_start', 'judge_timeout'}):
+                    self._tower_pass_until = 0.0
+                if time.monotonic() < self._tower_pass_until:
+                    event = 'judge_pass'
             tower.request(event, settings['events'][event])
         except Exception:
             log.exception('Light tower update failed')
 
     def _close_light_tower(self) -> None:
-        tower, self._tower = self._tower, None
+        with self.lock:
+            tower, self._tower = self._tower, None
+            self._tower_pass_until = 0.0
+            # Keep the cycle ID so reopening cannot replay the same pending PASS.
         if tower is not None:
             try:
                 tower.close()
@@ -2671,6 +2696,9 @@ class EdgeRuntime:
         result = station.inspect_snapshot(frame, source=source, quality=self.cfg.snapshot_quality, cancelled=cancelled,
                                           timeout_pass=timeout_pass, expected=expected, matched=matched)
         if result.get('success') and not cancelled():
+            with self.lock:
+                if not cancelled():
+                    self._record_light_tower_pass(result['station'])
             if source.get('mode') != 'camera':
                 snapshot = result['station']
                 result_frame = station.matcher.draw(frame, snapshot)

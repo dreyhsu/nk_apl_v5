@@ -24,6 +24,7 @@ BUZZER_MODES = {0, 1, 9}
 CHANNELS = ('red', 'amber', 'green', 'blue', 'white', 'buzzer')
 
 EVENTS = ('camera_on', 'auto_capture_start', 'judge_timeout', 'judge_pass')
+PASS_HOLD_SECONDS = 4.0
 # docs/plan/LIGHT_TOWER_SCHEMA_20261019_ZH.md
 DEFAULT_EVENTS = {
     'camera_on':          (0, 0, 2, 0, 0, 0),
@@ -99,14 +100,13 @@ def validated_light_tower(raw):
 
 
 def select_event(camera_live, state, auto_armed, timeout_fired):
-    """The tower event for this moment, or None for a dark tower.
+    """The base tower event, before the runtime applies its timed PASS hold.
 
     judge_timeout is only the automatic-capture window running out: a failed manual
-    capture, or RECOVERY_REQUIRED, falls back to camera_on."""
+    capture, or RECOVERY_REQUIRED, falls back to camera_on. PASS_CONFIRM and
+    UPLOADING also fall back to camera_on once the four-second hold expires."""
     if not camera_live:
         return None
-    if state in {'PASS_CONFIRM', 'UPLOADING'}:
-        return 'judge_pass'
     if state == 'NOT_MATCHED' and timeout_fired:
         return 'judge_timeout'
     if state == 'JUDGING' or (state == 'WAITING_CAPTURE' and auto_armed):
