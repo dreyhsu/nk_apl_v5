@@ -7,7 +7,6 @@ Wants=network-online.target mediamtx.service
 Type=simple
 User=root
 WorkingDirectory=/var/rootdirs/opt/VisionEdge_APL
-Environment=APL_DMZ_MODE=disabled
 ExecStart=/bin/sh /var/rootdirs/opt/VisionEdge_APL/run_apl.sh
 Restart=on-failure
 RestartSec=5

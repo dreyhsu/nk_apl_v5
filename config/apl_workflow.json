@@ -3,7 +3,7 @@
   "station_mode": "remote",
   "inspection_mode": "single_snapshot_cover_card",
   "reference_size": [1920, 1080],
-  "search_roi": [825, 285, 270, 435],
+  "search_roi": [830, 280, 270, 435],
   "threshold": 0.77,
   "min_gap": 0.05,
   "stable_frames": 2,
@@ -15,8 +15,8 @@
     "timeout_action": "not_matched"
   },
   "light_tower": {
-    "enabled": false,
-    "host": "192.168.10.1",
+    "enabled": true,
+    "host": "10.6.31.31",
     "port": 10000,
     "timeout_sec": 1.0,
     "events": {

@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/var/rootdirs/opt/VisionEdge
-ExecStart=/usr/bin/python3 -u /var/rootdirs/opt/VisionEdge/visionedge_server.py
+WorkingDirectory=/var/rootdirs/opt/VisionEdge_APL
+ExecStart=/usr/bin/python3 -u /var/rootdirs/opt/VisionEdge_APL/visionedge_server.py
 Restart=on-failure
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
