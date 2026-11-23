@@ -1,0 +1,16 @@
+Tool: built-in image_gen (image editing).
+Source: /Users/chihjuihsu/Desktop/截圖 2026-11-21 上午11.15.51.png
+
+Prompt summary: Preserve the supplied inspection UI screenshot and add English operator instructions directly over its camera area. Explain the numbered sequence: check scanner, enter employee number and Sign In, enter product SN starting K2V5 and press Enter, enter MCIO card SN starting APL and press Enter, then inspect with the cover closed and MCIO card fully inserted. Explain automatic inspection and manual capture/retry. Explain the WORKFLOW status, SN field, 0/1 progress counter, and cover-closed/card-present target. Identify Terminate Inspection as canceling the current cycle.
+
+Final refinement prompt:
+Use case: precise-object-edit. Input is an already annotated operator screenshot. Make ONE targeted correction to the annotations: remove ALL FIVE long colored arrows between the left instruction cards and right sidebar. They currently point at wrong controls. Do not replace them with long arrows. Preserve all instructional card text, screenshot content, original UI labels and fields, layout, photograph, title and workflow explanation exactly. Keep the short cyan vertical arrow from READ THE WORKFLOW LABEL pointing up into the WORKFLOW box. Keep the small red cancel annotation with a short red arrow pointing right to Terminate Inspection; remove the pink curved line from step 5 to terminate.
+
+Instead of long arrows, use perfectly matched numbered color coding on the RIGHT SIDEBAR to link the cards to the relevant panels:
+- Left step 1 is GREEN. Right Scanner ready section: GREEN outline and a clearly visible GREEN circular badge "1" at its section header.
+- Left step 2 is AMBER. Right Employee number section: AMBER outline and an AMBER circular badge "2" at its header.
+- Left step 3 is BLUE. Right Product serial number section: BLUE outline and a BLUE circular badge "3" at its header.
+- Left step 4 is PURPLE. Right MCIO card serial number section: PURPLE outline and a PURPLE circular badge "4" at its header.
+- Left step 5 is PINK. Right Capture & Inspect section: PINK outline and a PINK circular badge "5" at its header.
+Use the sidebar existing small numbered circles as placement, making their colors and numbers clear. Avoid covering original titles or fields.
+Keep cyan workflow explanation and all words unchanged. Preserve original aspect ratio and produce a sharp high-resolution output. Do not add, remove, or change anything else.

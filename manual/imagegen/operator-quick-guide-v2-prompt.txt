@@ -1,0 +1,35 @@
+Tool: built-in image_gen (image editing).
+
+Use case: precise-object-edit.
+Edit target: Image 1, the annotated inspection UI screenshot. Image 2 is the original clean screenshot, provided ONLY to restore the camera photograph and UI background where old annotations are removed.
+
+Make these requested changes to Image 1:
+1. Completely REMOVE the entire cyan-bordered "READ THE WORKFLOW LABEL" explanation card, all its explanatory text, and its cyan arrow.
+2. MOVE the complete "OPERATOR QUICK GUIDE" (title, subtitle, and all five numbered instruction cards) CLOSE TO THE INPUT FIELDS: put them in a neat compact vertical column on the camera area immediately to the LEFT of the right-hand Serial Number sidebar, separated from the input panel by only a small gap. The guide should sit beside the fields, instead of on the far left. Its right edge should be near the vertical border of the Serial Number panel. Recover the old left-side annotation positions using the original camera photograph from Image 2. Do not leave duplicate old cards. Keep all actual input fields, Sign In button, scanner panel, Capture & Inspect button and Terminate Inspection button visible and in their original positions, unobscured. Annotation cards may cover camera imagery. Avoid overlaps between cards. Keep legible large type; increase output resolution if needed. Preserve the screenshot aspect ratio.
+3. Replace the copy in step 5 with the exact wording below, expanding the card enough for comfortable spacing. Make "20 seconds" bold or pink for emphasis:
+"5  INSPECT"
+"Close the cover and fully insert the MCIO card."
+"Auto inspection runs for 20 seconds after the MCIO SN scan is accepted."
+"If it does not PASS within 20 seconds:"
+"Check that the MCIO card is fully inserted, then click “Capture & Inspect” to retry."
+
+Preserve the other four numbered instructions verbatim:
+"1  CHECK THE SCANNER"
+"Confirm the green “Scanner connected” status."
+"If needed, open “Find or change scanner”."
+"2  SIGN IN"
+"Enter your employee number."
+"Click “Sign In” before scanning either serial number."
+"3  ENTER PRODUCT SN"
+"Scan or type the product label: K2V5…"
+"Press Enter. Wait for acceptance before step 4."
+"4  ENTER MCIO SN"
+"Scan or type the MCIO card label: APL…"
+"Press Enter to continue."
+
+Keep the title "OPERATOR QUICK GUIDE" and subtitle "Follow steps 1 → 5 in order", relocated with the cards beside the inputs.
+Keep the visual matching between guide cards and sidebar: 1 green, 2 amber, 3 blue, 4 purple, 5 pink. Preserve the matching colored panel outlines and numbered badges in the right sidebar. Keep the white rounded cards, dark navy typography and professional training-guide style. No long arrows.
+Retain the red annotation "Terminate Inspection = cancel the current cycle" and its short red arrow to the terminate button near the bottom.
+Remove the small separate "Fields unlock in order..." note if needed to make room for the relocated guide, since the guide already explains the order. The original WORKFLOW status box is part of the underlying screenshot, not the explanation card: preserve it if space allows, but prioritise the requested guide beside the inputs and do not recreate an explanatory workflow card.
+The screen must remain an annotated screenshot of the same UI. Do not invent application controls, change the serial prefixes, show a fake PASS, or change UI field values. MCIO always uses capital letter O.
+Output one clean high-resolution annotated image.

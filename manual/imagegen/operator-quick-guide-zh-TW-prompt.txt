@@ -1,0 +1,45 @@
+Tool: built-in image_gen (image editing).
+
+Use case: text-localization.
+Edit target: supplied annotated operator guide screenshot. Produce a Traditional Chinese (Taiwan, zh-TW) version by translating ONLY the added white annotation cards. All actual original app UI on the right and top MUST remain in English, unchanged, so the Chinese instructions reference the actual English button labels.
+Preserve the full screenshot aspect ratio, camera photo, UI fields and buttons, colored outlines, colored numbered badges, positions of all annotation cards immediately left of the inputs, rounded white cards, and short red terminate arrow. Do not redesign, move, or remove UI elements. Preserve clear legible typography using a professional Traditional Chinese sans-serif font, correct Traditional characters, generous line spacing and accurate English substrings. No Simplified Chinese.
+Replace the title card with these exact two lines:
+"操作快速指南"
+"請依步驟 1 → 5 順序操作"
+
+Replace numbered card 1 with:
+"1  確認掃描器"
+"確認顯示綠色「Scanner connected」。"
+"如需設定，點選"
+"「Find or change scanner」。"
+
+Replace numbered card 2 with:
+"2  輸入工號並登入"
+"輸入員工工號，點選「Sign In」。"
+"登入後，再掃描產品與 MCIO 序號。"
+
+Replace numbered card 3 with:
+"3  輸入產品序號"
+"掃描或輸入產品標籤上的序號：K2V5…"
+"按 Enter，確認接受後再進行步驟 4。"
+
+Replace numbered card 4 with:
+"4  輸入 MCIO 序號"
+"掃描或輸入 MCIO 卡片序號：APL…"
+"按 Enter 繼續。"
+
+Replace numbered card 5 with:
+"5  執行檢測"
+"關閉上蓋，確認 MCIO 卡片已完全插入。"
+"MCIO 序號掃描成功後，"
+"系統會自動檢測 20 秒。"
+"若 20 秒內未通過（PASS）："
+"確認 MCIO 卡片是否確實插妥，"
+"再手動點選「Capture & Inspect」重新檢測。"
+Emphasize "20 秒" with bold pink type, preserving the pink numbered badge and border. Keep this card readable and fit the full text; linebreaks may be adjusted, widen the guide cards slightly into the camera area if necessary while keeping right edges and original input fields unobscured.
+
+Replace only the red-bordered bottom annotation text with:
+"Terminate Inspection＝取消本次檢測"
+Keep its short red arrow pointing to the original English Terminate Inspection button.
+
+Match numbering and colors exactly: 1 green, 2 amber, 3 blue, 4 purple, 5 pink. Maintain original English labels of Sign In, Capture & Inspect, Terminate Inspection, Scanner connected, Find or change scanner both inside quoted instructions and in the actual UI. Preserve MCIO with capital O and exact prefixes K2V5 and APL. No added workflow explanation. Output one crisp high-resolution annotated PNG image.
