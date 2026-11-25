@@ -30,7 +30,7 @@
   "template_angles_deg": [-1, 0, 1],
   "template_root": "../templates",
   "target_state": "50_COVER_CLOSED_CARD_PRESENT_CROOP",
-  "snapshot_reject_states": ["50_COVER_CLOSED_CROOP", "50_COVER_OPEN_CARD_PRESENT_CROOP", "50_PRODUCT_LOADED_CROOP", "50_CARD_NOT_FULLY_INSERTED"],
+  "snapshot_reject_states": ["50_COVER_CLOSED_CROOP", "50_COVER_OPEN_CARD_PRESENT_CROOP", "50_PRODUCT_LOADED_CROOP", "50_CARD_NOT_FULLY_INSERTED", "EMPTY_FIXTURE_CROOP"],
   "sn_max_length": 128,
   "sn_prefix": "K2V5",
   "sn_length": 19,
