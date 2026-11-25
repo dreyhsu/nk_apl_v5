@@ -105,7 +105,7 @@ class HeaderTests(unittest.TestCase):
         displayed = [call.args[0] for call in context.show_text.call_args_list]
         self.assertIn('Please close the cover', displayed)
         self.assertIn('LIGHT: NG', displayed)
-        self.assertIn('TIME ' + time.strftime('%H:%M:%S', time.localtime(1700000000)), displayed)
+        self.assertIn('TIME 06:13:20', displayed)
         context.reset_mock()
         renderer._updated = time.monotonic() - 4
         renderer.draw(None, context, 0, 0)
@@ -114,11 +114,11 @@ class HeaderTests(unittest.TestCase):
         self.assertIn('LIGHT: UNAVAILABLE', displayed)
         self.assertNotIn('Please close the cover', displayed)
 
-    def test_clock_uses_system_local_time_and_live_time_advances(self):
+    def test_clock_uses_taipei_time_and_live_time_advances(self):
         state = snapshot()
         with patch('workflow_view.time.time', return_value=1700000000):
             commands = overlay_commands(state, 1920, 1080)
-        expected = 'TIME ' + time.strftime('%H:%M:%S', time.localtime(1700000000))
+        expected = 'TIME 06:13:20'
         self.assertIn(expected, [c[1] for c in commands if c[0] == 'text'])
         with patch('workflow_view.time.time', return_value=1700000001):
             next_commands = overlay_commands(state, 1920, 1080)
@@ -128,8 +128,14 @@ class HeaderTests(unittest.TestCase):
         state = {**snapshot(), 'overlay_timestamp': 1700000000}
         with patch('workflow_view.time.time', return_value=1700000999):
             commands = overlay_commands(state, 1920, 1080)
-        self.assertIn('TIME ' + time.strftime('%H:%M:%S', time.localtime(1700000000)),
+        self.assertIn('TIME 06:13:20',
                       [c[1] for c in commands if c[0] == 'text'])
+
+    def test_taipei_offset_is_independent_of_host_timezone_and_rolls_over_midnight(self):
+        with patch('workflow_view.time.localtime', side_effect=AssertionError('Host timezone used')):
+            for timestamp, expected in ((0, 'TIME 08:00:00'), (16 * 3600, 'TIME 00:00:00')):
+                commands = overlay_commands({**snapshot(), 'overlay_timestamp': timestamp}, 1920, 1080)
+                self.assertIn(expected, [c[1] for c in commands if c[0] == 'text'])
 
     def test_tower_command_connection_and_staleness(self):
         for event, expected, color in (('camera_on', 'READY', GREEN),

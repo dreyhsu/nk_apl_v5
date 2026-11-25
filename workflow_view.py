@@ -1,8 +1,11 @@
 """Shared workflow labels and drawing commands for PC and SmartCam."""
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from snapshot_diagnostics import DIAGNOSTIC_MESSAGES, NG_DIAGNOSTICS, active_diagnostic
+
+TAIPEI_TIMEZONE = timezone(timedelta(hours=8), name='Asia/Taipei')
 
 STEP_LABELS = {
     'EMPTY_FIXTURE': 'Empty fixture',
@@ -165,7 +168,7 @@ def overlay_commands(state, width, height, stale=False):
     timestamp = state.get('overlay_timestamp')
     if not isinstance(timestamp, (int, float)):
         timestamp = time.time()
-    text('TIME ' + time.strftime('%H:%M:%S', time.localtime(timestamp)),
+    text('TIME ' + datetime.fromtimestamp(timestamp, TAIPEI_TIMEZONE).strftime('%H:%M:%S'),
          x+24*scale, y+31*scale, 20*scale)
     light, light_color = light_indicator(state, stale)
     rect(x+w-282*scale, y+18*scale, 10*scale, 10*scale, light_color)

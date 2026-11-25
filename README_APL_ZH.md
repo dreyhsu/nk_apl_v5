@@ -67,7 +67,7 @@ JUDGING
 
 ### 相機 WORKFLOW 疊圖與燈塔
 
-WORKFLOW 上方顯示執行主機的系統時間 `HH:MM:SS`，不覆寫時區；檢驗證據圖保留拍照時間。
+WORKFLOW 上方將系統時間轉為台北時間（UTC+8），以 `HH:MM:SS` 顯示，不受執行主機時區影響；檢驗證據圖保留拍照當時的台北時間。
 單張模式的步驟固定顯示 `Insert MCIO card`，不再顯示步驟編號或 template 資料夾名稱。
 自動拍照期間，最高分的類別須達到 `threshold`，且領先第二名至少 `min_gap`，才顯示下列提示；
 資料夾名稱可有或無 `_CROOP` 後綴。
