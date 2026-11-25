@@ -1,5 +1,9 @@
 """Shared workflow labels and drawing commands for PC and SmartCam."""
 
+import time
+
+from snapshot_diagnostics import DIAGNOSTIC_MESSAGES, NG_DIAGNOSTICS, active_diagnostic
+
 STEP_LABELS = {
     'EMPTY_FIXTURE': 'Empty fixture',
     '50_PRODUCT_LOADED': 'Load 50-series product',
@@ -17,15 +21,15 @@ PHASE_LABELS = {
     'WAITING_CAPTURE': 'Ready for Capture & Inspect',
     'JUDGING': 'Inspecting captured frame',
     'NOT_MATCHED': 'Not matched - adjust and capture again',
-    'PASS_CONFIRM': 'OK - confirm upload or terminate',
-    'UPLOADING': 'Uploading to SIFI',
+    'PASS_CONFIRM': 'Pass',
+    'UPLOADING': 'Uploading to SFIS',
     'TERMINATED': 'Inspection terminated',
 }
 # While the automatic probe is running these phases must not tell the operator to
 # press a button. Keyed the same way as STATION_HINTS_AUTO in static/apl_ui.js.
 AUTO_PHASE_LABELS = {
-    'WAITING_CAPTURE': 'Auto-inspecting - no button needed',
-    'NOT_MATCHED': 'Not matched - auto-inspecting, adjust the product',
+    'WAITING_CAPTURE': 'Auto-inspecting',
+    'NOT_MATCHED': 'Auto-inspecting',
 }
 # A unit closed by auto_capture.timeout_action='pass' never matched; the overlay
 # must say so rather than showing the ordinary OK wording.
@@ -70,6 +74,7 @@ def _number(value, default):
 
 
 def workflow_view(state, stale=False):
+    stale = stale or state.get('status_stale') is True
     sop = state.get('sop') or {}
     phase = 'STATE_UNAVAILABLE' if stale else state.get('state', 'WAITING_SN')
     auto = {} if stale else (state.get('auto_capture') or {})
@@ -80,8 +85,8 @@ def workflow_view(state, stale=False):
     for i, step in enumerate(steps):
         current_phases = {'RUNNING', 'SN_CONFIRM', 'WAITING_MCIO_SN', 'WAITING_CAPTURE', 'JUDGING', 'NOT_MATCHED'}
         status = 'PENDING' if stale else 'DONE' if i < done else 'CURRENT' if phase in current_phases and i == done else 'PENDING'
-        if state.get('inspection_mode') == 'single_snapshot_cover_card' and step['name'] == '50_COVER_CLOSED_CARD_PRESENT':
-            label = 'Closed cover + MCIO card'
+        if state.get('inspection_mode') == 'single_snapshot_cover_card':
+            label = 'Insert MCIO card'
         else:
             label = STEP_LABELS.get(step['name'], step['name'])
         rows.append({'label': label, 'status': status})
@@ -91,11 +96,41 @@ def workflow_view(state, stale=False):
     timeout_pass = not stale and bool((state.get('matching') or {}).get('timeout_auto_pass'))
     label = (TIMEOUT_PASS_LABEL if timeout_pass and phase in {'PASS_CONFIRM', 'UPLOADING'}
              else (armed and AUTO_PHASE_LABELS.get(phase)) or PHASE_LABELS.get(phase, phase))
+    diagnostic = active_diagnostic(state, stale)
+    if diagnostic in NG_DIAGNOSTICS:
+        label, accent = DIAGNOSTIC_MESSAGES[diagnostic], RED
+    elif armed and phase in AUTO_PHASE_LABELS:
+        label = 'Confirming match' if diagnostic == 'TARGET_MATCH' else 'Auto-inspecting'
+        accent = AMBER
+    if (not timeout_pass and phase == 'PASS_CONFIRM'
+            and state.get('inspection_mode') == 'single_snapshot_cover_card'):
+        label = 'Pass'
     return {'phase': label, 'rows': rows, 'done': 0 if stale else done,
             'accent': accent, 'auto': auto, 'armed': armed}
 
 
+def light_indicator(state, stale=False):
+    """Selected command plus transport health; no network work in either renderer."""
+    tower = state.get('light_tower') or {}
+    if stale or state.get('status_stale') is True:
+        return 'UNAVAILABLE', MUTED
+    if not tower.get('enabled'):
+        return 'OFF', MUTED
+    if tower.get('error'):
+        return 'ERROR', RED
+    if not tower.get('connected'):
+        return 'CONNECTING', AMBER
+    return {
+        'camera_on': ('READY', GREEN),
+        'auto_capture_start': ('INSPECTING', AMBER),
+        'judge_timeout': ('NG', RED),
+        'judge_ng': ('NG', RED),
+        'judge_pass': ('OK', GREEN),
+    }.get(tower.get('requested_event') or tower.get('event'), ('OFF', MUTED))
+
+
 def overlay_commands(state, width, height, stale=False):
+    stale = stale or state.get('status_stale') is True
     view = workflow_view(state, stale)
     match = state.get('matching') or {}
     commands = []
@@ -124,9 +159,19 @@ def overlay_commands(state, width, height, stale=False):
 
     w, row_h = 600*scale, 54*scale
     x, y = width - w - 18*scale, 18*scale
-    h = (148 + 54*len(view['rows']))*scale
+    h = (196 + 54*len(view['rows']))*scale
     rect(x, y, w, h, BG)
     rect(x, y, 4*scale, h, view['accent'])
+    timestamp = state.get('overlay_timestamp')
+    if not isinstance(timestamp, (int, float)):
+        timestamp = time.time()
+    text('TIME ' + time.strftime('%H:%M:%S', time.localtime(timestamp)),
+         x+24*scale, y+31*scale, 20*scale)
+    light, light_color = light_indicator(state, stale)
+    rect(x+w-282*scale, y+18*scale, 10*scale, 10*scale, light_color)
+    text('LIGHT: ' + light, x+w-260*scale, y+31*scale, 20*scale, light_color)
+    rect(x+12*scale, y+47*scale, w-24*scale, scale, MUTED)
+    y += 48*scale
     text('WORKFLOW', x+24*scale, y+36*scale, 25*scale)
     text(f"{view['done']} / {len(view['rows'])}", x+w-92*scale, y+36*scale, 23*scale, view['accent'])
     text(view['phase'], x+24*scale, y+74*scale, 25*scale, view['accent'])
@@ -138,8 +183,11 @@ def overlay_commands(state, width, height, stale=False):
         color = GREEN if done else AMBER if current else MUTED
         if current:
             rect(x+12*scale, top, w-24*scale, row_h, (0.20, 0.17, 0.10, 0.95))
-        text('OK' if done else f'{i+1:02}', x+24*scale, top+35*scale, 23*scale, color)
-        text(row['label'], x+84*scale, top+35*scale, 23*scale, color)
+        if state.get('inspection_mode') == 'single_snapshot_cover_card':
+            text(row['label'], x+24*scale, top+35*scale, 23*scale, color)
+        else:
+            text('OK' if done else f'{i+1:02}', x+24*scale, top+35*scale, 23*scale, color)
+            text(row['label'], x+84*scale, top+35*scale, 23*scale, color)
     return commands
 
 

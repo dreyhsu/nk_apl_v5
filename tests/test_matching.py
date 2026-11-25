@@ -65,6 +65,23 @@ class SnapshotTemplateLoadingTests(unittest.TestCase):
     target = "50_COVER_CLOSED_CARD_PRESENT"
     rejects = ["50_COVER_CLOSED", "50_COVER_OPEN_CARD_PRESENT"]
 
+    def test_diagnostics_identify_reject_without_changing_target_score(self):
+        matcher = self.matcher()
+        scores = {
+            self.target: {'score': 0.783, 'template': 'target.png'},
+            '50_COVER_CLOSED': {'score': 0.6},
+            '50_COVER_OPEN_CARD_PRESENT': {'score': 0.889},
+        }
+        with patch.object(matcher, '_best_by_class', return_value=scores):
+            result = matcher.evaluate_snapshot(np.zeros((48, 48, 3), dtype=np.uint8))
+        self.assertEqual(result['diagnostic_code'], 'COVER_OPEN')
+        self.assertEqual(result['winning_state'], '50_COVER_OPEN_CARD_PRESENT')
+        self.assertEqual(result['winning_score'], 0.889)
+        self.assertAlmostEqual(result['winning_gap'], 0.106)
+        self.assertEqual(result['score'], 0.783)
+        self.assertEqual(result['best_state'], self.target)
+        self.assertFalse(result['accepted'])
+        self.assertEqual(result['raw'], UNKNOWN)
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

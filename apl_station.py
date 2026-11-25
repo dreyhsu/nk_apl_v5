@@ -1034,6 +1034,7 @@ class APLStation:
             cycle_id, sn, mcio_sn = self.cycle_id, self.sn, self.mcio_sn
             attempt_id, captured_at = uuid.uuid4().hex, time.time()
             self.state, self.last_error = "JUDGING", ""
+            self.preview_matching = self.preview_auto = None
             self._save("INSPECTION_REQUESTED", {"source": source, "attempt_id": attempt_id, "captured_at": captured_at})
             self._writer_done.clear()
             self._preview_state = self._snapshot_single()
@@ -1070,6 +1071,9 @@ class APLStation:
                 if not valid():
                     return self._reply("Inspection result was discarded because the cycle changed")
                 snapshot = self._snapshot_single(outcome=(state, result, match))
+                snapshot['overlay_timestamp'] = captured_at
+                # Supplied by the runtime, never queried while drawing evidence.
+                snapshot['light_tower'] = source.get('light_tower') or {'enabled': False}
             phase = "evidence"
             result_frame = self.matcher.draw(frame, snapshot)
             attempt = self.evidence.prepare_attempt(

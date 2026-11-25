@@ -103,6 +103,14 @@ class ConfigTests(unittest.TestCase):
 
 
 class SelectEventTests(unittest.TestCase):
+    def test_qualified_diagnostic_has_priority_over_timeout_and_probe(self):
+        for code in ('MCIO_NOT_FULLY_INSERTED', 'MCIO_MISSING', 'COVER_OPEN',
+                     'MCIO_MISSING_COVER_OPEN', 'PRODUCT_MISSING'):
+            self.assertEqual(select_event(True, 'WAITING_CAPTURE', True, False, code), 'judge_ng')
+            self.assertEqual(select_event(True, 'NOT_MATCHED', False, True, code), 'judge_ng')
+            self.assertEqual(select_event(True, 'RECOVERY_REQUIRED', False, True, code), 'camera_on')
+            self.assertIsNone(select_event(False, 'WAITING_CAPTURE', True, False, code))
+
     def test_phase_table(self):
         cases = [
             ((False, 'WAITING_CAPTURE', True, False), None),
@@ -132,6 +140,12 @@ class PatliteTowerTests(unittest.TestCase):
     def tearDown(self):
         self.tower.close()
         self.server.stop()
+
+    def test_ng_command_sends_fast_red_and_exposes_selected_event(self):
+        self.tower.request('judge_ng', DEFAULT_EVENTS['judge_ng'])
+        self.assertEqual(self.tower.status()['requested_event'], 'judge_ng')
+        packets = self.server.wait_for(1)
+        self.assertEqual(packets, [run_control_packet((4, 0, 0, 0, 0, 0))])
 
     def test_sends_once_per_change_on_one_connection(self):
         self.tower.request('camera_on', DEFAULT_EVENTS['camera_on'])
@@ -212,6 +226,10 @@ class RuntimeTickTests(unittest.TestCase):
 
             def close(self):
                 self.closed = True
+
+            def status(self):
+                return {'enabled': True, 'connected': True, 'error': '',
+                        'requested_event': test.requests[-1] if test.requests else None}
 
         sender = patch('edge_runtime.PatliteTower', Recorder)
         sender.start()
@@ -326,6 +344,37 @@ class RuntimeTickTests(unittest.TestCase):
         self.runtime._light_tower_tick({'state': 'NOT_MATCHED', 'cycle_id': 'c1'})
         self.assertEqual(self.requests, ['auto_capture_start', 'judge_timeout', 'camera_on'])
         self.assertEqual(len(self.towers), 1)
+
+    def test_live_reject_commands_red_and_clears_when_confidence_is_lost(self):
+        state = {'inspection_mode': 'single_snapshot_cover_card',
+                 'state': 'WAITING_CAPTURE', 'cycle_id': 'c1',
+                 'matching': {'diagnostic_code': 'COVER_OPEN'}}
+        self.runtime._auto.update(armed=True)
+        enriched = self.runtime._overlay_snapshot(state)
+        self.assertEqual(self.requests[-1], 'judge_ng')
+        self.assertEqual(enriched['light_tower']['requested_event'], 'judge_ng')
+        self.assertNotIn('light_tower', state)
+        for code in ('MCIO_MISSING', 'MCIO_NOT_FULLY_INSERTED',
+                     'MCIO_MISSING_COVER_OPEN', 'PRODUCT_MISSING'):
+            self.runtime._light_tower_tick({**state, 'matching': {'diagnostic_code': code}})
+            self.assertEqual(self.requests[-1], 'judge_ng')
+        self.runtime._light_tower_tick({**state, 'matching': {'diagnostic_code': None}})
+        self.assertEqual(self.requests[-1], 'auto_capture_start')
+        self.runtime._auto.update(armed=False)
+        self.runtime._light_tower_tick({**state, 'state': 'NOT_MATCHED'})
+        self.assertEqual(self.requests[-1], 'judge_ng')
+        self.runtime._light_tower_tick({**state, 'state': 'WAITING_SN'})
+        self.assertEqual(self.requests[-1], 'camera_on')
+
+    def test_new_cycle_reject_cancels_previous_green_hold(self):
+        self.runtime._light_tower_tick(self.passed())
+        self.runtime._auto.update(armed=True)
+        self.clock.return_value = 101.0
+        self.runtime._light_tower_tick({'inspection_mode': 'single_snapshot_cover_card',
+            'state': 'WAITING_CAPTURE', 'cycle_id': 'c2',
+            'matching': {'diagnostic_code': 'PRODUCT_MISSING'}})
+        self.assertEqual(self.requests, ['judge_pass', 'judge_ng'])
+        self.assertEqual(self.runtime._tower_pass_until, 0)
 
     def test_disabling_or_moving_the_tower_closes_the_old_one(self):
         self.runtime._light_tower_tick({'state': 'WAITING_SN'})

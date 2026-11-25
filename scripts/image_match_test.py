@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import cv2
@@ -240,6 +241,8 @@ def main(argv=None):
             "steps": [{"name": name} for name in
                       ([matcher.target_state] if snapshot else config["steps"])],
             "sn": "IMAGE_TEST",
+            "overlay_timestamp": time.time(),
+            "light_tower": {"enabled": False},
             "matching": result | {"stable": result.get("stable", raw)},
         }
         written = None

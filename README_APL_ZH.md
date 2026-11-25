@@ -65,6 +65,29 @@ JUDGING
 - 只有 SFIS Step4 確認成功或操作員按 `Terminate Inspection` 才解除鎖定。
 - 判定中或上傳中禁止終止、切換來源或開始下一輪。
 
+### 相機 WORKFLOW 疊圖與燈塔
+
+WORKFLOW 上方顯示執行主機的系統時間 `HH:MM:SS`，不覆寫時區；檢驗證據圖保留拍照時間。
+單張模式的步驟固定顯示 `Insert MCIO card`，不再顯示步驟編號或 template 資料夾名稱。
+自動拍照期間，最高分的類別須達到 `threshold`，且領先第二名至少 `min_gap`，才顯示下列提示；
+資料夾名稱可有或無 `_CROOP` 後綴。
+
+| 類別 | 操作提示 |
+|---|---|
+| `50_CARD_NOT_FULLY_INSERTED` | Please fully insert MCIO card |
+| `50_COVER_CLOSED` | Please insert MCIO card |
+| `50_COVER_OPEN_CARD_PRESENT` | Please close the cover |
+| `50_PRODUCT_LOADED` | Insert MCIO card and close cover |
+| `EMPTY_FIXTURE` | Place product in mold |
+
+上述提示使用 `light_tower.events.judge_ng`（預設紅燈快閃），持續比對至原有逾時或 PASS。
+信心不足顯示 `Auto-inspecting`；目標符合但連續命中尚未完成時顯示 `Confirming match`。
+證據成功寫入後才顯示 `Pass`，Step4 仍由網頁自動送出。逾時失敗保留該次提示，重試或終止後清除。
+`LIGHT` 顯示選定命令的 READY／INSPECTING／NG／OK，以及 OFF／CONNECTING／ERROR／UNAVAILABLE 連線狀態；
+這是命令與連線資訊。離線圖片工具不連接實體燈塔，顯示 OFF。
+部署時須一併更新新增的 `snapshot_diagnostics.py`、matching／station／runtime／overlay 相關檔案、
+`static/apl_ui.js` 與 workflow 設定；燈塔實際閃爍仍須在 SmartCam 驗收。
+
 ### SFIS 測試／正式切換
 
 目前版控中的 `config/apl_workflow.json` 設為 `dmz.bypass_sfis=true`，僅供工程測試：站台會在本地接受 Step1／Step4，**不會呼叫 SFIS**；畫面也會標示 BYPASS。正式串接前須明確改為 `false`，並依 SFIS 規格與現場驗收結果決定是否開啟 `step4_enabled`。`APL_DMZ_BYPASS=on/off` 可覆寫設定，值不明確時程式拒絕啟動。

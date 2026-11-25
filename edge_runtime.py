@@ -38,6 +38,7 @@ import cv2
 import numpy as np
 
 from light_tower import PASS_HOLD_SECONDS, PatliteTower, select_event
+from snapshot_diagnostics import DIAGNOSTIC_MESSAGES, active_diagnostic
 
 try:  # Only present on the Qualcomm image / GStreamer-enabled Linux hosts.
     import gi  # type: ignore
@@ -2127,7 +2128,7 @@ class EdgeRuntime:
                     if self.station is not None:
                         station = self.station
                         if station.snapshot_mode and self.video_trace is None:
-                            station_state = station.preview_snapshot()
+                            station_state = self._overlay_snapshot(station.preview_snapshot())
                             result_frame, frame_pass, results, rules, sop = station.process_frame(frame, preview=station_state)
                         else:
                             if self.video_trace is not None:
@@ -2339,7 +2340,7 @@ class EdgeRuntime:
                 'has_raw': bool(self.latest_raw_jpeg),
                 'has_result': bool(self.latest_result_jpeg),
                 'auto_capture': self._auto_capture_status(),
-                'light_tower': self._tower.status() if self._tower is not None else {'enabled': False},
+                'light_tower': self._light_tower_status(),
                 **storage,
             }
 
@@ -2377,6 +2378,9 @@ class EdgeRuntime:
             'committing': bool(self._auto['committing']),
             'last_commit': self._auto['last_commit'],
             'error': self._auto['error'],
+            'cycle_id': self._auto['cycle'],
+            'diagnostic_code': (self._auto['last_match'] or {}).get('diagnostic_code') if self._auto['armed'] else None,
+            'instruction': DIAGNOSTIC_MESSAGES.get((self._auto['last_match'] or {}).get('diagnostic_code')) if self._auto['armed'] else None,
         }
 
     def jpeg(self, mode: str = 'result') -> bytes:
@@ -2440,6 +2444,20 @@ class EdgeRuntime:
     _tower_pass_cycle = None
     _tower_pass_until = 0.0
 
+    def _light_tower_status(self):
+        settings = getattr(self.station, 'light_tower', None)
+        if not isinstance(settings, dict) or not settings.get('enabled'):
+            return {'enabled': False}
+        tower = self._tower
+        if tower is not None:
+            return tower.status()
+        return {'enabled': True, 'connected': False, 'error': '', 'requested_event': None}
+
+    def _overlay_snapshot(self, snapshot):
+        # Top-level enrichment only: never write live telemetry to station evidence.
+        self._light_tower_tick(snapshot)
+        return {**snapshot, 'light_tower': self._light_tower_status()}
+
     def inspection_worker_alive(self):
         thread = self._auto_thread
         writer = getattr(self.station, '_writer_done', None)
@@ -2477,14 +2495,17 @@ class EdgeRuntime:
                 # Also handle a PASS first observed by the preview loop.
                 self._record_light_tower_pass(station_state)
                 cycle_id = str(station_state.get('cycle_id') or '')
+                diagnostic = active_diagnostic({**station_state,
+                    'auto_capture': {'armed': bool(self._auto['armed'])}})
                 event = select_event(
                     camera_live=True,
                     state=station_state.get('state'),
                     auto_armed=bool(self._auto['armed']),
                     # Set only when the probe's window ran out; a manual retry clears it.
-                    timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id)
+                    timeout_fired=bool(cycle_id) and self._auto['suspended_cycle'] == cycle_id,
+                    diagnostic_code=diagnostic)
                 if (cycle_id != self._tower_pass_cycle
-                        and event in {'auto_capture_start', 'judge_timeout'}):
+                        and event in {'auto_capture_start', 'judge_timeout', 'judge_ng'}):
                     self._tower_pass_until = 0.0
                 if time.monotonic() < self._tower_pass_until:
                     event = 'judge_pass'
@@ -2689,6 +2710,7 @@ class EdgeRuntime:
         if station is None or frame is None:
             return {'success': False, 'error': 'No inspection station or decoded frame is available'}
         source = dict(source_context or {})
+        source['light_tower'] = self._light_tower_status() if source.get('mode') == 'camera' else {'enabled': False}
         generation = source.get('camera_generation', getattr(self, '_camera_generation', 0))
         def cancelled():
             return (station is not self.station or source.get('mode') == 'camera'
@@ -2700,7 +2722,8 @@ class EdgeRuntime:
                 if not cancelled():
                     self._record_light_tower_pass(result['station'])
             if source.get('mode') != 'camera':
-                snapshot = result['station']
+                snapshot = {**result['station'], 'light_tower': {'enabled': False},
+                            'overlay_timestamp': result.get('attempt', {}).get('captured_at_epoch', time.time())}
                 result_frame = station.matcher.draw(frame, snapshot)
                 jpeg = _jpeg(result_frame, self.cfg.preview_quality)
                 with self.lock:

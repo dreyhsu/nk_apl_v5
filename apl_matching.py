@@ -3,6 +3,8 @@
 import math
 from pathlib import Path
 
+from snapshot_diagnostics import canonical_class, winner_diagnostic
+
 
 UNKNOWN = "UNKNOWN"
 
@@ -177,11 +179,15 @@ class APLMatcher:
         failed_reject_states = [
             state for state, margin in reject_margins.items() if margin < self.min_gap
         ]
-        # Optional diagnostics for the original two named counterexamples.
-        # Custom reject names still participate fully in the generic decision;
-        # an absent diagnostic is unknown, never a claimed card/cover success.
-        card_margin = reject_margins.get("50_COVER_CLOSED")
-        cover_margin = reject_margins.get("50_COVER_OPEN_CARD_PRESENT")
+        # Folder aliases carry the same physical meaning. If both aliases are
+        # configured, use the more conservative margin for the condition display.
+        def condition_margin(name):
+            margins = [margin for state, margin in reject_margins.items()
+                       if canonical_class(state) == name]
+            return min(margins) if margins else None
+
+        card_margin = condition_margin("50_COVER_CLOSED")
+        cover_margin = condition_margin("50_COVER_OPEN_CARD_PRESENT")
         card_present = card_margin >= self.min_gap if card_margin is not None else None
         cover_closed = cover_margin >= self.min_gap if cover_margin is not None else None
         accepted = target["score"] >= self.threshold and not failed_reject_states
@@ -205,6 +211,8 @@ class APLMatcher:
             "box": target["box"] if accepted else None,
             "roi": list(self.roi),
             "class_scores": {name: item["score"] for name, item in scores.items()},
+            **winner_diagnostic({name: item['score'] for name, item in scores.items()},
+                                self.threshold, self.min_gap),
             "template": target["template"],
             "angle_deg": target.get("angle_deg", 0.0),
             "class_angles_deg": {name: item.get("angle_deg", 0.0) for name, item in scores.items()},

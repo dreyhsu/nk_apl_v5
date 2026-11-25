@@ -9,6 +9,8 @@ import socket
 import struct
 import threading
 
+from snapshot_diagnostics import NG_DIAGNOSTICS
+
 log = logging.getLogger('camera.light_tower')
 
 PNS_PRODUCT_ID = b'AB'
@@ -23,13 +25,14 @@ LED_PATTERNS = {0, 1, 2, 3, 4, 5, 6, 7, 9}
 BUZZER_MODES = {0, 1, 9}
 CHANNELS = ('red', 'amber', 'green', 'blue', 'white', 'buzzer')
 
-EVENTS = ('camera_on', 'auto_capture_start', 'judge_timeout', 'judge_pass')
+EVENTS = ('camera_on', 'auto_capture_start', 'judge_timeout', 'judge_pass', 'judge_ng')
 PASS_HOLD_SECONDS = 4.0
 # docs/plan/LIGHT_TOWER_SCHEMA_20261019_ZH.md
 DEFAULT_EVENTS = {
     'camera_on':          (0, 0, 2, 0, 0, 0),
     'auto_capture_start': (0, 2, 0, 0, 0, 0),
     'judge_timeout':      (4, 0, 0, 0, 0, 0),
+    'judge_ng':           (4, 0, 0, 0, 0, 0),
     'judge_pass':         (0, 0, 1, 0, 0, 0),
 }
 LIGHT_TOWER_DEFAULTS = {'enabled': False, 'host': '192.168.10.1', 'port': 10000,
@@ -99,14 +102,18 @@ def validated_light_tower(raw):
             'timeout_sec': float(timeout), 'events': events}
 
 
-def select_event(camera_live, state, auto_armed, timeout_fired):
+def select_event(camera_live, state, auto_armed, timeout_fired, diagnostic_code=None):
     """The base tower event, before the runtime applies its timed PASS hold.
 
-    judge_timeout is only the automatic-capture window running out: a failed manual
-    capture, or RECOVERY_REQUIRED, falls back to camera_on. PASS_CONFIRM and
+    Qualified template guidance selects judge_ng during probes or after a failed
+    capture. judge_timeout handles the window expiring without specific guidance.
+    Other failed manual captures and RECOVERY_REQUIRED fall back to camera_on. PASS_CONFIRM and
     UPLOADING also fall back to camera_on once the four-second hold expires."""
     if not camera_live:
         return None
+    if diagnostic_code in NG_DIAGNOSTICS and (state == 'NOT_MATCHED' or
+                                               state == 'WAITING_CAPTURE' and auto_armed):
+        return 'judge_ng'
     if state == 'NOT_MATCHED' and timeout_fired:
         return 'judge_timeout'
     if state == 'JUDGING' or (state == 'WAITING_CAPTURE' and auto_armed):
@@ -149,6 +156,7 @@ class PatliteTower:
         with self._cond:
             return {'enabled': True, 'host': self.host, 'port': self.port,
                     'connected': self.connected,
+                    'requested_event': self._wanted[0] if self._wanted else None,
                     'event': self._sent[0] if self._sent else None,
                     'error': self.error}
 

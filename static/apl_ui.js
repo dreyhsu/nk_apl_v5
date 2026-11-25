@@ -8,6 +8,18 @@ const VIDEO_TEST_STATES=['WAITING_SN','WAITING_MCIO_SN','WAITING_CAPTURE','NOT_M
 const STATION_LABELS={WAITING_SN:'Waiting for SN',WAITING_MCIO_SN:'Scan MCIO Card SN',SN_CONFIRM:'Validating with SFIS',WAITING_DMZ:'Validating with SFIS',WAITING_CAPTURE:'Ready to Capture',JUDGING:'Inspecting Image',NOT_MATCHED:'Not Matched',PASS_CONFIRM:'OK',UPLOADING:'Uploading',RECOVERY_REQUIRED:'Recovery Required'};
 const STATION_HINTS_AUTO={WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card — the station inspects by itself.',NOT_MATCHED:'Cover-and-card condition not matched. Adjust the cover and the MCIO card, then select Capture & Inspect to resume automatic inspection.'};
 const STATION_HINTS={WAITING_SN:'Scan the next product serial number.',WAITING_MCIO_SN:'Product serial number accepted by SFIS Step1. Scan the MCIO card serial number.',SN_CONFIRM:'Sending SFIS Step1 for this product serial number.',WAITING_DMZ:'Waiting for the SFIS Step1 answer.',WAITING_CAPTURE:'Both serial numbers accepted. Close the cover and install the MCIO card, then select Capture & Inspect.',JUDGING:'Checking the captured image.',NOT_MATCHED:'The required cover-and-card condition was not matched. Adjust the product and capture again.',PASS_CONFIRM:'Inspection OK.',UPLOADING:'Sending SFIS Step4.',RECOVERY_REQUIRED:'The inspection was interrupted. Check the product, then terminate this inspection.'};
+const INSPECTION_DIAGNOSTICS={MCIO_NOT_FULLY_INSERTED:'Please fully insert MCIO card',MCIO_MISSING:'Please insert MCIO card',COVER_OPEN:'Please close the cover',MCIO_MISSING_COVER_OPEN:'Insert MCIO card and close cover',PRODUCT_MISSING:'Place product in mold',TARGET_MATCH:'Confirming match'};
+
+function inspectionInstruction(station,auto){
+  if(station?.status_stale===true||station?.inspection_mode!=='single_snapshot_cover_card')return '';
+  if(station.state==='PASS_CONFIRM')return station.matching?.timeout_auto_pass?'AUTO-PASS on timeout - NOT visually matched':'Pass';
+  if(!['WAITING_CAPTURE','NOT_MATCHED'].includes(station.state))return '';
+  const probing=auto?.armed===true&&auto.cycle_id===station.cycle_id;
+  const code=probing?auto.diagnostic_code:station.state==='NOT_MATCHED'?station.matching?.diagnostic_code:null;
+  const text=INSPECTION_DIAGNOSTICS[code];
+  if(text&&code!=='TARGET_MATCH')return text+(probing?'':'. Select Capture & Inspect to retry.');
+  return probing?(code==='TARGET_MATCH'?'Confirming match':'Auto-inspecting'):'';
+}
 // SN_CONFIRM is momentary while Step1 is sent, but sticky when Step1 is refused;
 // the backend's step1_retry_required flag picks these out for that sticky case.
 const STEP1_RETRY_LABEL='SFIS Step1 Failed';
@@ -351,7 +363,7 @@ function renderStation(station){
   $('stationRecovery').textContent=step4Recovery;
   $('stationState').textContent=freshStation?(retry?STEP1_RETRY_LABEL:STATION_LABELS[station.state]||station.state):'Offline';
   $('stationState').className='state '+(!freshStation?'warn':retry||station.state==='NOT_MATCHED'||station.state==='RECOVERY_REQUIRED'?'bad':station.state==='PASS_CONFIRM'?'good':station.state==='JUDGING'||station.state==='UPLOADING'||busy?'warn':'idle');
-  const instruction=retry?STEP1_RETRY_HINT:operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?(lastStatus.auto_capture?.enabled===true&&STATION_HINTS_AUTO[station.state])||STATION_HINTS[station.state]||station.state:'Waiting for station status';
+  const instruction=retry?STEP1_RETRY_HINT:operatorRequired&&!signedIn&&station?.state==='WAITING_SN'?'Enter the operator employee number before scanning the product serial number.':station?(freshStation&&inspectionInstruction(station,lastStatus.auto_capture))||(lastStatus.auto_capture?.enabled===true&&STATION_HINTS_AUTO[station.state])||STATION_HINTS[station.state]||station.state:'Waiting for station status';
   $('stationInstruction').textContent=instruction;
   $('stationCycle').textContent=station?.cycle_id?'Cycle: '+station.cycle_id:'';
   renderStepFlow(station,freshStation);

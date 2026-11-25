@@ -589,6 +589,41 @@ class AutoCaptureProbeTests(unittest.TestCase):
         self.assertEqual(auto["score"], 0.40)
         self.assertEqual(self.matcher.calls, 20)
 
+    def test_live_diagnostic_is_transient_then_committed_at_timeout(self):
+        runtime = self.build(enabled=True, fps=5.0, required_hits=2, timeout_sec=20.0)
+        evaluate = self.matcher.evaluate_snapshot
+        code = ['COVER_OPEN']
+
+        def diagnose(frame):
+            return {**evaluate(frame), 'diagnostic_code': code[0],
+                    'winning_state': '50_COVER_OPEN_CARD_PRESENT_CROOP',
+                    'winning_score': 0.9, 'winning_gap': 0.2}
+
+        with patch.object(self.matcher, 'evaluate_snapshot', side_effect=diagnose):
+            self.tick(runtime, False, 0)
+            self.assertEqual(workflow_view(self.station.preview_snapshot())['phase'], 'Please close the cover')
+            self.assertNotIn('diagnostic_code', self.station.status()['matching'])
+            self.assertEqual(runtime._auto_capture_status()['diagnostic_code'], 'COVER_OPEN')
+            self.assertEqual(self.evidence_files(), [])
+            code[0] = None
+            self.tick(runtime, False, 0.5)
+            self.assertEqual(workflow_view(self.station.preview_snapshot())['phase'], 'Auto-inspecting')
+            code[0] = 'COVER_OPEN'
+            with patch.object(self.matcher, 'draw', wraps=self.matcher.draw) as draw:
+                self.tick(runtime, False, 20.0)
+                rendered_state = draw.call_args.args[1]
+            committed = self.station.status()
+            self.assertEqual(committed['state'], 'NOT_MATCHED')
+            self.assertEqual(committed['matching']['diagnostic_code'], 'COVER_OPEN')
+            attempt = self.station.history_detail(committed['cycle_id'])['attempts'][0]
+            self.assertEqual(attempt['matching']['winning_score'], 0.9)
+            self.assertEqual(rendered_state['overlay_timestamp'], attempt['captured_at'])
+            self.tick(runtime, False, 20.5)
+            self.assertFalse(runtime._auto_capture_status()['armed'])
+            self.assertEqual(workflow_view(self.station.preview_snapshot())['phase'], 'Please close the cover')
+            self.station.terminate(committed['cycle_id'])
+            self.assertEqual(workflow_view(self.station.preview_snapshot())['phase'], 'Waiting for SN')
+
     def test_probe_commits_one_attempt_on_the_required_consecutive_accepts(self):
         runtime = self.build(enabled=True, fps=5.0, required_hits=2)
         self.tick(runtime, True, 0.0)
